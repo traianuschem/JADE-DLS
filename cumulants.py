@@ -397,14 +397,9 @@ def plot_processed_correlations(dataframes_dict, fit_function, fit_x_limits):
             y_data = df['g(2)_mod']
             x_fit = x_data[(x_data >= fit_x_limits[0]) & (x_data <= fit_x_limits[1])]
             y_fit = y_data[(x_data >= fit_x_limits[0]) & (x_data <= fit_x_limits[1])]
-            
-            #define bounds: lower bounds positive, upper bounds infinity
-            lower_bounds = [0.001, -np.inf, -np.inf]  
-            upper_bounds = [np.inf, np.inf, np.inf]  
-            bounds = (lower_bounds, upper_bounds)
                 
             #perform the fit with bounds
-            popt, pcov = curve_fit(fit_function, x_fit, y_fit, bounds=bounds, method='trf', maxfev=50000)
+            popt, pcov = curve_fit(fit_function, x_fit, y_fit, method='lm', maxfev=50000)
                 
             #calculate parameter errors from covariance matrix
             perr = np.sqrt(np.diag(pcov))
@@ -473,4 +468,5 @@ def plot_processed_correlations(dataframes_dict, fit_function, fit_x_limits):
     
     final_results_df = pd.DataFrame(all_fit_results)
     return final_results_df
+
 
