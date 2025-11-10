@@ -484,17 +484,30 @@ class CumulantAnalyzer:
 
         # Calculate final results
         self.method_c_results = pd.DataFrame()
-        self.method_c_results['Rh [nm]'] = self.c_value * (1 / C_diff['D [m^2/s]'][0]) * 10**9
+
+        # Calculate Rh step by step for debugging
+        rh_value = self.c_value * (1 / C_diff['D [m^2/s]'][0]) * 10**9
+        print(f"[CUMULANT METHOD C DEBUG] Rh calculation result:")
+        print(f"  Calculated Rh: {rh_value}")
+        print(f"  Type: {type(rh_value)}")
+
+        self.method_c_results['Rh [nm]'] = [rh_value]
 
         fractional_error_Rh_C = np.sqrt(
             (self.delta_c / self.c_value)**2 +
             (C_diff['std err D [m^2/s]'][0] / C_diff['D [m^2/s]'][0])**2
         )
-        self.method_c_results['Rh error [nm]'] = fractional_error_Rh_C * self.method_c_results['Rh [nm]']
+        rh_error = fractional_error_Rh_C * rh_value
+        print(f"  Calculated Rh error: {rh_error}")
+
+        self.method_c_results['Rh error [nm]'] = [rh_error]
         self.method_c_results['R_squared'] = [model.rsquared]
-        self.method_c_results['Fit'] = 'Rh from iterative non-linear cumulant fit'
-        self.method_c_results['Residuals'] = 'N/A'
-        self.method_c_results['PDI'] = polydispersity_method_C
+        self.method_c_results['Fit'] = ['Rh from iterative non-linear cumulant fit']
+        self.method_c_results['Residuals'] = ['N/A']
+        self.method_c_results['PDI'] = [polydispersity_method_C]
+
+        print(f"[CUMULANT METHOD C DEBUG] Final DataFrame:")
+        print(self.method_c_results)
 
         return self.method_c_results
 

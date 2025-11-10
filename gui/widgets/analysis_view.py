@@ -5,7 +5,8 @@ Main central panel for displaying data, plots, and results
 
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTabWidget,
                              QTableWidget, QTableWidgetItem, QLabel, QTextEdit,
-                             QGroupBox, QScrollArea)
+                             QGroupBox, QScrollArea, QListWidget, QListWidgetItem,
+                             QPushButton, QSplitter)
 from PyQt5.QtCore import Qt
 import pandas as pd
 
