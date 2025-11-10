@@ -45,23 +45,34 @@ class DataLoadWorker(QThread):
     def run(self):
         """Run the data loading process"""
         try:
+            print(f"[DATA LOADER] Starting data loading from: {self.data_folder}")
             all_data = {}
             all_data['data_folder'] = self.data_folder
 
             # Step 1: Find files
             self.progress.emit(0, 5, "Searching for .asc files...")
+            print(f"[DATA LOADER] Searching for .asc files...")
             datafiles = glob.glob(os.path.join(self.data_folder, "*.asc"))
 
             # Filter out averaged files
             filtered_files = [f for f in datafiles
                             if "averaged" not in os.path.basename(f).lower()]
 
+            print(f"[DATA LOADER] Found {len(datafiles)} total .asc files")
+            if len(datafiles) != len(filtered_files):
+                print(f"[DATA LOADER] Filtered out {len(datafiles) - len(filtered_files)} averaged files")
+
             if not filtered_files:
+                print(f"[DATA LOADER ERROR] No .asc files found in {self.data_folder}")
                 self.error.emit(f"No .asc files found in {self.data_folder}")
                 return
 
             all_data['files'] = filtered_files
             all_data['num_files'] = len(filtered_files)
+
+            print(f"[DATA LOADER] Processing {len(filtered_files)} data files:")
+            for i, f in enumerate(filtered_files, 1):
+                print(f"[DATA LOADER]   {i}. {os.path.basename(f)}")
 
             self.progress.emit(1, 5, f"Found {len(filtered_files)} data files")
             self.step_complete.emit("find_files", filtered_files)
@@ -70,13 +81,16 @@ class DataLoadWorker(QThread):
                 return
 
             # Step 2: Extract base data
+            print(f"[DATA LOADER] Step 2: Extracting base data...")
             self.progress.emit(2, 5, "Extracting base data (angle, temperature, etc.)...")
             df_basedata = self._extract_basedata(filtered_files)
 
             if df_basedata is None or df_basedata.empty:
+                print(f"[DATA LOADER ERROR] Failed to extract base data from files")
                 self.error.emit("Failed to extract base data from files")
                 return
 
+            print(f"[DATA LOADER] Successfully extracted base data from {len(df_basedata)} files")
             all_data['basedata'] = df_basedata
             self.step_complete.emit("basedata", df_basedata)
 
@@ -85,11 +99,14 @@ class DataLoadWorker(QThread):
 
             # Step 3: Extract countrates (optional)
             if self.load_countrates:
+                print(f"[DATA LOADER] Step 3: Extracting count rates...")
                 self.progress.emit(3, 5, "Extracting count rates...")
                 all_countrates = self._extract_countrates(filtered_files)
+                print(f"[DATA LOADER] Extracted count rates from {len(all_countrates)} files")
                 all_data['countrates'] = all_countrates
                 self.step_complete.emit("countrates", all_countrates)
             else:
+                print(f"[DATA LOADER] Step 3: Skipping count rate extraction")
                 self.progress.emit(3, 5, "Skipping count rate extraction")
 
             if self.is_cancelled:
@@ -97,22 +114,27 @@ class DataLoadWorker(QThread):
 
             # Step 4: Extract correlations
             if self.load_correlations:
+                print(f"[DATA LOADER] Step 4: Extracting correlation data...")
                 self.progress.emit(4, 5, "Extracting correlation data...")
                 all_correlations = self._extract_correlations(filtered_files)
 
                 if not all_correlations:
+                    print(f"[DATA LOADER ERROR] Failed to extract correlation data")
                     self.error.emit("Failed to extract correlation data")
                     return
 
+                print(f"[DATA LOADER] Extracted correlations from {len(all_correlations)} files")
                 all_data['correlations'] = all_correlations
                 self.step_complete.emit("correlations", all_correlations)
             else:
+                print(f"[DATA LOADER] Step 4: Skipping correlation extraction")
                 self.progress.emit(4, 5, "Skipping correlation extraction")
 
             if self.is_cancelled:
                 return
 
             # Step 5: Calculate q and q^2
+            print(f"[DATA LOADER] Step 5: Calculating scattering vectors...")
             self.progress.emit(5, 5, "Calculating scattering vectors...")
             df_basedata = self._calculate_q_vectors(df_basedata)
             all_data['basedata'] = df_basedata
@@ -121,6 +143,17 @@ class DataLoadWorker(QThread):
             all_data['errors'] = self.errors
             all_data['total_files'] = len(filtered_files)
             all_data['successful_files'] = len(filtered_files) - len([e for e in self.errors if e['step'] == 'basedata'])
+
+            # Print summary
+            print(f"[DATA LOADER] ===== Data Loading Complete =====")
+            print(f"[DATA LOADER] Total files: {all_data['total_files']}")
+            print(f"[DATA LOADER] Successful files: {all_data['successful_files']}")
+            if self.errors:
+                print(f"[DATA LOADER] Errors encountered: {len(self.errors)}")
+                for error in self.errors:
+                    print(f"[DATA LOADER]   - {error['file']}: {error['error']}")
+            else:
+                print(f"[DATA LOADER] No errors!")
 
             # Complete
             self.finished.emit(all_data)
@@ -145,6 +178,7 @@ class DataLoadWorker(QThread):
                     filename = os.path.basename(file)
                     extracted_data['filename'] = filename
                     all_data.append(extracted_data)
+                    print(f"[DATA LOADER]   ✓ {filename}")
                 else:
                     # File couldn't be processed
                     error_msg = f"Could not extract data from {os.path.basename(file)}"

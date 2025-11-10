@@ -81,7 +81,7 @@ def plot_processed_correlations_no_show(dataframes_dict, fit_function, fit_x_lim
             # Add R^2 as text
             param_text = f"R² = {r_squared:.4f}"
             ax1.text(0.95, 0.95, param_text, transform=ax1.transAxes,
-                    verticalalignment='top', horizontalalignment='right',
+                    va='top', ha='right',
                     bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
 
             plt.tight_layout()
@@ -306,7 +306,7 @@ def plot_processed_correlations_iterative_no_show(dataframes_dict, fit_function,
             param_text += f"RMSE = {rmse:.4e}\n"
             param_text += f"AIC = {aic:.2f}"
             ax1.text(0.95, 0.95, param_text, transform=ax1.transAxes,
-                    verticalalignment='top', horizontalignment='right',
+                    va='top', ha='right',
                     bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
 
             # Right plot: Q-Q plot for the best fit

@@ -190,8 +190,8 @@ class CumulantAnalyzer:
 
                 results_list.append({
                     'gamma_col': gamma_col,
-                    'q^2_coef': model.params[1],
-                    'q^2_se': model.bse[1],
+                    'q^2_coef': model.params.iloc[1],
+                    'q^2_se': model.bse.iloc[1],
                     'R_squared': model.rsquared,
                     'Normality': 'Normal' if model.rsquared > 0.9 else 'Check'
                 })
@@ -314,8 +314,8 @@ class CumulantAnalyzer:
 
         # Calculate diffusion coefficients
         B_diff = pd.DataFrame()
-        B_diff['D [m^2/s]'] = [model.params[1] * 10**(-18)]
-        B_diff['std err D [m^2/s]'] = [model.bse[1] * 10**(-18)]
+        B_diff['D [m^2/s]'] = [model.params.iloc[1] * 10**(-18)]
+        B_diff['std err D [m^2/s]'] = [model.bse.iloc[1] * 10**(-18)]
 
         # Calculate polydispersity
         cumulant_method_B_data['polydispersity'] = (
@@ -453,8 +453,8 @@ class CumulantAnalyzer:
 
         # Create DataFrame with diffusion coefficients
         C_diff = pd.DataFrame()
-        C_diff['D [m^2/s]'] = [model.params[1] * 10**(-18)]
-        C_diff['std err D [m^2/s]'] = [model.bse[1] * 10**(-18)]
+        C_diff['D [m^2/s]'] = [model.params.iloc[1] * 10**(-18)]
+        C_diff['std err D [m^2/s]'] = [model.bse.iloc[1] * 10**(-18)]
 
         # Calculate polydispersity
         cumulant_method_C_data['polydispersity'] = (
