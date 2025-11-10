@@ -15,26 +15,32 @@ import numpy as np
 class AnalysisStep:
     """Represents a single step in the analysis pipeline"""
 
-    def __init__(self, name: str, function: Callable, params: Dict[str, Any]):
+    def __init__(self, name: str, function: Callable = None, params: Dict[str, Any] = None,
+                 step_type: str = "function", custom_code: str = None):
         self.name = name
         self.function = function
-        self.function_name = function.__name__
-        self.params = params
+        self.function_name = function.__name__ if function else None
+        self.params = params or {}
         self.timestamp = datetime.now()
         self.result = None
         self.code = None
         self.metadata = {}
+        self.step_type = step_type  # 'function' or 'filter' or 'custom'
+        self.custom_code = custom_code
 
         # Extract function source code
-        try:
-            self.code = inspect.getsource(function)
-        except (OSError, TypeError):
-            self.code = f"# Built-in function: {self.function_name}"
+        if function:
+            try:
+                self.code = inspect.getsource(function)
+            except (OSError, TypeError):
+                self.code = f"# Built-in function: {self.function_name}"
 
     def execute(self, *args, **kwargs):
         """Execute this analysis step"""
-        self.result = self.function(*args, **self.params, **kwargs)
-        return self.result
+        if self.function:
+            self.result = self.function(*args, **self.params, **kwargs)
+            return self.result
+        return None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert step to dictionary for serialization"""
@@ -43,19 +49,31 @@ class AnalysisStep:
             'function': self.function_name,
             'params': self.params,
             'timestamp': self.timestamp.isoformat(),
-            'metadata': self.metadata
+            'metadata': self.metadata,
+            'step_type': self.step_type
         }
 
     def generate_code(self) -> str:
         """Generate Python code for this step"""
-        params_str = ', '.join([f"{k}={repr(v)}" for k, v in self.params.items()])
-
-        code = f"""
+        if self.step_type == 'custom' and self.custom_code:
+            return f"""
 # Step: {self.name}
 # Timestamp: {self.timestamp}
-result_{self.name} = {self.function_name}({params_str})
+{self.custom_code}
 """
-        return code
+        elif self.function:
+            params_str = ', '.join([f"{k}={repr(v)}" for k, v in self.params.items()])
+            return f"""
+# Step: {self.name}
+# Timestamp: {self.timestamp}
+result_{self.name.replace(' ', '_')} = {self.function_name}({params_str})
+"""
+        else:
+            return f"""
+# Step: {self.name}
+# Timestamp: {self.timestamp}
+# Manual step - no automatic code generation
+"""
 
 
 class TransparentPipeline(QObject):
@@ -100,6 +118,71 @@ class TransparentPipeline(QObject):
             params = {}
 
         step = AnalysisStep(name, function, params)
+        self.steps.append(step)
+
+        # Emit signal
+        self.step_added.emit(step.to_dict())
+
+        return step
+
+    def add_filter_step(self, filter_type: str, excluded_files: List[str],
+                       original_count: int, remaining_count: int) -> AnalysisStep:
+        """
+        Add a data filtering step to the pipeline
+
+        This generates reproducible code that excludes specific files
+
+        Args:
+            filter_type: Type of filter ('countrate' or 'correlation')
+            excluded_files: List of filenames that were excluded
+            original_count: Number of files before filtering
+            remaining_count: Number of files after filtering
+
+        Returns:
+            The created AnalysisStep
+        """
+        # Generate code for this filtering step
+        if len(excluded_files) > 0:
+            files_list_str = ',\n    '.join([f"'{f}'" for f in excluded_files])
+            code = f"""
+# Filtering step: Exclude {len(excluded_files)} files based on {filter_type}
+# Original files: {original_count}, Remaining: {remaining_count}
+files_to_exclude_{filter_type} = [
+    {files_list_str}
+]
+
+# Filter {filter_type} data
+if '{filter_type}' in locals():
+    {filter_type}_data = {{k: v for k, v in {filter_type}_data.items()
+                    if k not in files_to_exclude_{filter_type}}}
+    print(f"Excluded {{len(files_to_exclude_{filter_type})}} files from {filter_type}")
+
+# Update basedata to match
+if 'df_basedata' in locals():
+    df_basedata = df_basedata[~df_basedata['filename'].isin(files_to_exclude_{filter_type})]
+    df_basedata = df_basedata.reset_index(drop=True)
+    df_basedata.index = df_basedata.index + 1
+"""
+        else:
+            code = f"""
+# Filtering step: No files excluded from {filter_type}
+# All {original_count} files kept
+print("No files excluded from {filter_type} filtering")
+"""
+
+        # Create step with custom code
+        step = AnalysisStep(
+            name=f"Filter {filter_type.capitalize()}",
+            step_type='filter',
+            custom_code=code,
+            params={
+                'filter_type': filter_type,
+                'excluded_files': excluded_files,
+                'original_count': original_count,
+                'remaining_count': remaining_count
+            }
+        )
+
         self.steps.append(step)
 
         # Emit signal

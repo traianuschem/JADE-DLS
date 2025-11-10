@@ -500,6 +500,18 @@ class JADEDLSMainWindow(QMainWindow):
                 filtered_data['countrates'] = filtered_countrates
                 excluded_count = len(data['countrates']) - len(filtered_countrates)
 
+                # Track which files were excluded for reproducibility
+                excluded_files = [f for f in data['countrates'].keys()
+                                 if f not in filtered_countrates]
+
+                # Add filter step to pipeline
+                self.pipeline.add_filter_step(
+                    filter_type='countrates',
+                    excluded_files=excluded_files,
+                    original_count=len(data['countrates']),
+                    remaining_count=len(filtered_countrates)
+                )
+
                 if excluded_count > 0:
                     self.status_manager.update(
                         f"Excluded {excluded_count} files based on count rates"
@@ -525,6 +537,18 @@ class JADEDLSMainWindow(QMainWindow):
                 filtered_correlations = correlation_dialog.get_filtered_data()
                 filtered_data['correlations'] = filtered_correlations
                 excluded_count = len(correlations_to_filter) - len(filtered_correlations)
+
+                # Track which files were excluded for reproducibility
+                excluded_files = [f for f in correlations_to_filter.keys()
+                                 if f not in filtered_correlations]
+
+                # Add filter step to pipeline
+                self.pipeline.add_filter_step(
+                    filter_type='correlations',
+                    excluded_files=excluded_files,
+                    original_count=len(correlations_to_filter),
+                    remaining_count=len(filtered_correlations)
+                )
 
                 if excluded_count > 0:
                     self.status_manager.update(
@@ -601,6 +625,10 @@ class JADEDLSMainWindow(QMainWindow):
             original_count = len(data['countrates'])
             excluded_count = original_count - len(filtered_countrates)
 
+            # Track excluded files for reproducibility
+            excluded_files = [f for f in data['countrates'].keys()
+                             if f not in filtered_countrates]
+
             # Update data
             self.pipeline.data['countrates'] = filtered_countrates
 
@@ -617,6 +645,14 @@ class JADEDLSMainWindow(QMainWindow):
                 filtered_basedata = filtered_basedata[filtered_basedata['filename'].isin(remaining_files)]
                 self.pipeline.data['basedata'] = filtered_basedata
                 self.pipeline.data['num_files'] = len(remaining_files)
+
+            # Add to pipeline for code export
+            self.pipeline.add_filter_step(
+                filter_type='countrates',
+                excluded_files=excluded_files,
+                original_count=original_count,
+                remaining_count=len(filtered_countrates)
+            )
 
             # Update view
             self.analysis_view.update_data_overview()
@@ -655,6 +691,10 @@ class JADEDLSMainWindow(QMainWindow):
             original_count = len(data['correlations'])
             excluded_count = original_count - len(filtered_correlations)
 
+            # Track excluded files for reproducibility
+            excluded_files = [f for f in data['correlations'].keys()
+                             if f not in filtered_correlations]
+
             # Update data
             self.pipeline.data['correlations'] = filtered_correlations
 
@@ -666,6 +706,14 @@ class JADEDLSMainWindow(QMainWindow):
                 filtered_basedata = filtered_basedata[filtered_basedata['filename'].isin(remaining_files)]
                 self.pipeline.data['basedata'] = filtered_basedata
                 self.pipeline.data['num_files'] = len(remaining_files)
+
+            # Add to pipeline for code export
+            self.pipeline.add_filter_step(
+                filter_type='correlations',
+                excluded_files=excluded_files,
+                original_count=original_count,
+                remaining_count=len(filtered_correlations)
+            )
 
             # Update view
             self.analysis_view.update_data_overview()
