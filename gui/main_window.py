@@ -145,6 +145,25 @@ class JADEDLSMainWindow(QMainWindow):
         # Analysis Menu
         analysis_menu = menubar.addMenu('&Analysis')
 
+        # Preprocessing submenu
+        preprocess_action = QAction('&Preprocessing...', self)
+        preprocess_action.setShortcut('Ctrl+P')
+        preprocess_action.setStatusTip('Run preprocessing and filtering')
+        preprocess_action.triggered.connect(self.run_preprocessing)
+        analysis_menu.addAction(preprocess_action)
+
+        filter_countrates_action = QAction('Filter &Count Rates...', self)
+        filter_countrates_action.setStatusTip('Manually filter count rate data')
+        filter_countrates_action.triggered.connect(self.filter_countrates_manual)
+        analysis_menu.addAction(filter_countrates_action)
+
+        filter_correlations_action = QAction('Filter C&orrelations...', self)
+        filter_correlations_action.setStatusTip('Manually filter correlation data')
+        filter_correlations_action.triggered.connect(self.filter_correlations_manual)
+        analysis_menu.addAction(filter_correlations_action)
+
+        analysis_menu.addSeparator()
+
         cumulant_action = QAction('&Cumulant Analysis...', self)
         cumulant_action.setStatusTip('Run cumulant fitting methods')
         cumulant_action.triggered.connect(self.run_cumulant_analysis)
@@ -378,9 +397,16 @@ class JADEDLSMainWindow(QMainWindow):
         self.inspector_panel.update_for_step(step_name)
 
     def on_run_analysis(self, analysis_type):
-        """Handle run analysis request"""
-        self.statusBar().showMessage(f"Running {analysis_type} analysis...")
-        # Analysis logic will be implemented in the pipeline
+        """Handle run analysis request from workflow panel"""
+        if analysis_type == 'preprocess':
+            self.run_preprocessing()
+        elif analysis_type == 'all':
+            # Run all steps sequentially
+            self.run_preprocessing()
+            # More steps will be added as they're implemented
+        else:
+            self.statusBar().showMessage(f"Running {analysis_type} analysis...")
+            # Other analysis types will be implemented
 
     def on_pipeline_step_added(self, step_info):
         """Handle new pipeline step"""
@@ -417,7 +443,49 @@ class JADEDLSMainWindow(QMainWindow):
             f"Successfully loaded {num_files} files"
         )
 
-        # Now show filtering dialogs if data exists
+        # Mark load data step as complete
+        self.workflow_panel.mark_step_complete('load_data')
+        self.workflow_panel.update_progress()
+
+        # Now run filtering
+        self.perform_filtering(auto_after_load=True)
+
+    def on_load_error(self, error_message):
+        """Handle data loading errors"""
+        # Close progress dialog
+        if self.progress_dialog:
+            self.progress_dialog.close()
+            self.progress_dialog = None
+
+        # Update status
+        self.status_manager.error(error_message)
+
+        # Show error message
+        QMessageBox.critical(
+            self,
+            "Error Loading Data",
+            f"Failed to load data:\n\n{error_message}"
+        )
+
+    # ========== Preprocessing and Filtering Methods ==========
+
+    def perform_filtering(self, auto_after_load=False):
+        """
+        Perform complete filtering workflow (count rates and correlations)
+
+        Args:
+            auto_after_load: If True, this is automatic after loading
+        """
+        if not self.loaded_data or 'correlations' not in self.loaded_data:
+            QMessageBox.warning(
+                self,
+                "No Data",
+                "Please load data first (File > Load Data)"
+            )
+            return
+
+        data = self.loaded_data if auto_after_load else self.pipeline.data
+        original_count = data.get('num_files', 0)
         filtered_data = data.copy()
 
         # Step 1: Filter count rates
@@ -489,16 +557,15 @@ class JADEDLSMainWindow(QMainWindow):
         self.analysis_view.update_data_overview()
 
         # Mark workflow step as complete
-        self.workflow_panel.mark_step_complete('load_data')
         self.workflow_panel.mark_step_complete('preprocess')
         self.workflow_panel.update_progress()
 
         # Show summary
         final_count = filtered_data.get('num_files', 0)
-        excluded_total = num_files - final_count
+        excluded_total = original_count - final_count
 
-        summary_msg = f"Data loading and filtering complete!\n\n"
-        summary_msg += f"Original files: {num_files}\n"
+        summary_msg = f"Filtering complete!\n\n"
+        summary_msg += f"Original files: {original_count}\n"
         summary_msg += f"Excluded: {excluded_total}\n"
         summary_msg += f"Final dataset: {final_count} files\n\n"
         summary_msg += f"Base data: {len(filtered_data.get('basedata', []))} entries\n"
@@ -513,19 +580,118 @@ class JADEDLSMainWindow(QMainWindow):
             summary_msg
         )
 
-    def on_load_error(self, error_message):
-        """Handle data loading errors"""
-        # Close progress dialog
-        if self.progress_dialog:
-            self.progress_dialog.close()
-            self.progress_dialog = None
+    def filter_countrates_manual(self):
+        """Manually filter count rate data"""
+        if not self.pipeline.data or 'countrates' not in self.pipeline.data:
+            QMessageBox.warning(
+                self,
+                "No Data",
+                "No count rate data available.\nPlease load data first."
+            )
+            return
 
-        # Update status
-        self.status_manager.error(error_message)
+        self.status_manager.start_operation("Manual count rate filtering")
 
-        # Show error message
-        QMessageBox.critical(
-            self,
-            "Error Loading Data",
-            f"Failed to load data:\n\n{error_message}"
-        )
+        data = self.pipeline.data
+        countrate_dialog = CountrateFilterDialog(data['countrates'], self)
+        result = countrate_dialog.exec_()
+
+        if result == countrate_dialog.Accepted:
+            filtered_countrates = countrate_dialog.get_filtered_data()
+            original_count = len(data['countrates'])
+            excluded_count = original_count - len(filtered_countrates)
+
+            # Update data
+            self.pipeline.data['countrates'] = filtered_countrates
+
+            # Also filter correlations and basedata to match
+            if 'correlations' in self.pipeline.data:
+                filtered_correlations = {k: v for k, v in self.pipeline.data['correlations'].items()
+                                        if k in filtered_countrates}
+                self.pipeline.data['correlations'] = filtered_correlations
+
+            if 'basedata' in self.pipeline.data:
+                import pandas as pd
+                remaining_files = list(filtered_countrates.keys())
+                filtered_basedata = self.pipeline.data['basedata']
+                filtered_basedata = filtered_basedata[filtered_basedata['filename'].isin(remaining_files)]
+                self.pipeline.data['basedata'] = filtered_basedata
+                self.pipeline.data['num_files'] = len(remaining_files)
+
+            # Update view
+            self.analysis_view.update_data_overview()
+
+            self.status_manager.complete_operation(
+                f"Count rate filtering complete - excluded {excluded_count} files"
+            )
+
+            QMessageBox.information(
+                self,
+                "Filtering Complete",
+                f"Excluded {excluded_count} of {original_count} files based on count rates.\n\n"
+                f"Remaining: {len(filtered_countrates)} files"
+            )
+        else:
+            self.status_manager.update("Count rate filtering cancelled")
+
+    def filter_correlations_manual(self):
+        """Manually filter correlation data"""
+        if not self.pipeline.data or 'correlations' not in self.pipeline.data:
+            QMessageBox.warning(
+                self,
+                "No Data",
+                "No correlation data available.\nPlease load data first."
+            )
+            return
+
+        self.status_manager.start_operation("Manual correlation filtering")
+
+        data = self.pipeline.data
+        correlation_dialog = CorrelationFilterDialog(data['correlations'], self)
+        result = correlation_dialog.exec_()
+
+        if result == correlation_dialog.Accepted:
+            filtered_correlations = correlation_dialog.get_filtered_data()
+            original_count = len(data['correlations'])
+            excluded_count = original_count - len(filtered_correlations)
+
+            # Update data
+            self.pipeline.data['correlations'] = filtered_correlations
+
+            # Also filter basedata to match
+            if 'basedata' in self.pipeline.data:
+                import pandas as pd
+                remaining_files = list(filtered_correlations.keys())
+                filtered_basedata = self.pipeline.data['basedata']
+                filtered_basedata = filtered_basedata[filtered_basedata['filename'].isin(remaining_files)]
+                self.pipeline.data['basedata'] = filtered_basedata
+                self.pipeline.data['num_files'] = len(remaining_files)
+
+            # Update view
+            self.analysis_view.update_data_overview()
+
+            self.status_manager.complete_operation(
+                f"Correlation filtering complete - excluded {excluded_count} files"
+            )
+
+            QMessageBox.information(
+                self,
+                "Filtering Complete",
+                f"Excluded {excluded_count} of {original_count} files based on correlations.\n\n"
+                f"Remaining: {len(filtered_correlations)} files"
+            )
+        else:
+            self.status_manager.update("Correlation filtering cancelled")
+
+    def run_preprocessing(self):
+        """Run preprocessing workflow (filtering)"""
+        if not self.loaded_data:
+            QMessageBox.warning(
+                self,
+                "No Data",
+                "Please load data first (File > Load Data)"
+            )
+            return
+
+        self.status_manager.start_operation("Preprocessing")
+        self.perform_filtering(auto_after_load=False)
