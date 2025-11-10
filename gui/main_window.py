@@ -17,6 +17,7 @@ from gui.core.status_manager import StatusManager, ProgressDialog
 from gui.core.data_loader import DataLoader
 from gui.dialogs.filtering_dialogs import CountrateFilterDialog, CorrelationFilterDialog
 from gui.dialogs.cumulant_dialog import CumulantAnalysisDialog
+from gui.dialogs.cumulant_results_dialog import CumulantResultsDialog, SummaryPlotDialog
 from gui.analysis.cumulant_analyzer import CumulantAnalyzer
 
 
@@ -1154,26 +1155,73 @@ print(method_c_results)
         # Combine all results
         combined_results = analyzer.get_combined_results()
 
-        # Display in analysis view
-        # For now, show as a message box (TODO: add to analysis view properly)
-        results_text = "Cumulant Analysis Results\n"
-        results_text += "=" * 60 + "\n\n"
-
-        for method_name, result_df in results:
-            results_text += f"{method_name}:\n"
-            results_text += result_df.to_string() + "\n\n"
-
-        QMessageBox.information(
-            self,
-            "Cumulant Analysis Complete",
-            f"Analysis completed successfully!\n\n"
-            f"Results displayed in console and will be available for export.\n\n"
-            f"Methods run: {', '.join([r[0] for r in results])}"
-        )
-
         # Print to console
         print("\n" + "=" * 60)
         print("CUMULANT ANALYSIS RESULTS")
         print("=" * 60)
         print(combined_results.to_string())
         print("=" * 60 + "\n")
+
+        # Show results for each method in separate dialogs
+        for method_name, result_df in results:
+            # Prepare data for dialog
+            results_data = {
+                'method_name': method_name,
+                'results_df': result_df,
+                'individual_plots': {},
+                'summary_plot': None,
+                'fit_quality': {}
+            }
+
+            # Get plots and fit quality based on method
+            if 'A' in method_name:
+                # Method A doesn't have individual plots
+                # Just show the results table
+                QMessageBox.information(
+                    self,
+                    f"Cumulant Analysis - {method_name}",
+                    f"Results for {method_name}:\n\n{result_df.to_string()}\n\n"
+                    f"Method A extracts cumulant data directly from ALV software.\n"
+                    f"No individual fit plots available."
+                )
+                continue
+
+            elif 'B' in method_name:
+                if hasattr(analyzer, 'method_b_plots'):
+                    results_data['individual_plots'] = analyzer.method_b_plots
+                if hasattr(analyzer, 'method_b_summary_plot'):
+                    results_data['summary_plot'] = analyzer.method_b_summary_plot
+                if hasattr(analyzer, 'method_b_fit_quality'):
+                    results_data['fit_quality'] = analyzer.method_b_fit_quality
+
+            elif 'C' in method_name:
+                if hasattr(analyzer, 'method_c_plots'):
+                    results_data['individual_plots'] = analyzer.method_c_plots
+                if hasattr(analyzer, 'method_c_summary_plot'):
+                    results_data['summary_plot'] = analyzer.method_c_summary_plot
+                if hasattr(analyzer, 'method_c_fit_quality'):
+                    results_data['fit_quality'] = analyzer.method_c_fit_quality
+
+            # Show results dialog with embedded plots
+            if results_data['individual_plots']:
+                dialog = CumulantResultsDialog(results_data, self)
+                dialog.exec_()
+
+                # Also show summary plot if available
+                if results_data['summary_plot'] is not None:
+                    summary_dialog = SummaryPlotDialog(
+                        results_data['summary_plot'],
+                        method_name,
+                        self
+                    )
+                    summary_dialog.exec_()
+
+        # Final summary message
+        QMessageBox.information(
+            self,
+            "Cumulant Analysis Complete",
+            f"Analysis completed successfully!\n\n"
+            f"Methods run: {', '.join([r[0] for r in results])}\n\n"
+            f"Results are displayed in individual dialogs and printed to console.\n"
+            f"All data is available for export."
+        )

@@ -225,7 +225,8 @@ class CumulantAnalyzer:
         Returns:
             DataFrame with results (Rh, errors, R^2, PDI)
         """
-        from cumulants import calculate_g2_B, plot_processed_correlations, analyze_diffusion_coefficient
+        from cumulants import calculate_g2_B, analyze_diffusion_coefficient
+        from gui.analysis.cumulant_plotting import plot_processed_correlations_no_show, create_summary_plot
 
         # Ensure data is prepared
         if self.df_basedata is None:
@@ -241,8 +242,8 @@ class CumulantAnalyzer:
         def fit_function(x, a, b, c):
             return 0.5 * np.log(a) - b * x + 0.5 * c * x**2
 
-        # Plot and fit
-        cumulant_method_B_fit = plot_processed_correlations(
+        # Plot and fit (without showing)
+        cumulant_method_B_fit, self.method_b_plots = plot_processed_correlations_no_show(
             processed_correlations,
             fit_function,
             fit_limits
@@ -258,18 +259,39 @@ class CumulantAnalyzer:
         cumulant_method_B_data = cumulant_method_B_data.reset_index(drop=True)
         cumulant_method_B_data.index = cumulant_method_B_data.index + 1
 
-        # Analyze diffusion coefficient
-        cumulant_method_B_diff = analyze_diffusion_coefficient(
-            data_df=cumulant_method_B_data,
-            q_squared_col='q^2',
-            gamma_cols=['b'],
-            method_names=['Method B']
+        # Analyze diffusion coefficient (without plotting)
+        # We'll create our own summary plot
+        import statsmodels.api as sm
+
+        # Linear regression
+        X = cumulant_method_B_data['q^2']
+        Y = cumulant_method_B_data['b']
+        X_with_const = sm.add_constant(X)
+        model = sm.OLS(Y, X_with_const).fit()
+
+        # Create summary plot
+        self.method_b_summary_plot = create_summary_plot(
+            cumulant_method_B_data,
+            'q^2',
+            ['b'],
+            ['Method B'],
+            '1/s'
         )
 
-        # Create DataFrame with diffusion coefficients
+        # Extract fit quality metrics
+        self.method_b_fit_quality = {}
+        for filename in cumulant_method_B_fit['filename']:
+            row = cumulant_method_B_fit[cumulant_method_B_fit['filename'] == filename]
+            if not row.empty:
+                self.method_b_fit_quality[filename] = {
+                    'R2': row['R-squared'].values[0] if 'R-squared' in row else 0,
+                    'residuals': 'Normal'
+                }
+
+        # Calculate diffusion coefficients
         B_diff = pd.DataFrame()
-        B_diff['D [m^2/s]'] = cumulant_method_B_diff['q^2_coef'] * 10**(-18)
-        B_diff['std err D [m^2/s]'] = cumulant_method_B_diff['q^2_se'] * 10**(-18)
+        B_diff['D [m^2/s]'] = [model.params[1] * 10**(-18)]
+        B_diff['std err D [m^2/s]'] = [model.bse[1] * 10**(-18)]
 
         # Calculate polydispersity
         cumulant_method_B_data['polydispersity'] = (
@@ -286,9 +308,9 @@ class CumulantAnalyzer:
             (B_diff['std err D [m^2/s]'][0] / B_diff['D [m^2/s]'][0])**2
         )
         self.method_b_results['Rh error [nm]'] = fractional_error_Rh_B * self.method_b_results['Rh [nm]']
-        self.method_b_results['R_squared'] = cumulant_method_B_diff['R_squared']
+        self.method_b_results['R_squared'] = [model.rsquared]
         self.method_b_results['Fit'] = 'Rh from linear cumulant fit'
-        self.method_b_results['Residuals'] = cumulant_method_B_diff['Normality']
+        self.method_b_results['Residuals'] = 'N/A'
         self.method_b_results['PDI'] = polydispersity_method_B
 
         return self.method_b_results
@@ -311,10 +333,8 @@ class CumulantAnalyzer:
         Returns:
             DataFrame with results (Rh, errors, R^2, PDI)
         """
-        from cumulants_C import (plot_processed_correlations_iterative,
-                                get_adaptive_initial_parameters,
-                                get_meaningful_parameters)
-        from cumulants import analyze_diffusion_coefficient
+        from cumulants_C import get_adaptive_initial_parameters, get_meaningful_parameters
+        from gui.analysis.cumulant_plotting import plot_processed_correlations_iterative_no_show, create_summary_plot
 
         # Ensure data is prepared
         if self.df_basedata is None:
@@ -362,8 +382,8 @@ class CumulantAnalyzer:
                 params['initial_parameters']
             )
 
-        # Run fitting
-        cumulant_method_C_fit = plot_processed_correlations_iterative(
+        # Run fitting (without showing plots)
+        cumulant_method_C_fit, self.method_c_plots = plot_processed_correlations_iterative_no_show(
             self.processed_correlations,
             chosen_fit_function,
             params['fit_limits'],
@@ -381,18 +401,36 @@ class CumulantAnalyzer:
         cumulant_method_C_data = cumulant_method_C_data.reset_index(drop=True)
         cumulant_method_C_data.index = cumulant_method_C_data.index + 1
 
-        # Analyze diffusion coefficient
-        cumulant_method_C_diff = analyze_diffusion_coefficient(
-            data_df=cumulant_method_C_data,
-            q_squared_col='q^2',
-            gamma_cols=['best_b'],
-            method_names=['Method C']
+        # Create summary plot
+        self.method_c_summary_plot = create_summary_plot(
+            cumulant_method_C_data,
+            'q^2',
+            ['best_b'],
+            ['Method C'],
+            '1/s'
         )
+
+        # Extract fit quality metrics
+        self.method_c_fit_quality = {}
+        for filename in cumulant_method_C_fit['filename']:
+            row = cumulant_method_C_fit[cumulant_method_C_fit['filename'] == filename]
+            if not row.empty:
+                self.method_c_fit_quality[filename] = {
+                    'R2': row['R_squared'].values[0] if 'R_squared' in row else 0,
+                    'residuals': row['RMSE'].values[0] if 'RMSE' in row else 0
+                }
+
+        # Linear regression for diffusion coefficient
+        import statsmodels.api as sm
+        X = cumulant_method_C_data['q^2']
+        Y = cumulant_method_C_data['best_b']
+        X_with_const = sm.add_constant(X)
+        model = sm.OLS(Y, X_with_const).fit()
 
         # Create DataFrame with diffusion coefficients
         C_diff = pd.DataFrame()
-        C_diff['D [m^2/s]'] = cumulant_method_C_diff['q^2_coef'] * 10**(-18)
-        C_diff['std err D [m^2/s]'] = cumulant_method_C_diff['q^2_se'] * 10**(-18)
+        C_diff['D [m^2/s]'] = [model.params[1] * 10**(-18)]
+        C_diff['std err D [m^2/s]'] = [model.bse[1] * 10**(-18)]
 
         # Calculate polydispersity
         cumulant_method_C_data['polydispersity'] = (
@@ -409,9 +447,9 @@ class CumulantAnalyzer:
             (C_diff['std err D [m^2/s]'][0] / C_diff['D [m^2/s]'][0])**2
         )
         self.method_c_results['Rh error [nm]'] = fractional_error_Rh_C * self.method_c_results['Rh [nm]']
-        self.method_c_results['R_squared'] = cumulant_method_C_diff['R_squared']
+        self.method_c_results['R_squared'] = [model.rsquared]
         self.method_c_results['Fit'] = 'Rh from iterative non-linear cumulant fit'
-        self.method_c_results['Residuals'] = cumulant_method_C_diff['Normality']
+        self.method_c_results['Residuals'] = 'N/A'
         self.method_c_results['PDI'] = polydispersity_method_C
 
         return self.method_c_results
