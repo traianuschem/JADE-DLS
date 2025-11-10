@@ -191,26 +191,47 @@ class AnalysisView(QWidget):
 
     def update_data_overview(self):
         """Update data overview with loaded data"""
-        if 'files' in self.pipeline.data:
-            files = self.pipeline.data['files']
-            num_files = len(files)
+        if 'files' not in self.pipeline.data:
+            return
+
+        files = self.pipeline.data['files']
+        num_files = len(files)
+        basedata = self.pipeline.data.get('basedata', pd.DataFrame())
+
+        # Calculate statistics
+        if not basedata.empty:
+            mean_temp = basedata['temperature [K]'].mean()
+            std_temp = basedata['temperature [K]'].std()
+            mean_visc = basedata['viscosity [cp]'].mean()
+            angles = sorted(basedata['angle [°]'].unique())
+            angle_list = ', '.join([f"{a:.0f}°" for a in angles])
 
             stats_text = f"""
 <b>Files Loaded:</b> {num_files}<br>
-<b>Data Folder:</b> {self.pipeline.data.get('data_folder', 'N/A')}<br>
-<b>Status:</b> Ready for analysis
+<b>Unique Angles:</b> {len(angles)} ({angle_list})<br>
+<b>Mean Temperature:</b> {mean_temp:.2f} ± {std_temp:.3f} K<br>
+<b>Mean Viscosity:</b> {mean_visc:.4f} cP<br>
+<b>Correlations:</b> {len(self.pipeline.data.get('correlations', {}))} datasets<br>
+<b>Count Rates:</b> {len(self.pipeline.data.get('countrates', {}))} datasets<br>
+<b>Status:</b> <span style="color: green;">Ready for analysis</span>
 """
-            self.stats_label.setText(stats_text)
+        else:
+            stats_text = f"""
+<b>Files Loaded:</b> {num_files}<br>
+<b>Status:</b> Data loaded, but no base data extracted
+"""
 
-            # Update files table
-            self.files_table.setRowCount(min(num_files, 50))  # Limit display
-            for i, filepath in enumerate(files[:50]):
-                import os
-                filename = os.path.basename(filepath)
-                self.files_table.setItem(i, 0, QTableWidgetItem(filename))
-                self.files_table.setItem(i, 1, QTableWidgetItem("-"))
-                self.files_table.setItem(i, 2, QTableWidgetItem("-"))
-                self.files_table.setItem(i, 3, QTableWidgetItem("✓ Loaded"))
+        self.stats_label.setText(stats_text)
+
+        # Update files table with actual data
+        if not basedata.empty:
+            self.files_table.setRowCount(len(basedata))
+
+            for i, row in basedata.iterrows():
+                self.files_table.setItem(i-1, 0, QTableWidgetItem(row['filename']))
+                self.files_table.setItem(i-1, 1, QTableWidgetItem(f"{row['angle [°]']:.1f}"))
+                self.files_table.setItem(i-1, 2, QTableWidgetItem(f"{row['temperature [K]']:.2f}"))
+                self.files_table.setItem(i-1, 3, QTableWidgetItem("✓ Loaded"))
 
             self.files_table.resizeColumnsToContents()
 

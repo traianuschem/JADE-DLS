@@ -5,7 +5,7 @@ A transparent, user-friendly GUI for Dynamic Light Scattering analysis
 
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QSplitter, QMenuBar, QAction, QStatusBar,
-                             QMessageBox, QFileDialog, QTabWidget)
+                             QMessageBox, QFileDialog, QTabWidget, QProgressBar)
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QIcon
 
@@ -13,6 +13,8 @@ from gui.widgets.workflow_panel import WorkflowPanel
 from gui.widgets.analysis_view import AnalysisView
 from gui.widgets.inspector_panel import InspectorPanel
 from gui.core.pipeline import TransparentPipeline
+from gui.core.status_manager import StatusManager, ProgressDialog
+from gui.core.data_loader import DataLoader
 
 
 class JADEDLSMainWindow(QMainWindow):
@@ -31,6 +33,18 @@ class JADEDLSMainWindow(QMainWindow):
 
         # Initialize the transparent pipeline
         self.pipeline = TransparentPipeline()
+
+        # Initialize status manager
+        self.status_manager = None  # Will be set after status bar is created
+
+        # Initialize data loader
+        self.data_loader = DataLoader()
+
+        # Progress dialog for long operations
+        self.progress_dialog = None
+
+        # Data storage
+        self.loaded_data = None
 
         # Setup UI
         self.init_ui()
@@ -51,6 +65,9 @@ class JADEDLSMainWindow(QMainWindow):
 
         # Create status bar
         self.statusBar().showMessage("Ready")
+
+        # Initialize status manager (after status bar exists)
+        self.status_manager = StatusManager(self.statusBar())
 
     def setup_central_widget(self):
         """Setup the main layout with three panels"""
@@ -202,6 +219,11 @@ class JADEDLSMainWindow(QMainWindow):
         self.pipeline.step_added.connect(self.on_pipeline_step_added)
         self.pipeline.analysis_completed.connect(self.on_analysis_completed)
 
+        # Connect data loader signals
+        self.data_loader.progress.connect(self.on_load_progress)
+        self.data_loader.data_loaded.connect(self.on_data_loaded)
+        self.data_loader.error.connect(self.on_load_error)
+
     # ========== Slot Methods ==========
 
     def load_data(self):
@@ -214,12 +236,21 @@ class JADEDLSMainWindow(QMainWindow):
         )
 
         if folder:
-            try:
-                self.pipeline.load_data(folder)
-                self.statusBar().showMessage(f"Loaded data from {folder}")
-                self.analysis_view.update_data_overview()
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to load data: {str(e)}")
+            # Create and show progress dialog
+            self.progress_dialog = ProgressDialog("Loading Data", self)
+            self.progress_dialog.setRange(0, 5)
+            self.progress_dialog.setValue(0)
+            self.progress_dialog.show()
+
+            # Update status
+            self.status_manager.start_operation(f"Loading data from {folder}")
+
+            # Start loading in background thread
+            self.data_loader.load_data(
+                folder,
+                load_countrates=True,
+                load_correlations=True
+            )
 
     def export_notebook(self):
         """Export analysis as Jupyter notebook"""
@@ -359,3 +390,66 @@ class JADEDLSMainWindow(QMainWindow):
         """Handle analysis completion"""
         self.statusBar().showMessage("Analysis completed successfully")
         self.analysis_view.display_results(results)
+
+    def on_load_progress(self, current, total, message):
+        """Handle data loading progress updates"""
+        # Update status manager
+        self.status_manager.update(message, current, total)
+
+        # Update progress dialog if it exists
+        if self.progress_dialog:
+            self.progress_dialog.update_status(message, current, total)
+
+    def on_data_loaded(self, data):
+        """Handle successful data loading"""
+        # Close progress dialog
+        if self.progress_dialog:
+            self.progress_dialog.close()
+            self.progress_dialog = None
+
+        # Store data
+        self.loaded_data = data
+
+        # Update pipeline
+        self.pipeline.data = data
+        self.pipeline.data_loaded.emit(data.get('data_folder', 'Unknown'))
+
+        # Update status
+        num_files = data.get('num_files', 0)
+        self.status_manager.complete_operation(
+            f"Successfully loaded {num_files} files"
+        )
+
+        # Update analysis view
+        self.analysis_view.update_data_overview()
+
+        # Mark workflow step as complete
+        self.workflow_panel.mark_step_complete('load_data')
+        self.workflow_panel.update_progress()
+
+        # Show success message
+        QMessageBox.information(
+            self,
+            "Data Loaded",
+            f"Successfully loaded {num_files} files.\n\n"
+            f"Base data: {len(data.get('basedata', []))} entries\n"
+            f"Correlations: {len(data.get('correlations', {}))} datasets\n"
+            f"Count rates: {len(data.get('countrates', {}))} datasets"
+        )
+
+    def on_load_error(self, error_message):
+        """Handle data loading errors"""
+        # Close progress dialog
+        if self.progress_dialog:
+            self.progress_dialog.close()
+            self.progress_dialog = None
+
+        # Update status
+        self.status_manager.error(error_message)
+
+        # Show error message
+        QMessageBox.critical(
+            self,
+            "Error Loading Data",
+            f"Failed to load data:\n\n{error_message}"
+        )
