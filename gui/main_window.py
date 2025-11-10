@@ -1211,8 +1211,9 @@ print(method_c_results)
                     # Wrap the summary plot as a single-item dict
                     plots_dict = {'Method A Summary': (analyzer.method_a_summary_plot, {})}
 
+                # Don't switch tabs yet - accumulate all results first
                 self.analysis_view.display_cumulant_results(
-                    method_name, result_df, plots_dict, None
+                    method_name, result_df, plots_dict, None, switch_tab=False
                 )
 
             elif 'B' in method_name:
@@ -1221,8 +1222,9 @@ print(method_c_results)
                 if hasattr(analyzer, 'method_b_fit_quality'):
                     fit_quality = analyzer.method_b_fit_quality
 
+                # Don't switch tabs yet
                 self.analysis_view.display_cumulant_results(
-                    method_name, result_df, plots_dict, fit_quality
+                    method_name, result_df, plots_dict, fit_quality, switch_tab=False
                 )
 
             elif 'C' in method_name:
@@ -1231,9 +1233,13 @@ print(method_c_results)
                 if hasattr(analyzer, 'method_c_fit_quality'):
                     fit_quality = analyzer.method_c_fit_quality
 
+                # Don't switch tabs yet
                 self.analysis_view.display_cumulant_results(
-                    method_name, result_df, plots_dict, fit_quality
+                    method_name, result_df, plots_dict, fit_quality, switch_tab=False
                 )
+
+        # After all methods are loaded, switch to Results tab to show the summary
+        self.analysis_view.show_results_tab()
 
         # Update status
         self.status_manager.complete_operation(

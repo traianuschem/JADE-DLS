@@ -329,7 +329,7 @@ class AnalysisView(QWidget):
 
     # ========== Cumulant Analysis Display Methods ==========
 
-    def display_cumulant_results(self, method_name, results_df, plots_dict=None, fit_quality=None):
+    def display_cumulant_results(self, method_name, results_df, plots_dict=None, fit_quality=None, switch_tab=True):
         """
         Display cumulant analysis results in Results and Plots tabs
 
@@ -338,6 +338,7 @@ class AnalysisView(QWidget):
             results_df: DataFrame with final results
             plots_dict: Dictionary {filename: (fig, data)} or None
             fit_quality: Dictionary {filename: {'R2': float, ...}} or None
+            switch_tab: Whether to switch to appropriate tab (default True)
         """
         # Update Results tab
         self._update_results_table(method_name, results_df)
@@ -345,11 +346,16 @@ class AnalysisView(QWidget):
         # Update Plots tab if plots are available
         if plots_dict:
             self._load_plots(method_name, plots_dict, fit_quality)
-            # Switch to Plots tab
-            self.tabs.setCurrentIndex(1)
-        else:
+            if switch_tab:
+                # Switch to Plots tab
+                self.tabs.setCurrentIndex(1)
+        elif switch_tab:
             # Switch to Results tab
             self.tabs.setCurrentIndex(2)
+
+    def show_results_tab(self):
+        """Switch to Results tab"""
+        self.tabs.setCurrentIndex(2)
 
     def _update_results_table(self, method_name, results_df):
         """Update results table with new results"""
@@ -432,6 +438,9 @@ class AnalysisView(QWidget):
 
         # Start building new method section
         new_section = f"<h3 style='color: #0066cc; margin-top: 15px;'>{method_name}</h3>"
+
+        # Add main results table
+        new_section += "<h4>Results Summary:</h4>"
         new_section += "<table border='1' cellpadding='5' cellspacing='0' style='border-collapse: collapse; width: 100%;'>"
         new_section += "<tr style='background-color: #e0e0e0; font-weight: bold;'>"
 
@@ -458,6 +467,38 @@ class AnalysisView(QWidget):
                 new_section += f"<td style='padding: 8px;'>{cell_text}</td>"
             new_section += "</tr>"
         new_section += "</table>"
+
+        # Add detailed fit statistics if available
+        if hasattr(self, 'current_fit_quality') and self.current_fit_quality:
+            new_section += "<h4>Detailed Fit Statistics:</h4>"
+            new_section += "<table border='1' cellpadding='5' cellspacing='0' style='border-collapse: collapse; width: 100%;'>"
+            new_section += "<tr style='background-color: #e0e0e0; font-weight: bold;'>"
+            new_section += "<th>Dataset</th><th>R²</th><th>RMSE</th><th>Status</th>"
+            new_section += "</tr>"
+
+            for filename, quality in list(self.current_fit_quality.items())[:10]:  # Show first 10
+                new_section += "<tr>"
+                new_section += f"<td>{filename}</td>"
+                new_section += f"<td>{quality.get('R2', 'N/A'):.4f}</td>"
+                new_section += f"<td>{quality.get('residuals', quality.get('RMSE', 'N/A'))}</td>"
+
+                r2 = quality.get('R2', 0)
+                if r2 > 0.99:
+                    status = "✓ Excellent"
+                    color = "green"
+                elif r2 > 0.95:
+                    status = "○ Good"
+                    color = "orange"
+                else:
+                    status = "✗ Check"
+                    color = "red"
+                new_section += f"<td style='color: {color}; font-weight: bold;'>{status}</td>"
+                new_section += "</tr>"
+
+            if len(self.current_fit_quality) > 10:
+                new_section += f"<tr><td colspan='4' style='font-style: italic; text-align: center;'>... and {len(self.current_fit_quality) - 10} more datasets</td></tr>"
+
+            new_section += "</table>"
 
         # Append to existing HTML or create new
         if current_html and "<body" in current_html:
