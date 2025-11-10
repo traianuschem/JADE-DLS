@@ -476,57 +476,77 @@ class AnalysisView(QWidget):
         """Load plots into the plotting system"""
         print(f"[ANALYSIS VIEW] Loading {len(plots_dict)} plots for {method_name}")
 
-        self.current_plots = plots_dict
-        self.current_fit_quality = fit_quality or {}
-        self.current_method_name = method_name
+        # Add to existing plots instead of replacing
+        if not hasattr(self, 'current_plots'):
+            self.current_plots = {}
+        if not hasattr(self, 'current_fit_quality'):
+            self.current_fit_quality = {}
 
-        # Clear and populate plot list
-        self.plot_list.clear()
+        # Merge new plots with existing ones
+        self.current_plots.update(plots_dict)
+        if fit_quality:
+            self.current_fit_quality.update(fit_quality)
+
+        # Add separator if there are already plots in the list
+        if self.plot_list.count() > 0:
+            separator = QListWidgetItem(f"─── {method_name} ───")
+            separator.setFlags(separator.flags() & ~Qt.ItemIsSelectable)
+            from PyQt5.QtGui import QFont
+            font = QFont()
+            font.setBold(True)
+            separator.setFont(font)
+            self.plot_list.addItem(separator)
+
+        # Get starting index for numbering
+        start_index = self.plot_list.count()
+
+        # Populate plot list (append, don't clear)
         filenames = list(plots_dict.keys())
 
         for i, filename in enumerate(filenames):
             # Add quality indicator
             quality_str = ""
-            if filename in self.current_fit_quality:
-                r2 = self.current_fit_quality[filename].get('R2', 0)
+            if filename in (fit_quality or {}):
+                r2 = fit_quality[filename].get('R2', 0)
                 quality_str = f" (R²={r2:.3f})"
 
-            self.plot_list.addItem(f"{i+1}. {filename}{quality_str}")
-            print(f"[ANALYSIS VIEW] Added plot {i+1}: {filename}{quality_str}")
+            item = QListWidgetItem(f"{start_index + i + 1}. {filename}{quality_str}")
+            # Store filename in item data for retrieval
+            item.setData(Qt.UserRole, filename)
+            self.plot_list.addItem(item)
+            print(f"[ANALYSIS VIEW] Added plot {start_index + i + 1}: {filename}{quality_str}")
 
         # Show navigation widget
         self.nav_widget.show()
         self.plot_placeholder.hide()
 
-        # Show first plot
-        if filenames:
-            self.current_plot_index = 0
-            self.plot_list.setCurrentRow(0)
-            self._show_plot(0)
-            print(f"[ANALYSIS VIEW] Displayed first plot")
+        # Show first real plot (skip separators)
+        if filenames and self.plot_list.count() > 0:
+            # Find first non-separator item
+            for row in range(self.plot_list.count()):
+                item = self.plot_list.item(row)
+                if item and item.data(Qt.UserRole):  # Has filename data
+                    self.plot_list.setCurrentRow(row)
+                    self._show_plot_by_item(item)
+                    print(f"[ANALYSIS VIEW] Displayed first plot")
+                    break
         else:
             print(f"[ANALYSIS VIEW WARNING] No plots to display!")
 
     def _on_plot_selected(self, index):
         """Handle plot selection from list"""
         if index >= 0:
-            self._show_plot(index)
+            item = self.plot_list.item(index)
+            if item and item.data(Qt.UserRole):  # Only show if it's not a separator
+                self._show_plot_by_item(item)
 
-    def _show_plot(self, index):
-        """Show plot at given index"""
-        print(f"[ANALYSIS VIEW] _show_plot called with index={index}")
-
-        filenames = list(self.current_plots.keys())
-        if index < 0 or index >= len(filenames):
-            print(f"[ANALYSIS VIEW ERROR] Index {index} out of range (0-{len(filenames)-1})")
+    def _show_plot_by_item(self, item):
+        """Show plot based on QListWidgetItem"""
+        filename = item.data(Qt.UserRole)
+        if not filename:
             return
 
-        self.current_plot_index = index
-        filename = filenames[index]
         print(f"[ANALYSIS VIEW] Showing plot for {filename}")
-
-        # Update selection
-        self.plot_list.setCurrentRow(index)
 
         # Get plot data
         if filename in self.current_plots:
@@ -588,7 +608,9 @@ class AnalysisView(QWidget):
             print(f"[ANALYSIS VIEW] Plot drawn successfully")
 
             # Update info label
-            info_text = f"<b>Dataset {index + 1} of {len(filenames)}</b>: {filename}<br>"
+            total_plots = len(self.current_plots)
+            current_num = self.plot_list.currentRow() + 1
+            info_text = f"<b>Plot {current_num} of {self.plot_list.count()}</b>: {filename}<br>"
             if filename in self.current_fit_quality:
                 quality = self.current_fit_quality[filename]
                 info_text += f"<b>Fit Quality:</b> R² = {quality.get('R2', 'N/A')}"
@@ -596,20 +618,52 @@ class AnalysisView(QWidget):
                     info_text += f", Residuals = {quality.get('residuals', 'N/A')}"
             self.plot_info_label.setText(info_text)
 
-        # Update button states
-        self.prev_plot_btn.setEnabled(index > 0)
-        self.next_plot_btn.setEnabled(index < len(filenames) - 1)
+        # Update button states based on list position
+        current_row = self.plot_list.currentRow()
+        self._update_nav_buttons(current_row)
+
+    def _update_nav_buttons(self, current_row):
+        """Update navigation button states"""
+        # Find previous non-separator
+        has_prev = False
+        for row in range(current_row - 1, -1, -1):
+            item = self.plot_list.item(row)
+            if item and item.data(Qt.UserRole):
+                has_prev = True
+                break
+
+        # Find next non-separator
+        has_next = False
+        for row in range(current_row + 1, self.plot_list.count()):
+            item = self.plot_list.item(row)
+            if item and item.data(Qt.UserRole):
+                has_next = True
+                break
+
+        self.prev_plot_btn.setEnabled(has_prev)
+        self.next_plot_btn.setEnabled(has_next)
 
     def _show_previous_plot(self):
         """Show previous plot"""
-        if self.current_plot_index > 0:
-            self._show_plot(self.current_plot_index - 1)
+        current_row = self.plot_list.currentRow()
+        # Find previous non-separator item
+        for row in range(current_row - 1, -1, -1):
+            item = self.plot_list.item(row)
+            if item and item.data(Qt.UserRole):
+                self.plot_list.setCurrentRow(row)
+                self._show_plot_by_item(item)
+                break
 
     def _show_next_plot(self):
         """Show next plot"""
-        filenames = list(self.current_plots.keys())
-        if self.current_plot_index < len(filenames) - 1:
-            self._show_plot(self.current_plot_index + 1)
+        current_row = self.plot_list.currentRow()
+        # Find next non-separator item
+        for row in range(current_row + 1, self.plot_list.count()):
+            item = self.plot_list.item(row)
+            if item and item.data(Qt.UserRole):
+                self.plot_list.setCurrentRow(row)
+                self._show_plot_by_item(item)
+                break
 
     def _show_grid_view(self):
         """Show all plots in grid view"""
