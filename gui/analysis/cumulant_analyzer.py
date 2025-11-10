@@ -446,15 +446,35 @@ class CumulantAnalyzer:
 
         # Linear regression for diffusion coefficient
         import statsmodels.api as sm
+
+        # Debug: Check data before regression
+        print(f"[CUMULANT METHOD C DEBUG] Data for regression:")
+        print(f"  q^2 shape: {cumulant_method_C_data['q^2'].shape}")
+        print(f"  best_b shape: {cumulant_method_C_data['best_b'].shape}")
+        print(f"  q^2 sample: {cumulant_method_C_data['q^2'].head()}")
+        print(f"  best_b sample: {cumulant_method_C_data['best_b'].head()}")
+        print(f"  q^2 has NaN: {cumulant_method_C_data['q^2'].isna().any()}")
+        print(f"  best_b has NaN: {cumulant_method_C_data['best_b'].isna().any()}")
+
         X = cumulant_method_C_data['q^2']
         Y = cumulant_method_C_data['best_b']
         X_with_const = sm.add_constant(X)
         model = sm.OLS(Y, X_with_const).fit()
 
+        print(f"[CUMULANT METHOD C DEBUG] Regression results:")
+        print(f"  params: {model.params}")
+        print(f"  R²: {model.rsquared}")
+        print(f"  slope (params[1]): {model.params.iloc[1]}")
+
         # Create DataFrame with diffusion coefficients
         C_diff = pd.DataFrame()
         C_diff['D [m^2/s]'] = [model.params.iloc[1] * 10**(-18)]
         C_diff['std err D [m^2/s]'] = [model.bse.iloc[1] * 10**(-18)]
+
+        print(f"[CUMULANT METHOD C DEBUG] Diffusion coefficient:")
+        print(f"  D [m^2/s]: {C_diff['D [m^2/s]'][0]}")
+        print(f"  c_value: {self.c_value}")
+        print(f"  Rh calculation: {self.c_value} * (1 / {C_diff['D [m^2/s]'][0]}) * 10^9")
 
         # Calculate polydispersity
         cumulant_method_C_data['polydispersity'] = (

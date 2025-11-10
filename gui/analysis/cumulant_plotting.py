@@ -60,7 +60,10 @@ def plot_processed_correlations_no_show(dataframes_dict, fit_function, fit_x_lim
             fit_result['R-squared'] = r_squared
 
             # Create figure (but don't show it)
-            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+            # Use Figure() instead of plt.subplots() to avoid memory leak
+            from matplotlib.figure import Figure
+            fig = Figure(figsize=(14, 5))
+            ax1, ax2 = fig.subplots(1, 2)
 
             # Left plot: original data and fit
             ax1.plot(x_data, y_data, marker='.', linestyle='', label='Data')
@@ -84,7 +87,7 @@ def plot_processed_correlations_no_show(dataframes_dict, fit_function, fit_x_lim
                     va='top', ha='right',
                     bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
 
-            plt.tight_layout()
+            fig.tight_layout()
 
             # Store figure instead of showing it
             plots_dict[name] = (fig, {
@@ -275,7 +278,10 @@ def plot_processed_correlations_iterative_no_show(dataframes_dict, fit_function,
                 continue
 
             # Create figure (2x1 layout like original notebook)
-            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+            # Use Figure() instead of plt.subplots() to avoid memory leak
+            from matplotlib.figure import Figure
+            fig = Figure(figsize=(14, 5))
+            ax1, ax2 = fig.subplots(1, 2)
 
             # Left plot: Data and all fit iterations
             ax1.plot(x_data, y_data, marker='.', linestyle='', label='Data')
@@ -314,7 +320,7 @@ def plot_processed_correlations_iterative_no_show(dataframes_dict, fit_function,
             ax2.set_title(f'[{plot_number}]: Q-Q Plot of Residuals (Best Fit: Iter {best_iteration})')
             ax2.grid(True)
 
-            plt.tight_layout()
+            fig.tight_layout()
 
             # Store figure
             plots_dict[name] = (fig, {
@@ -360,8 +366,9 @@ def create_summary_plot(data_df, q_squared_col, gamma_cols, method_names=None, g
     elif not isinstance(method_names, list):
         method_names = [method_names]
 
-    # Create figure
-    fig = plt.figure(figsize=(10, 6))
+    # Create figure (use Figure() to avoid memory leak)
+    from matplotlib.figure import Figure
+    fig = Figure(figsize=(10, 6))
     ax = fig.add_subplot(111)
 
     X_full = data_df[q_squared_col]
@@ -397,6 +404,6 @@ def create_summary_plot(data_df, q_squared_col, gamma_cols, method_names=None, g
     ax.legend()
     ax.grid(True)
 
-    plt.tight_layout()
+    fig.tight_layout()
 
     return fig
