@@ -1185,6 +1185,9 @@ print(method_c_results)
             results: List of tuples (method_name, result_dataframe)
             analyzer: CumulantAnalyzer instance with results
         """
+        # Clear previous results
+        self.analysis_view.clear_results()
+
         # Combine all results
         combined_results = analyzer.get_combined_results()
 
@@ -1202,10 +1205,14 @@ print(method_c_results)
             fit_quality = None
 
             if 'A' in method_name:
-                # Method A doesn't have individual plots
-                # Just show in results tab
+                # Method A has a summary plot (Gamma vs q²)
+                plots_dict = None
+                if hasattr(analyzer, 'method_a_summary_plot'):
+                    # Wrap the summary plot as a single-item dict
+                    plots_dict = {'Method A Summary': (analyzer.method_a_summary_plot, {})}
+
                 self.analysis_view.display_cumulant_results(
-                    method_name, result_df, None, None
+                    method_name, result_df, plots_dict, None
                 )
 
             elif 'B' in method_name:

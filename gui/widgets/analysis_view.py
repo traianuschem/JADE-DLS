@@ -191,18 +191,23 @@ class AnalysisView(QWidget):
         self.results_table.setHorizontalHeaderLabels([
             "Method", "Rh (nm)", "Error (nm)", "R²", "PDI", "Residuals"
         ])
+        # Enable sorting and better column sizing
+        self.results_table.setSortingEnabled(True)
+        self.results_table.horizontalHeader().setStretchLastSection(True)
+        self.results_table.setAlternatingRowColors(True)
         results_layout.addWidget(self.results_table)
 
         results_group.setLayout(results_layout)
         layout.addWidget(results_group)
 
         # Details text
-        details_group = QGroupBox("Details")
+        details_group = QGroupBox("Detailed Results")
         details_layout = QVBoxLayout()
 
         self.details_text = QTextEdit()
         self.details_text.setReadOnly(True)
-        self.details_text.setMaximumHeight(150)
+        self.details_text.setMinimumHeight(200)
+        self.details_text.setHtml("")  # Initialize as HTML
         details_layout.addWidget(self.details_text)
 
         details_group.setLayout(details_layout)
@@ -357,35 +362,61 @@ class AnalysisView(QWidget):
         for i, row in results_df.iterrows():
             self.results_table.insertRow(current_rows + i)
 
-            # Method
-            self.results_table.setItem(current_rows + i, 0,
-                                      QTableWidgetItem(str(row.get('Fit', method_name))))
+            # Method - use the 'Fit' column for the full description
+            fit_name = str(row.get('Fit', method_name))
+            method_item = QTableWidgetItem(fit_name)
+
+            # Set background color based on method type
+            from PyQt5.QtGui import QColor
+            if 'Method A' in method_name or '1st order' in fit_name or '2nd order' in fit_name or '3rd order' in fit_name:
+                method_item.setBackground(QColor(230, 240, 255))  # Light blue
+            elif 'Method B' in method_name or 'linear' in fit_name:
+                method_item.setBackground(QColor(240, 255, 230))  # Light green
+            elif 'Method C' in method_name or 'iterative' in fit_name or 'non-linear' in fit_name:
+                method_item.setBackground(QColor(255, 240, 230))  # Light orange
+
+            self.results_table.setItem(current_rows + i, 0, method_item)
 
             # Rh
             rh_val = row.get('Rh [nm]', 0)
-            self.results_table.setItem(current_rows + i, 1,
-                                      QTableWidgetItem(f"{rh_val:.2f}"))
+            if isinstance(rh_val, (list, pd.Series)):
+                rh_val = rh_val[0] if len(rh_val) > 0 else 0
+            rh_item = QTableWidgetItem(f"{rh_val:.2f}")
+            rh_item.setData(0x0100, float(rh_val))  # Set sort role to numeric value
+            self.results_table.setItem(current_rows + i, 1, rh_item)
 
             # Error
             error_val = row.get('Rh error [nm]', 0)
-            self.results_table.setItem(current_rows + i, 2,
-                                      QTableWidgetItem(f"{error_val:.2f}"))
+            if isinstance(error_val, (list, pd.Series)):
+                error_val = error_val[0] if len(error_val) > 0 else 0
+            error_item = QTableWidgetItem(f"{error_val:.2f}")
+            error_item.setData(0x0100, float(error_val))
+            self.results_table.setItem(current_rows + i, 2, error_item)
 
             # R²
             r2_val = row.get('R_squared', row.get('R-squared', 0))
             if isinstance(r2_val, (list, pd.Series)):
                 r2_val = r2_val[0] if len(r2_val) > 0 else 0
-            self.results_table.setItem(current_rows + i, 3,
-                                      QTableWidgetItem(f"{r2_val:.4f}"))
+            r2_item = QTableWidgetItem(f"{r2_val:.4f}")
+            r2_item.setData(0x0100, float(r2_val))
+            self.results_table.setItem(current_rows + i, 3, r2_item)
 
             # PDI
             pdi_val = row.get('PDI', 'N/A')
             if pdi_val != 'N/A' and not pd.isna(pdi_val):
-                pdi_str = f"{pdi_val:.4f}"
+                if isinstance(pdi_val, (list, pd.Series)):
+                    pdi_val = pdi_val[0] if len(pdi_val) > 0 else 'N/A'
+                if pdi_val != 'N/A':
+                    pdi_str = f"{pdi_val:.4f}"
+                    pdi_item = QTableWidgetItem(pdi_str)
+                    pdi_item.setData(0x0100, float(pdi_val))
+                else:
+                    pdi_str = 'N/A'
+                    pdi_item = QTableWidgetItem(pdi_str)
             else:
                 pdi_str = 'N/A'
-            self.results_table.setItem(current_rows + i, 4,
-                                      QTableWidgetItem(pdi_str))
+                pdi_item = QTableWidgetItem(pdi_str)
+            self.results_table.setItem(current_rows + i, 4, pdi_item)
 
             # Residuals
             res_val = row.get('Residuals', 'N/A')
@@ -394,10 +425,52 @@ class AnalysisView(QWidget):
 
         self.results_table.resizeColumnsToContents()
 
-        # Update details text
-        details_text = f"Latest analysis: {method_name}\n\n"
-        details_text += results_df.to_string()
-        self.details_text.setText(details_text)
+        # Update details text with formatted output
+        # Get current HTML content
+        current_html = self.details_text.toHtml()
+
+        # Start building new method section
+        new_section = f"<h3 style='color: #0066cc; margin-top: 15px;'>{method_name}</h3>"
+        new_section += "<table border='1' cellpadding='5' cellspacing='0' style='border-collapse: collapse; width: 100%;'>"
+        new_section += "<tr style='background-color: #e0e0e0; font-weight: bold;'>"
+
+        # Add headers
+        for col in results_df.columns:
+            new_section += f"<th style='padding: 8px; text-align: left;'>{col}</th>"
+        new_section += "</tr>"
+
+        # Add data rows with alternating colors
+        for idx, row in results_df.iterrows():
+            bg_color = "#f9f9f9" if idx % 2 == 0 else "#ffffff"
+            new_section += f"<tr style='background-color: {bg_color};'>"
+            for col in results_df.columns:
+                val = row[col]
+                if isinstance(val, (list, pd.Series)):
+                    val = val[0] if len(val) > 0 else val
+                if isinstance(val, float):
+                    if pd.isna(val):
+                        cell_text = "N/A"
+                    else:
+                        cell_text = f"{val:.4f}"
+                else:
+                    cell_text = str(val)
+                new_section += f"<td style='padding: 8px;'>{cell_text}</td>"
+            new_section += "</tr>"
+        new_section += "</table>"
+
+        # Append to existing HTML or create new
+        if current_html and "<body" in current_html:
+            # Extract body content and append
+            import re
+            body_match = re.search(r'<body[^>]*>(.*)</body>', current_html, re.DOTALL)
+            if body_match:
+                body_content = body_match.group(1)
+                new_html = current_html.replace(body_match.group(1), body_content + new_section)
+                self.details_text.setHtml(new_html)
+            else:
+                self.details_text.setHtml(current_html + new_section)
+        else:
+            self.details_text.setHtml(new_section)
 
     def _load_plots(self, method_name, plots_dict, fit_quality):
         """Load plots into the plotting system"""
