@@ -16,6 +16,8 @@ from gui.core.pipeline import TransparentPipeline
 from gui.core.status_manager import StatusManager, ProgressDialog
 from gui.core.data_loader import DataLoader
 from gui.dialogs.filtering_dialogs import CountrateFilterDialog, CorrelationFilterDialog
+from gui.dialogs.cumulant_dialog import CumulantAnalysisDialog
+from gui.analysis.cumulant_analyzer import CumulantAnalyzer
 
 
 class JADEDLSMainWindow(QMainWindow):
@@ -334,7 +336,122 @@ class JADEDLSMainWindow(QMainWindow):
 
     def run_cumulant_analysis(self):
         """Run cumulant analysis"""
-        self.workflow_panel.activate_step('cumulant')
+        # Check if data is loaded
+        if not self.loaded_data or 'correlations' not in self.loaded_data:
+            QMessageBox.warning(
+                self,
+                "No Data",
+                "Please load and preprocess data first (File > Load Data)"
+            )
+            return
+
+        # Check if data folder is available
+        if 'data_folder' not in self.loaded_data:
+            QMessageBox.warning(
+                self,
+                "Missing Information",
+                "Data folder information is missing. Please reload the data."
+            )
+            return
+
+        # Show configuration dialog
+        dialog = CumulantAnalysisDialog(self)
+        if dialog.exec_() == dialog.Accepted:
+            config = dialog.get_configuration()
+
+            # Start analysis
+            self.status_manager.start_operation("Running cumulant analysis...")
+
+            try:
+                # Create analyzer
+                analyzer = CumulantAnalyzer(
+                    self.loaded_data,
+                    self.loaded_data['data_folder']
+                )
+
+                # Prepare basedata
+                self.status_manager.update("Preparing basedata...")
+                analyzer.prepare_basedata()
+
+                results = []
+
+                # Run selected methods
+                if 'A' in config['methods']:
+                    self.status_manager.update("Running Cumulant Method A...")
+                    try:
+                        result_a = analyzer.run_method_a()
+                        results.append(('Method A', result_a))
+
+                        # Add to pipeline
+                        self._add_cumulant_step_to_pipeline('A', config)
+
+                    except Exception as e:
+                        QMessageBox.warning(
+                            self,
+                            "Method A Failed",
+                            f"Cumulant Method A failed:\n{str(e)}\n\nContinuing with other methods..."
+                        )
+
+                if 'B' in config['methods']:
+                    self.status_manager.update("Running Cumulant Method B...")
+                    try:
+                        result_b = analyzer.run_method_b(
+                            config['method_b_params']['fit_limits']
+                        )
+                        results.append(('Method B', result_b))
+
+                        # Add to pipeline
+                        self._add_cumulant_step_to_pipeline('B', config)
+
+                    except Exception as e:
+                        QMessageBox.warning(
+                            self,
+                            "Method B Failed",
+                            f"Cumulant Method B failed:\n{str(e)}\n\nContinuing with other methods..."
+                        )
+
+                if 'C' in config['methods']:
+                    self.status_manager.update("Running Cumulant Method C...")
+                    try:
+                        result_c = analyzer.run_method_c(config['method_c_params'])
+                        results.append(('Method C', result_c))
+
+                        # Add to pipeline
+                        self._add_cumulant_step_to_pipeline('C', config)
+
+                    except Exception as e:
+                        QMessageBox.warning(
+                            self,
+                            "Method C Failed",
+                            f"Cumulant Method C failed:\n{str(e)}"
+                        )
+
+                # Show results
+                if results:
+                    self.status_manager.complete_operation(
+                        f"Cumulant analysis completed ({len(results)} methods)"
+                    )
+
+                    # Display results
+                    self._display_cumulant_results(results, analyzer)
+
+                    # Mark workflow step complete
+                    self.workflow_panel.mark_step_complete('cumulant')
+
+                else:
+                    QMessageBox.warning(
+                        self,
+                        "Analysis Failed",
+                        "All cumulant methods failed. Please check your data and parameters."
+                    )
+
+            except Exception as e:
+                self.status_manager.error(f"Cumulant analysis failed: {str(e)}")
+                QMessageBox.critical(
+                    self,
+                    "Analysis Error",
+                    f"Cumulant analysis failed:\n\n{str(e)}"
+                )
 
     def run_nnls_analysis(self):
         """Run NNLS analysis"""
@@ -807,3 +924,256 @@ print(f"Extracted correlations from {len(correlations_data)} files")
 
         self.status_manager.start_operation("Preprocessing")
         self.perform_filtering(auto_after_load=False)
+
+    # ========== Cumulant Analysis Helper Methods ==========
+
+    def _add_cumulant_step_to_pipeline(self, method: str, config: dict):
+        """
+        Add cumulant analysis step to pipeline for code export
+
+        Args:
+            method: 'A', 'B', or 'C'
+            config: Configuration dictionary from dialog
+        """
+        from gui.core.pipeline import AnalysisStep
+
+        if method == 'A':
+            code = """
+# Cumulant Method A: Extract cumulant data from ALV software
+from cumulants import extract_cumulants, analyze_diffusion_coefficient, calculate_cumulant_results_A
+import glob
+import os
+
+# Get file paths
+datafiles = glob.glob(os.path.join(data_folder, "*.asc"))
+file_to_path = {os.path.basename(f): f for f in datafiles}
+
+# Extract cumulant data
+all_cumulant_data = []
+for filename in correlations_data.keys():
+    if filename in file_to_path:
+        file_path = file_to_path[filename]
+        extracted_cumulants = extract_cumulants(file_path)
+        if extracted_cumulants is not None:
+            extracted_cumulants['filename'] = filename
+            all_cumulant_data.append(extracted_cumulants)
+
+df_extracted_cumulants = pd.concat(all_cumulant_data, ignore_index=True)
+df_extracted_cumulants.index = df_extracted_cumulants.index + 1
+
+# Merge with basedata
+cumulant_method_A_data = pd.merge(df_basedata, df_extracted_cumulants, on='filename', how='outer')
+cumulant_method_A_data = cumulant_method_A_data.reset_index(drop=True)
+cumulant_method_A_data.index = cumulant_method_A_data.index + 1
+
+# Analyze diffusion coefficient
+cumulant_method_A_diff = analyze_diffusion_coefficient(
+    data_df=cumulant_method_A_data,
+    q_squared_col='q^2',
+    gamma_cols=['1st order frequency [1/ms]', '2nd order frequency [1/ms]', '3rd order frequency [1/ms]'],
+    gamma_unit='1/ms'
+)
+
+# Calculate diffusion coefficients
+A_diff = pd.DataFrame()
+A_diff['D [m^2/s]'] = cumulant_method_A_diff['q^2_coef'] * 10**(-15)
+A_diff['std err D [m^2/s]'] = cumulant_method_A_diff['q^2_se'] * 10**(-15)
+
+# Calculate polydispersity indices
+cumulant_method_A_data['polydispersity_2nd_order'] = (
+    cumulant_method_A_data['2nd order frequency exp param [ms^2]'] /
+    (cumulant_method_A_data['2nd order frequency [1/ms]'])**2
+)
+polydispersity_method_A_2 = cumulant_method_A_data['polydispersity_2nd_order'].mean()
+
+cumulant_method_A_data['polydispersity_3rd_order'] = (
+    cumulant_method_A_data['3rd order frequency exp param [ms^2]'] /
+    (cumulant_method_A_data['3rd order frequency [1/ms]'])**2
+)
+polydispersity_method_A_3 = cumulant_method_A_data['polydispersity_3rd_order'].mean()
+
+# Calculate results
+method_a_results = calculate_cumulant_results_A(A_diff, cumulant_method_A_diff, 
+                                                 polydispersity_method_A_2, polydispersity_method_A_3, 
+                                                 c, delta_c)
+
+print("\\nCumulant Method A Results:")
+print(method_a_results)
+"""
+
+        elif method == 'B':
+            fit_limits = config['method_b_params']['fit_limits']
+            code = f"""
+# Cumulant Method B: Linear fit method
+from cumulants import calculate_g2_B, plot_processed_correlations, analyze_diffusion_coefficient
+from preprocessing import process_correlation_data
+
+# Process correlations
+columns_to_drop = ['time [ms]', 'correlation 1', 'correlation 2', 'correlation 3', 'correlation 4']
+processed_correlations_1 = process_correlation_data(correlations_data, columns_to_drop)
+
+# Calculate sqrt(g2)
+processed_correlations = calculate_g2_B(processed_correlations_1)
+
+# Define fit function
+def fit_function(x, a, b, c):
+    return 0.5 * np.log(a) - b * x + 0.5 * c * x**2
+
+# Fit data
+fit_limits = {fit_limits}
+cumulant_method_B_fit = plot_processed_correlations(processed_correlations, fit_function, fit_limits)
+
+# Merge with basedata
+cumulant_method_B_data = pd.merge(df_basedata, cumulant_method_B_fit, on='filename', how='outer')
+cumulant_method_B_data = cumulant_method_B_data.reset_index(drop=True)
+cumulant_method_B_data.index = cumulant_method_B_data.index + 1
+
+# Analyze diffusion coefficient
+cumulant_method_B_diff = analyze_diffusion_coefficient(
+    data_df=cumulant_method_B_data,
+    q_squared_col='q^2',
+    gamma_cols=['b'],
+    method_names=['Method B']
+)
+
+# Calculate diffusion coefficients
+B_diff = pd.DataFrame()
+B_diff['D [m^2/s]'] = cumulant_method_B_diff['q^2_coef'] * 10**(-18)
+B_diff['std err D [m^2/s]'] = cumulant_method_B_diff['q^2_se'] * 10**(-18)
+
+# Calculate polydispersity
+cumulant_method_B_data['polydispersity'] = cumulant_method_B_data['c'] / (cumulant_method_B_data['b'])**2
+polydispersity_method_B = cumulant_method_B_data['polydispersity'].mean()
+
+# Calculate results
+method_b_results = pd.DataFrame()
+method_b_results['Rh [nm]'] = c * (1 / B_diff['D [m^2/s]'][0]) * 10**9
+fractional_error_Rh_B = np.sqrt((delta_c / c)**2 + (B_diff['std err D [m^2/s]'][0] / B_diff['D [m^2/s]'][0])**2)
+method_b_results['Rh error [nm]'] = fractional_error_Rh_B * method_b_results['Rh [nm]']
+method_b_results['R_squared'] = cumulant_method_B_diff['R_squared']
+method_b_results['Fit'] = 'Rh from linear cumulant fit'
+method_b_results['Residuals'] = cumulant_method_B_diff['Normality']
+method_b_results['PDI'] = polydispersity_method_B
+
+print("\\nCumulant Method B Results:")
+print(method_b_results)
+"""
+
+        elif method == 'C':
+            params = config['method_c_params']
+            code = f"""
+# Cumulant Method C: Iterative non-linear fit
+from cumulants_C import plot_processed_correlations_iterative, get_adaptive_initial_parameters, get_meaningful_parameters
+from cumulants import analyze_diffusion_coefficient
+from preprocessing import process_correlation_data
+
+# Process correlations
+columns_to_drop = ['time [ms]', 'correlation 1', 'correlation 2', 'correlation 3', 'correlation 4']
+processed_correlations_1 = process_correlation_data(correlations_data, columns_to_drop)
+
+# Define fit function
+def {params['fit_function']}(x, a, b, c, *args):
+    # Function defined based on selection: {params['fit_function']}
+    pass  # See cumulants_C.py for full implementation
+
+# Parameters
+fit_limits = {params['fit_limits']}
+adaptive_initial_guesses = {params['adaptive_initial_guesses']}
+adaptation_strategy = '{params['adaptation_strategy']}'
+optimizer = '{params['optimizer']}'
+base_initial_parameters = {params['initial_parameters']}
+
+# Get initial parameters
+if adaptive_initial_guesses:
+    initial_parameters = get_adaptive_initial_parameters(
+        processed_correlations_1, {params['fit_function']}, 
+        base_initial_parameters, strategy=adaptation_strategy, verbose=False
+    )
+else:
+    initial_parameters = get_meaningful_parameters({params['fit_function']}, base_initial_parameters)
+
+# Run fitting
+cumulant_method_C_fit = plot_processed_correlations_iterative(
+    processed_correlations_1, {params['fit_function']}, fit_limits, initial_parameters, method=optimizer
+)
+
+# Merge with basedata
+cumulant_method_C_data = pd.merge(df_basedata, cumulant_method_C_fit, on='filename', how='outer')
+cumulant_method_C_data = cumulant_method_C_data.reset_index(drop=True)
+cumulant_method_C_data.index = cumulant_method_C_data.index + 1
+
+# Analyze diffusion coefficient
+cumulant_method_C_diff = analyze_diffusion_coefficient(
+    data_df=cumulant_method_C_data,
+    q_squared_col='q^2',
+    gamma_cols=['best_b'],
+    method_names=['Method C']
+)
+
+# Calculate diffusion coefficients
+C_diff = pd.DataFrame()
+C_diff['D [m^2/s]'] = cumulant_method_C_diff['q^2_coef'] * 10**(-18)
+C_diff['std err D [m^2/s]'] = cumulant_method_C_diff['q^2_se'] * 10**(-18)
+
+# Calculate polydispersity
+cumulant_method_C_data['polydispersity'] = cumulant_method_C_data['best_c'] / (cumulant_method_C_data['best_b'])**2
+polydispersity_method_C = cumulant_method_C_data['polydispersity'].mean()
+
+# Calculate results
+method_c_results = pd.DataFrame()
+method_c_results['Rh [nm]'] = c * (1 / C_diff['D [m^2/s]'][0]) * 10**9
+fractional_error_Rh_C = np.sqrt((delta_c / c)**2 + (C_diff['std err D [m^2/s]'][0] / C_diff['D [m^2/s]'][0])**2)
+method_c_results['Rh error [nm]'] = fractional_error_Rh_C * method_c_results['Rh [nm]']
+method_c_results['R_squared'] = cumulant_method_C_diff['R_squared']
+method_c_results['Fit'] = 'Rh from iterative non-linear cumulant fit'
+method_c_results['Residuals'] = cumulant_method_C_diff['Normality']
+method_c_results['PDI'] = polydispersity_method_C
+
+print("\\nCumulant Method C Results:")
+print(method_c_results)
+"""
+
+        # Add step to pipeline
+        step = AnalysisStep(
+            name=f"Cumulant Analysis Method {method}",
+            step_type='custom',
+            custom_code=code,
+            params=config
+        )
+        self.pipeline.steps.append(step)
+        self.pipeline.step_added.emit(step.to_dict())
+
+    def _display_cumulant_results(self, results: list, analyzer: 'CumulantAnalyzer'):
+        """
+        Display cumulant analysis results
+
+        Args:
+            results: List of tuples (method_name, result_dataframe)
+            analyzer: CumulantAnalyzer instance with results
+        """
+        # Combine all results
+        combined_results = analyzer.get_combined_results()
+
+        # Display in analysis view
+        # For now, show as a message box (TODO: add to analysis view properly)
+        results_text = "Cumulant Analysis Results\n"
+        results_text += "=" * 60 + "\n\n"
+
+        for method_name, result_df in results:
+            results_text += f"{method_name}:\n"
+            results_text += result_df.to_string() + "\n\n"
+
+        QMessageBox.information(
+            self,
+            "Cumulant Analysis Complete",
+            f"Analysis completed successfully!\n\n"
+            f"Results displayed in console and will be available for export.\n\n"
+            f"Methods run: {', '.join([r[0] for r in results])}"
+        )
+
+        # Print to console
+        print("\n" + "=" * 60)
+        print("CUMULANT ANALYSIS RESULTS")
+        print("=" * 60)
+        print(combined_results.to_string())
+        print("=" * 60 + "\n")
