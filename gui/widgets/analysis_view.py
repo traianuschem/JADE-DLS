@@ -93,6 +93,36 @@ class AnalysisView(QWidget):
         title.setStyleSheet("font-size: 14pt; font-weight: bold;")
         layout.addWidget(title)
 
+        # Navigation controls (initially hidden)
+        self.nav_widget = QWidget()
+        nav_layout = QHBoxLayout()
+
+        from PyQt5.QtWidgets import QPushButton, QListWidget
+
+        self.plot_list = QListWidget()
+        self.plot_list.setMaximumWidth(200)
+        self.plot_list.currentRowChanged.connect(self._on_plot_selected)
+        nav_layout.addWidget(self.plot_list)
+
+        # Right side: plot and navigation
+        right_layout = QVBoxLayout()
+
+        # Navigation buttons
+        nav_buttons = QHBoxLayout()
+        self.prev_plot_btn = QPushButton("◀ Previous")
+        self.prev_plot_btn.clicked.connect(self._show_previous_plot)
+        self.next_plot_btn = QPushButton("Next ▶")
+        self.next_plot_btn.clicked.connect(self._show_next_plot)
+        self.grid_view_btn = QPushButton("Grid View")
+        self.grid_view_btn.clicked.connect(self._show_grid_view)
+
+        nav_buttons.addWidget(self.prev_plot_btn)
+        nav_buttons.addWidget(self.next_plot_btn)
+        nav_buttons.addWidget(self.grid_view_btn)
+        nav_buttons.addStretch()
+
+        right_layout.addLayout(nav_buttons)
+
         # Plot container
         plot_group = QGroupBox("Current Plot")
         plot_layout = QVBoxLayout()
@@ -106,11 +136,14 @@ class AnalysisView(QWidget):
 
         # Import matplotlib if available
         try:
-            from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
+            from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg, NavigationToolbar2QT
             from matplotlib.figure import Figure
 
             self.figure = Figure(figsize=(8, 6))
             self.canvas = FigureCanvasQTAgg(self.figure)
+            self.toolbar = NavigationToolbar2QT(self.canvas, widget)
+
+            plot_layout.addWidget(self.toolbar)
             plot_layout.addWidget(self.canvas)
             self.plot_placeholder.hide()
         except ImportError:
@@ -118,9 +151,25 @@ class AnalysisView(QWidget):
             pass
 
         plot_group.setLayout(plot_layout)
-        layout.addWidget(plot_group)
+        right_layout.addWidget(plot_group)
+
+        # Plot info label
+        self.plot_info_label = QLabel("")
+        self.plot_info_label.setWordWrap(True)
+        right_layout.addWidget(self.plot_info_label)
+
+        nav_layout.addLayout(right_layout)
+        self.nav_widget.setLayout(nav_layout)
+        self.nav_widget.hide()  # Initially hidden
+
+        layout.addWidget(self.nav_widget)
 
         widget.setLayout(layout)
+
+        # Store current plots
+        self.current_plots = {}
+        self.current_plot_index = 0
+
         return widget
 
     def create_results_tab(self):
@@ -271,3 +320,296 @@ class AnalysisView(QWidget):
             ax.set_title(title)
             ax.grid(True, alpha=0.3)
             self.canvas.draw()
+
+    # ========== Cumulant Analysis Display Methods ==========
+
+    def display_cumulant_results(self, method_name, results_df, plots_dict=None, fit_quality=None):
+        """
+        Display cumulant analysis results in Results and Plots tabs
+
+        Args:
+            method_name: Name of the method (e.g., "Method B")
+            results_df: DataFrame with final results
+            plots_dict: Dictionary {filename: (fig, data)} or None
+            fit_quality: Dictionary {filename: {'R2': float, ...}} or None
+        """
+        # Update Results tab
+        self._update_results_table(method_name, results_df)
+
+        # Update Plots tab if plots are available
+        if plots_dict:
+            self._load_plots(method_name, plots_dict, fit_quality)
+            # Switch to Plots tab
+            self.tabs.setCurrentIndex(1)
+        else:
+            # Switch to Results tab
+            self.tabs.setCurrentIndex(2)
+
+    def _update_results_table(self, method_name, results_df):
+        """Update results table with new results"""
+        if results_df.empty:
+            return
+
+        # Get existing row count
+        current_rows = self.results_table.rowCount()
+
+        # Add rows for new results
+        for i, row in results_df.iterrows():
+            self.results_table.insertRow(current_rows + i)
+
+            # Method
+            self.results_table.setItem(current_rows + i, 0,
+                                      QTableWidgetItem(str(row.get('Fit', method_name))))
+
+            # Rh
+            rh_val = row.get('Rh [nm]', 0)
+            self.results_table.setItem(current_rows + i, 1,
+                                      QTableWidgetItem(f"{rh_val:.2f}"))
+
+            # Error
+            error_val = row.get('Rh error [nm]', 0)
+            self.results_table.setItem(current_rows + i, 2,
+                                      QTableWidgetItem(f"{error_val:.2f}"))
+
+            # R²
+            r2_val = row.get('R_squared', row.get('R-squared', 0))
+            if isinstance(r2_val, (list, pd.Series)):
+                r2_val = r2_val[0] if len(r2_val) > 0 else 0
+            self.results_table.setItem(current_rows + i, 3,
+                                      QTableWidgetItem(f"{r2_val:.4f}"))
+
+            # PDI
+            pdi_val = row.get('PDI', 'N/A')
+            if pdi_val != 'N/A' and not pd.isna(pdi_val):
+                pdi_str = f"{pdi_val:.4f}"
+            else:
+                pdi_str = 'N/A'
+            self.results_table.setItem(current_rows + i, 4,
+                                      QTableWidgetItem(pdi_str))
+
+            # Residuals
+            res_val = row.get('Residuals', 'N/A')
+            self.results_table.setItem(current_rows + i, 5,
+                                      QTableWidgetItem(str(res_val)))
+
+        self.results_table.resizeColumnsToContents()
+
+        # Update details text
+        details_text = f"Latest analysis: {method_name}\n\n"
+        details_text += results_df.to_string()
+        self.details_text.setText(details_text)
+
+    def _load_plots(self, method_name, plots_dict, fit_quality):
+        """Load plots into the plotting system"""
+        self.current_plots = plots_dict
+        self.current_fit_quality = fit_quality or {}
+        self.current_method_name = method_name
+
+        # Clear and populate plot list
+        self.plot_list.clear()
+        filenames = list(plots_dict.keys())
+
+        for i, filename in enumerate(filenames):
+            # Add quality indicator
+            quality_str = ""
+            if filename in self.current_fit_quality:
+                r2 = self.current_fit_quality[filename].get('R2', 0)
+                quality_str = f" (R²={r2:.3f})"
+
+            self.plot_list.addItem(f"{i+1}. {filename}{quality_str}")
+
+        # Show navigation widget
+        self.nav_widget.show()
+        self.plot_placeholder.hide()
+
+        # Show first plot
+        if filenames:
+            self.current_plot_index = 0
+            self.plot_list.setCurrentRow(0)
+            self._show_plot(0)
+
+    def _on_plot_selected(self, index):
+        """Handle plot selection from list"""
+        if index >= 0:
+            self._show_plot(index)
+
+    def _show_plot(self, index):
+        """Show plot at given index"""
+        filenames = list(self.current_plots.keys())
+        if index < 0 or index >= len(filenames):
+            return
+
+        self.current_plot_index = index
+        filename = filenames[index]
+
+        # Update selection
+        self.plot_list.setCurrentRow(index)
+
+        # Get plot data
+        if filename in self.current_plots:
+            fig, data = self.current_plots[filename]
+
+            # Clear and redraw
+            self.figure.clear()
+
+            if fig is not None:
+                # Copy the plot
+                source_axes = fig.get_axes()
+
+                for ax_idx, source_ax in enumerate(source_axes):
+                    # Create subplot in same position
+                    if len(source_axes) == 1:
+                        ax = self.figure.add_subplot(111)
+                    elif len(source_axes) == 2:
+                        ax = self.figure.add_subplot(1, 2, ax_idx + 1)
+                    elif len(source_axes) == 4:
+                        ax = self.figure.add_subplot(2, 2, ax_idx + 1)
+                    else:
+                        ax = self.figure.add_subplot(111)
+
+                    # Copy lines
+                    for line in source_ax.get_lines():
+                        ax.plot(line.get_xdata(), line.get_ydata(),
+                               label=line.get_label(),
+                               color=line.get_color(),
+                               linestyle=line.get_linestyle(),
+                               marker=line.get_marker(),
+                               markersize=line.get_markersize() if line.get_marker() else 1,
+                               alpha=line.get_alpha())
+
+                    # Copy labels and title
+                    ax.set_xlabel(source_ax.get_xlabel())
+                    ax.set_ylabel(source_ax.get_ylabel())
+                    ax.set_title(source_ax.get_title())
+
+                    # Copy scale
+                    if source_ax.get_xscale() == 'log':
+                        ax.set_xscale('log')
+                    if source_ax.get_yscale() == 'log':
+                        ax.set_yscale('log')
+
+                    # Copy legend if exists
+                    if source_ax.get_legend():
+                        ax.legend()
+
+                    # Copy grid
+                    ax.grid(source_ax.xaxis._gridOnMajor or source_ax.yaxis._gridOnMajor)
+
+            self.figure.tight_layout()
+            self.canvas.draw()
+
+            # Update info label
+            info_text = f"<b>Dataset {index + 1} of {len(filenames)}</b>: {filename}<br>"
+            if filename in self.current_fit_quality:
+                quality = self.current_fit_quality[filename]
+                info_text += f"<b>Fit Quality:</b> R² = {quality.get('R2', 'N/A')}"
+                if 'residuals' in quality:
+                    info_text += f", Residuals = {quality.get('residuals', 'N/A')}"
+            self.plot_info_label.setText(info_text)
+
+        # Update button states
+        self.prev_plot_btn.setEnabled(index > 0)
+        self.next_plot_btn.setEnabled(index < len(filenames) - 1)
+
+    def _show_previous_plot(self):
+        """Show previous plot"""
+        if self.current_plot_index > 0:
+            self._show_plot(self.current_plot_index - 1)
+
+    def _show_next_plot(self):
+        """Show next plot"""
+        filenames = list(self.current_plots.keys())
+        if self.current_plot_index < len(filenames) - 1:
+            self._show_plot(self.current_plot_index + 1)
+
+    def _show_grid_view(self):
+        """Show all plots in grid view"""
+        from PyQt5.QtWidgets import QDialog, QScrollArea, QGridLayout
+        import matplotlib.pyplot as plt
+        from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
+
+        if not self.current_plots:
+            return
+
+        # Create grid dialog
+        grid_dialog = QDialog(self)
+        grid_dialog.setWindowTitle(f"All Plots - {self.current_method_name}")
+        grid_dialog.setMinimumSize(1200, 800)
+
+        layout = QVBoxLayout()
+
+        # Info
+        info_label = QLabel(
+            f"<b>Showing all {len(self.current_plots)} datasets</b>"
+        )
+        layout.addWidget(info_label)
+
+        # Scroll area
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+
+        # Grid widget
+        from PyQt5.QtWidgets import QWidget
+        grid_widget = QWidget()
+        grid_layout = QGridLayout()
+
+        # Calculate grid dimensions
+        num_plots = len(self.current_plots)
+        cols = min(4, num_plots)
+        rows = (num_plots + cols - 1) // cols
+
+        # Create grid of plots
+        for i, (filename, (fig, _)) in enumerate(self.current_plots.items()):
+            row = i // cols
+            col = i % cols
+
+            if fig is not None:
+                # Create small canvas
+                small_fig = plt.Figure(figsize=(3, 2.5))
+                small_canvas = FigureCanvasQTAgg(small_fig)
+
+                # Copy plot to small figure
+                source_axes = fig.get_axes()
+                if source_axes:
+                    ax = small_fig.add_subplot(111)
+                    source_ax = source_axes[0]
+
+                    # Copy lines
+                    for line in source_ax.get_lines():
+                        ax.plot(line.get_xdata(), line.get_ydata(),
+                               color=line.get_color(),
+                               linestyle=line.get_linestyle(),
+                               linewidth=0.5)
+
+                    ax.set_title(f"{i+1}. {filename[:20]}...", fontsize=8)
+                    ax.tick_params(labelsize=6)
+                    if source_ax.get_xscale() == 'log':
+                        ax.set_xscale('log')
+                    if source_ax.get_yscale() == 'log':
+                        ax.set_yscale('log')
+
+                small_fig.tight_layout()
+
+                # Add to grid
+                grid_layout.addWidget(small_canvas, row, col)
+
+        grid_widget.setLayout(grid_layout)
+        scroll.setWidget(grid_widget)
+        layout.addWidget(scroll)
+
+        # Close button
+        from PyQt5.QtWidgets import QPushButton
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(grid_dialog.accept)
+        layout.addWidget(close_btn)
+
+        grid_dialog.setLayout(layout)
+        grid_dialog.exec_()
+
+    def clear_results(self):
+        """Clear all results"""
+        self.results_table.setRowCount(0)
+        self.details_text.clear()
+        self.current_plots = {}
+        self.nav_widget.hide()
+        self.plot_placeholder.show()

@@ -40,6 +40,7 @@ class DataLoadWorker(QThread):
         self.load_countrates = load_countrates
         self.load_correlations = load_correlations
         self.is_cancelled = False
+        self.errors = []  # Track all errors for reporting
 
     def run(self):
         """Run the data loading process"""
@@ -116,6 +117,11 @@ class DataLoadWorker(QThread):
             df_basedata = self._calculate_q_vectors(df_basedata)
             all_data['basedata'] = df_basedata
 
+            # Add error summary to results
+            all_data['errors'] = self.errors
+            all_data['total_files'] = len(filtered_files)
+            all_data['successful_files'] = len(filtered_files) - len([e for e in self.errors if e['step'] == 'basedata'])
+
             # Complete
             self.finished.emit(all_data)
 
@@ -139,7 +145,14 @@ class DataLoadWorker(QThread):
                     filename = os.path.basename(file)
                     extracted_data['filename'] = filename
                     all_data.append(extracted_data)
+                else:
+                    # File couldn't be processed
+                    error_msg = f"Could not extract data from {os.path.basename(file)}"
+                    self.errors.append({'file': os.path.basename(file), 'step': 'basedata', 'error': error_msg})
+                    print(f"Warning: {error_msg}")
             except Exception as e:
+                error_msg = f"Failed to extract data: {str(e)}"
+                self.errors.append({'file': os.path.basename(file), 'step': 'basedata', 'error': error_msg})
                 print(f"Warning: Failed to extract data from {file}: {e}")
                 continue
 
@@ -175,7 +188,13 @@ class DataLoadWorker(QThread):
                     }
                     extracted_countrate = extracted_countrate.rename(columns=new_column_names)
                     all_countrates[filename] = extracted_countrate
+                else:
+                    # File couldn't be processed but not critical
+                    error_msg = f"Could not extract countrate data"
+                    self.errors.append({'file': os.path.basename(file), 'step': 'countrates', 'error': error_msg})
             except Exception as e:
+                error_msg = f"Failed to extract countrate: {str(e)}"
+                self.errors.append({'file': os.path.basename(file), 'step': 'countrates', 'error': error_msg})
                 print(f"Warning: Failed to extract countrate from {file}: {e}")
                 continue
 
@@ -206,7 +225,13 @@ class DataLoadWorker(QThread):
                     }
                     extracted_correlation = extracted_correlation.rename(columns=new_column_names)
                     all_correlations[filename] = extracted_correlation
+                else:
+                    # File couldn't be processed but not critical
+                    error_msg = f"Could not extract correlation data"
+                    self.errors.append({'file': os.path.basename(file), 'step': 'correlations', 'error': error_msg})
             except Exception as e:
+                error_msg = f"Failed to extract correlation: {str(e)}"
+                self.errors.append({'file': os.path.basename(file), 'step': 'correlations', 'error': error_msg})
                 print(f"Warning: Failed to extract correlation from {file}: {e}")
                 continue
 

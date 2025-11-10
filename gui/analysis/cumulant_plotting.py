@@ -113,9 +113,19 @@ def plot_processed_correlations_no_show(dataframes_dict, fit_function, fit_x_lim
 
 
 def plot_processed_correlations_iterative_no_show(dataframes_dict, fit_function, fit_limits,
-                                                   initial_parameters, method='lm'):
+                                                   initial_parameters, method='lm',
+                                                   max_iterations=10, tolerance=1e-4):
     """
-    Iterative non-linear fit without showing plots
+    Iterative non-linear fit without showing plots (matches original notebook implementation)
+
+    Args:
+        dataframes_dict: Dictionary of dataframes with 't (s)' and 'g(2)' columns
+        fit_function: The fit function to use
+        fit_limits: Tuple of (min, max) time limits
+        initial_parameters: Initial parameter guesses (dict or list)
+        method: Optimization method ('lm', 'trf', 'dogbox')
+        max_iterations: Maximum number of iterations (default: 10)
+        tolerance: Convergence tolerance for R-squared (default: 1e-4)
 
     Returns:
         tuple: (results_df, plots_dict)
@@ -137,106 +147,185 @@ def plot_processed_correlations_iterative_no_show(dataframes_dict, fit_function,
             x_fit = x_data[mask]
             y_fit = y_data[mask]
 
+            if len(x_fit) < 2:
+                print(f"Not enough data points in the specified range for fitting {name}. Skipping Fit.")
+                all_fit_results.append(fit_result)
+                continue
+
             # Determine which parameters to use based on fit_function
             param_names = inspect.getfullargspec(fit_function).args[1:]
             num_params = len(param_names)
 
             # Get initial parameters for this function
             if isinstance(initial_parameters, dict):
-                # If it's a dict, use parameters for this specific dataset
-                init_params = initial_parameters.get(name, initial_parameters.get('default', []))[:num_params]
+                # If it's a dict, use parameters for this specific dataset (adaptive mode)
+                current_guess = initial_parameters.get(name, initial_parameters.get('default', []))[:num_params].copy()
             elif isinstance(initial_parameters, list):
-                init_params = initial_parameters[:num_params]
+                current_guess = initial_parameters[:num_params].copy()
             else:
-                init_params = initial_parameters
+                current_guess = initial_parameters
 
-            # Perform fit
-            popt, pcov = curve_fit(fit_function, x_fit, y_fit,
-                                  p0=init_params, method=method, maxfev=50000)
+            # Store iterations for analysis
+            all_y_fits = []
+            all_r_squared = []
+            all_rmse = []
+            all_aic = []
+            all_popt = []
+            all_pcov = []
 
-            # Calculate errors
-            perr = np.sqrt(np.diag(pcov))
+            # Iterative fitting loop (key difference from simple fit!)
+            for i in range(max_iterations):
+                try:
+                    # Perform fit with current guess
+                    if method == 'lm':
+                        popt, pcov = curve_fit(fit_function, x_fit, y_fit,
+                                              p0=current_guess, maxfev=50000)
+                    else:
+                        # For 'trf' and 'dogbox', use wide bounds
+                        bounds = ([-np.inf] * len(current_guess), [np.inf] * len(current_guess))
+                        popt, pcov = curve_fit(fit_function, x_fit, y_fit,
+                                              p0=current_guess, method=method,
+                                              bounds=bounds, maxfev=50000)
 
-            # Generate fit curve
-            x_plot = np.logspace(np.log10(x_data.min()), np.log10(x_data.max()), 1000)
-            y_fit_values = fit_function(x_plot, *popt)
+                    # Generate fit curve
+                    y_fit_values = fit_function(x_data, *popt)
+                    all_y_fits.append(y_fit_values)
+                    all_popt.append(popt)
+                    all_pcov.append(pcov)
 
-            # Calculate residuals
-            residuals = y_fit - fit_function(x_fit, *popt)
+                    # Use fitted parameters as next initial guess
+                    current_guess = popt.copy()
 
-            # Calculate R-squared
-            ss_res = np.sum(residuals**2)
-            ss_tot = np.sum((y_fit - np.mean(y_fit))**2)
-            r_squared = 1 - (ss_res / ss_tot)
+                    # Calculate residuals (only in fitting range)
+                    y_fit_current = fit_function(x_fit, *popt)
+                    residuals = y_fit - y_fit_current
 
-            # RMSE
-            rmse = np.sqrt(np.mean(residuals**2))
+                    # Calculate R-squared
+                    ss_res = np.sum(residuals**2)
+                    ss_tot = np.sum((y_fit - np.mean(y_fit))**2)
+                    r_squared = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0
+                    all_r_squared.append(r_squared)
 
-            # AIC (Akaike Information Criterion)
-            n = len(x_fit)
-            aic = n * np.log(ss_res / n) + 2 * num_params
+                    # Calculate RMSE
+                    n = len(y_fit)
+                    rmse = np.sqrt(ss_res / n)
+                    all_rmse.append(rmse)
 
-            # Store results with 'best_' prefix for parameter b
-            for i, param_name in enumerate(param_names):
-                fit_result[f'best_{param_name}'] = popt[i]
-                fit_result[f'best_{param_name}_error'] = perr[i]
+                    # Calculate AIC (Akaike Information Criterion)
+                    k = len(popt) + 1
+                    aic = n * np.log(ss_res / n) + 2 * k
+                    all_aic.append(aic)
 
-            fit_result['R_squared'] = r_squared
-            fit_result['RMSE'] = rmse
-            fit_result['AIC'] = aic
+                    # Store metrics for this iteration
+                    fit_result[f'R-squared_iter{i+1}'] = r_squared
+                    fit_result[f'RMSE_iter{i+1}'] = rmse
+                    fit_result[f'AIC_iter{i+1}'] = aic
 
-            # Create figure
-            fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(14, 10))
+                    # Store parameters for this iteration
+                    for j, param_name in enumerate(param_names):
+                        fit_result[f'{param_name}_iter{i+1}'] = popt[j]
 
-            # Plot 1: Data and fit
-            ax1.plot(x_data, y_data, 'b.', label='Data', markersize=3)
-            ax1.plot(x_plot, y_fit_values, 'r-', label='Fit', linewidth=2)
-            ax1.set_xscale('log')
-            ax1.set_xlabel('Time (s)')
-            ax1.set_ylabel('g(2)')
-            ax1.set_title(f'[{plot_number}]: Fit for {name}')
-            ax1.legend()
+                    # Check for convergence
+                    if i > 0:
+                        delta_r_squared = abs(all_r_squared[i] - all_r_squared[i-1])
+                        if delta_r_squared < tolerance:
+                            print(f"Converged after {i+1} iterations for {name}.")
+                            break
+
+                except RuntimeError as e:
+                    print(f"Fit error in iteration {i+1} for DataFrame '{name}': {e}")
+                    break
+
+            # Find the best iteration (using R-squared)
+            if len(all_r_squared) > 0:
+                best_iteration_index = np.argmax(all_r_squared)
+                best_y_fit = all_y_fits[best_iteration_index]
+                best_popt = all_popt[best_iteration_index]
+                best_pcov = all_pcov[best_iteration_index]
+                best_iteration = best_iteration_index + 1
+
+                # Calculate errors from best fit
+                perr = np.sqrt(np.diag(best_pcov))
+
+                # Calculate best residuals
+                best_y_fit_in_range = fit_function(x_fit, *best_popt)
+                residuals = y_fit - best_y_fit_in_range
+
+                # Generate smooth fit curve for plotting
+                x_plot = np.logspace(np.log10(x_data.min()), np.log10(x_data.max()), 1000)
+                y_fit_plot = fit_function(x_plot, *best_popt)
+
+                # Store best fit results
+                r_squared = all_r_squared[best_iteration_index]
+                rmse = all_rmse[best_iteration_index]
+                aic = all_aic[best_iteration_index]
+
+                # Store results with 'best_' prefix
+                for i, param_name in enumerate(param_names):
+                    fit_result[f'best_{param_name}'] = best_popt[i]
+                    fit_result[f'best_{param_name}_error'] = perr[i]
+
+                fit_result['R_squared'] = r_squared
+                fit_result['RMSE'] = rmse
+                fit_result['AIC'] = aic
+            else:
+                # No successful iterations
+                print(f"No successful fits for {name}")
+                all_fit_results.append(fit_result)
+                continue
+
+            # Create figure (2x1 layout like original notebook)
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+
+            # Left plot: Data and all fit iterations
+            ax1.plot(x_data, y_data, marker='.', linestyle='', label='Data')
+
+            # Plot all iterations with increasing opacity
+            for i, y_fit_iter in enumerate(all_y_fits):
+                if i == best_iteration_index:
+                    # Highlight the best fit
+                    ax1.plot(x_data, y_fit_iter, 'r-', linewidth=2,
+                            label=f'Best Fit (Iter {i+1})')
+                else:
+                    # Plot other iterations with lower opacity
+                    opacity = 0.3 + 0.5 * (i / len(all_y_fits))
+                    ax1.plot(x_data, y_fit_iter, '-', alpha=opacity,
+                            color='gray', linewidth=1)
+
+            ax1.set_xlabel('lag time [s]')
+            ax1.set_ylabel('g(2)-1')
+            ax1.set_title(f'[{plot_number}]: g(2)-1 vs. lag time for {name}')
             ax1.grid(True)
+            ax1.set_xscale('log')
+            ax1.set_xlim(left=x_data.min()*0.9, right=x_data.max()*1.1)
+            ax1.legend()
 
-            # Add fit info
-            info_text = f"R² = {r_squared:.4f}\nRMSE = {rmse:.4e}"
-            ax1.text(0.05, 0.05, info_text, transform=ax1.transAxes,
-                    verticalalignment='bottom', bbox=dict(boxstyle='round',
-                    facecolor='white', alpha=0.7))
+            # Add parameters of best fit as text
+            param_text = f"Best Fit (Iteration {best_iteration}):\n"
+            param_text += f"R² = {r_squared:.4f}\n"
+            param_text += f"RMSE = {rmse:.4e}\n"
+            param_text += f"AIC = {aic:.2f}"
+            ax1.text(0.95, 0.95, param_text, transform=ax1.transAxes,
+                    verticalalignment='top', horizontalignment='right',
+                    bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
 
-            # Plot 2: Residuals
-            ax2.plot(x_fit, residuals, 'k.', markersize=3)
-            ax2.axhline(y=0, color='r', linestyle='--')
-            ax2.set_xscale('log')
-            ax2.set_xlabel('Time (s)')
-            ax2.set_ylabel('Residuals')
-            ax2.set_title('Residuals')
+            # Right plot: Q-Q plot for the best fit
+            stats.probplot(residuals, dist="norm", plot=ax2)
+            ax2.set_title(f'[{plot_number}]: Q-Q Plot of Residuals (Best Fit: Iter {best_iteration})')
             ax2.grid(True)
-
-            # Plot 3: Q-Q plot
-            stats.probplot(residuals, dist="norm", plot=ax3)
-            ax3.set_title('Q-Q Plot')
-            ax3.grid(True)
-
-            # Plot 4: Parameter values with errors
-            param_values = [popt[i] for i in range(len(param_names))]
-            param_errors = [perr[i] for i in range(len(param_names))]
-
-            ax4.barh(param_names, param_values, xerr=param_errors, capsize=5)
-            ax4.set_xlabel('Parameter Value')
-            ax4.set_title('Fit Parameters')
-            ax4.grid(True, axis='x')
 
             plt.tight_layout()
 
             # Store figure
             plots_dict[name] = (fig, {
-                'popt': popt,
+                'popt': best_popt,
                 'perr': perr,
                 'r_squared': r_squared,
                 'rmse': rmse,
                 'aic': aic,
-                'residuals': residuals
+                'residuals': residuals,
+                'num_iterations': len(all_y_fits),
+                'best_iteration': best_iteration
             })
 
             plot_number += 1

@@ -17,7 +17,6 @@ from gui.core.status_manager import StatusManager, ProgressDialog
 from gui.core.data_loader import DataLoader
 from gui.dialogs.filtering_dialogs import CountrateFilterDialog, CorrelationFilterDialog
 from gui.dialogs.cumulant_dialog import CumulantAnalysisDialog
-from gui.dialogs.cumulant_results_dialog import CumulantResultsDialog, SummaryPlotDialog
 from gui.analysis.cumulant_analyzer import CumulantAnalyzer
 
 
@@ -556,6 +555,40 @@ class JADEDLSMainWindow(QMainWindow):
         self.loaded_data = data
         num_files = data.get('num_files', 0)
         data_folder = data.get('data_folder', '')
+
+        # Check for errors during loading
+        errors = data.get('errors', [])
+        if errors:
+            # Group errors by type
+            basedata_errors = [e for e in errors if e['step'] == 'basedata']
+            countrate_errors = [e for e in errors if e['step'] == 'countrates']
+            correlation_errors = [e for e in errors if e['step'] == 'correlations']
+
+            # Build error message
+            error_parts = []
+            if basedata_errors:
+                error_parts.append(f"Base data extraction failed for {len(basedata_errors)} file(s):")
+                for e in basedata_errors[:5]:  # Show first 5
+                    error_parts.append(f"  - {e['file']}: {e['error']}")
+                if len(basedata_errors) > 5:
+                    error_parts.append(f"  ... and {len(basedata_errors) - 5} more")
+
+            if countrate_errors:
+                error_parts.append(f"\nCountrate extraction issues for {len(countrate_errors)} file(s)")
+
+            if correlation_errors:
+                error_parts.append(f"Correlation extraction issues for {len(correlation_errors)} file(s)")
+
+            error_message = "\n".join(error_parts)
+
+            # Show warning with error details
+            msg_box = QMessageBox(self)
+            msg_box.setIcon(QMessageBox.Warning)
+            msg_box.setWindowTitle("Data Loading Warnings")
+            msg_box.setText(f"Data loaded with warnings.\n\n{data.get('successful_files', 0)}/{data.get('total_files', 0)} files loaded successfully.")
+            msg_box.setDetailedText(error_message)
+            msg_box.setStandardButtons(QMessageBox.Ok)
+            msg_box.exec_()
 
         # Add data loading step to pipeline with reproducible code
         load_code = f"""
@@ -1162,66 +1195,40 @@ print(method_c_results)
         print(combined_results.to_string())
         print("=" * 60 + "\n")
 
-        # Show results for each method in separate dialogs
+        # Display results for each method in the AnalysisView
         for method_name, result_df in results:
-            # Prepare data for dialog
-            results_data = {
-                'method_name': method_name,
-                'results_df': result_df,
-                'individual_plots': {},
-                'summary_plot': None,
-                'fit_quality': {}
-            }
-
             # Get plots and fit quality based on method
+            plots_dict = None
+            fit_quality = None
+
             if 'A' in method_name:
                 # Method A doesn't have individual plots
-                # Just show the results table
-                QMessageBox.information(
-                    self,
-                    f"Cumulant Analysis - {method_name}",
-                    f"Results for {method_name}:\n\n{result_df.to_string()}\n\n"
-                    f"Method A extracts cumulant data directly from ALV software.\n"
-                    f"No individual fit plots available."
+                # Just show in results tab
+                self.analysis_view.display_cumulant_results(
+                    method_name, result_df, None, None
                 )
-                continue
 
             elif 'B' in method_name:
                 if hasattr(analyzer, 'method_b_plots'):
-                    results_data['individual_plots'] = analyzer.method_b_plots
-                if hasattr(analyzer, 'method_b_summary_plot'):
-                    results_data['summary_plot'] = analyzer.method_b_summary_plot
+                    plots_dict = analyzer.method_b_plots
                 if hasattr(analyzer, 'method_b_fit_quality'):
-                    results_data['fit_quality'] = analyzer.method_b_fit_quality
+                    fit_quality = analyzer.method_b_fit_quality
+
+                self.analysis_view.display_cumulant_results(
+                    method_name, result_df, plots_dict, fit_quality
+                )
 
             elif 'C' in method_name:
                 if hasattr(analyzer, 'method_c_plots'):
-                    results_data['individual_plots'] = analyzer.method_c_plots
-                if hasattr(analyzer, 'method_c_summary_plot'):
-                    results_data['summary_plot'] = analyzer.method_c_summary_plot
+                    plots_dict = analyzer.method_c_plots
                 if hasattr(analyzer, 'method_c_fit_quality'):
-                    results_data['fit_quality'] = analyzer.method_c_fit_quality
+                    fit_quality = analyzer.method_c_fit_quality
 
-            # Show results dialog with embedded plots
-            if results_data['individual_plots']:
-                dialog = CumulantResultsDialog(results_data, self)
-                dialog.exec_()
+                self.analysis_view.display_cumulant_results(
+                    method_name, result_df, plots_dict, fit_quality
+                )
 
-                # Also show summary plot if available
-                if results_data['summary_plot'] is not None:
-                    summary_dialog = SummaryPlotDialog(
-                        results_data['summary_plot'],
-                        method_name,
-                        self
-                    )
-                    summary_dialog.exec_()
-
-        # Final summary message
-        QMessageBox.information(
-            self,
-            "Cumulant Analysis Complete",
-            f"Analysis completed successfully!\n\n"
-            f"Methods run: {', '.join([r[0] for r in results])}\n\n"
-            f"Results are displayed in individual dialogs and printed to console.\n"
-            f"All data is available for export."
+        # Update status
+        self.status_manager.complete_operation(
+            f"Cumulant analysis complete - Results displayed in Analysis tabs"
         )
