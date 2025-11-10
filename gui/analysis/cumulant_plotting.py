@@ -332,11 +332,14 @@ def plot_processed_correlations_iterative_no_show(dataframes_dict, fit_function,
             all_fit_results.append(fit_result)
 
         except Exception as e:
-            print(f"Error fitting '{name}': {e}")
+            print(f"[CUMULANT METHOD C ERROR] Failed to fit '{name}': {e}")
+            import traceback
+            traceback.print_exc()
             fit_result['Error'] = str(e)
             all_fit_results.append(fit_result)
 
     final_results_df = pd.DataFrame(all_fit_results)
+    print(f"[CUMULANT METHOD C] Generated {len(plots_dict)} plots from {len(dataframes_dict)} datasets")
     return final_results_df, plots_dict
 
 

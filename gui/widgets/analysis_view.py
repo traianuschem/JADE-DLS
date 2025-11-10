@@ -401,6 +401,8 @@ class AnalysisView(QWidget):
 
     def _load_plots(self, method_name, plots_dict, fit_quality):
         """Load plots into the plotting system"""
+        print(f"[ANALYSIS VIEW] Loading {len(plots_dict)} plots for {method_name}")
+
         self.current_plots = plots_dict
         self.current_fit_quality = fit_quality or {}
         self.current_method_name = method_name
@@ -417,6 +419,7 @@ class AnalysisView(QWidget):
                 quality_str = f" (R²={r2:.3f})"
 
             self.plot_list.addItem(f"{i+1}. {filename}{quality_str}")
+            print(f"[ANALYSIS VIEW] Added plot {i+1}: {filename}{quality_str}")
 
         # Show navigation widget
         self.nav_widget.show()
@@ -427,6 +430,9 @@ class AnalysisView(QWidget):
             self.current_plot_index = 0
             self.plot_list.setCurrentRow(0)
             self._show_plot(0)
+            print(f"[ANALYSIS VIEW] Displayed first plot")
+        else:
+            print(f"[ANALYSIS VIEW WARNING] No plots to display!")
 
     def _on_plot_selected(self, index):
         """Handle plot selection from list"""
@@ -435,12 +441,16 @@ class AnalysisView(QWidget):
 
     def _show_plot(self, index):
         """Show plot at given index"""
+        print(f"[ANALYSIS VIEW] _show_plot called with index={index}")
+
         filenames = list(self.current_plots.keys())
         if index < 0 or index >= len(filenames):
+            print(f"[ANALYSIS VIEW ERROR] Index {index} out of range (0-{len(filenames)-1})")
             return
 
         self.current_plot_index = index
         filename = filenames[index]
+        print(f"[ANALYSIS VIEW] Showing plot for {filename}")
 
         # Update selection
         self.plot_list.setCurrentRow(index)
@@ -448,6 +458,7 @@ class AnalysisView(QWidget):
         # Get plot data
         if filename in self.current_plots:
             fig, data = self.current_plots[filename]
+            print(f"[ANALYSIS VIEW] Retrieved plot: fig={fig is not None}, data keys={list(data.keys()) if isinstance(data, dict) else 'not dict'}")
 
             # Clear and redraw
             self.figure.clear()
@@ -455,6 +466,7 @@ class AnalysisView(QWidget):
             if fig is not None:
                 # Copy the plot
                 source_axes = fig.get_axes()
+                print(f"[ANALYSIS VIEW] Copying {len(source_axes)} subplots")
 
                 for ax_idx, source_ax in enumerate(source_axes):
                     # Create subplot in same position
@@ -497,6 +509,7 @@ class AnalysisView(QWidget):
 
             self.figure.tight_layout()
             self.canvas.draw()
+            print(f"[ANALYSIS VIEW] Plot drawn successfully")
 
             # Update info label
             info_text = f"<b>Dataset {index + 1} of {len(filenames)}</b>: {filename}<br>"

@@ -136,7 +136,9 @@ class CumulantAnalyzer:
         Returns:
             DataFrame with results (Rh, errors, R^2, PDI)
         """
-        from cumulants import extract_cumulants, analyze_diffusion_coefficient, calculate_cumulant_results_A
+        from cumulants import extract_cumulants, calculate_cumulant_results_A
+        from gui.analysis.cumulant_plotting import create_summary_plot
+        import statsmodels.api as sm
 
         # Ensure basedata is prepared
         if self.df_basedata is None:
@@ -173,14 +175,36 @@ class CumulantAnalyzer:
         cumulant_method_A_data = cumulant_method_A_data.reset_index(drop=True)
         cumulant_method_A_data.index = cumulant_method_A_data.index + 1
 
-        # Analyze diffusion coefficient
-        cumulant_method_A_diff = analyze_diffusion_coefficient(
-            data_df=cumulant_method_A_data,
-            q_squared_col='q^2',
-            gamma_cols=['1st order frequency [1/ms]',
-                       '2nd order frequency [1/ms]',
-                       '3rd order frequency [1/ms]'],
-            gamma_unit='1/ms'
+        # Perform linear regression for each gamma column without showing plots
+        gamma_cols = ['1st order frequency [1/ms]',
+                     '2nd order frequency [1/ms]',
+                     '3rd order frequency [1/ms]']
+
+        results_list = []
+        for gamma_col in gamma_cols:
+            if gamma_col in cumulant_method_A_data.columns:
+                X = cumulant_method_A_data['q^2']
+                Y = cumulant_method_A_data[gamma_col]
+                X_with_const = sm.add_constant(X)
+                model = sm.OLS(Y, X_with_const).fit()
+
+                results_list.append({
+                    'gamma_col': gamma_col,
+                    'q^2_coef': model.params[1],
+                    'q^2_se': model.bse[1],
+                    'R_squared': model.rsquared,
+                    'Normality': 'Normal' if model.rsquared > 0.9 else 'Check'
+                })
+
+        cumulant_method_A_diff = pd.DataFrame(results_list)
+
+        # Create summary plot (without showing)
+        self.method_a_summary_plot = create_summary_plot(
+            cumulant_method_A_data,
+            'q^2',
+            gamma_cols,
+            ['1st order', '2nd order', '3rd order'],
+            '1/ms'
         )
 
         # Create DataFrame with diffusion coefficients

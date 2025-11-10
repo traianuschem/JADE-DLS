@@ -149,11 +149,13 @@ class DataLoadWorker(QThread):
                     # File couldn't be processed
                     error_msg = f"Could not extract data from {os.path.basename(file)}"
                     self.errors.append({'file': os.path.basename(file), 'step': 'basedata', 'error': error_msg})
-                    print(f"Warning: {error_msg}")
+                    print(f"[DATA LOADER WARNING] {error_msg}")
             except Exception as e:
                 error_msg = f"Failed to extract data: {str(e)}"
                 self.errors.append({'file': os.path.basename(file), 'step': 'basedata', 'error': error_msg})
-                print(f"Warning: Failed to extract data from {file}: {e}")
+                print(f"[DATA LOADER ERROR] Failed to extract basedata from {os.path.basename(file)}: {e}")
+                import traceback
+                traceback.print_exc()
                 continue
 
         if all_data:
@@ -192,10 +194,13 @@ class DataLoadWorker(QThread):
                     # File couldn't be processed but not critical
                     error_msg = f"Could not extract countrate data"
                     self.errors.append({'file': os.path.basename(file), 'step': 'countrates', 'error': error_msg})
+                    print(f"[DATA LOADER WARNING] {error_msg} for {os.path.basename(file)}")
             except Exception as e:
                 error_msg = f"Failed to extract countrate: {str(e)}"
                 self.errors.append({'file': os.path.basename(file), 'step': 'countrates', 'error': error_msg})
-                print(f"Warning: Failed to extract countrate from {file}: {e}")
+                print(f"[DATA LOADER ERROR] Failed to extract countrate from {os.path.basename(file)}: {e}")
+                import traceback
+                traceback.print_exc()
                 continue
 
         return all_countrates
@@ -229,10 +234,13 @@ class DataLoadWorker(QThread):
                     # File couldn't be processed but not critical
                     error_msg = f"Could not extract correlation data"
                     self.errors.append({'file': os.path.basename(file), 'step': 'correlations', 'error': error_msg})
+                    print(f"[DATA LOADER WARNING] {error_msg} for {os.path.basename(file)}")
             except Exception as e:
                 error_msg = f"Failed to extract correlation: {str(e)}"
                 self.errors.append({'file': os.path.basename(file), 'step': 'correlations', 'error': error_msg})
-                print(f"Warning: Failed to extract correlation from {file}: {e}")
+                print(f"[DATA LOADER ERROR] Failed to extract correlation from {os.path.basename(file)}: {e}")
+                import traceback
+                traceback.print_exc()
                 continue
 
         return all_correlations
