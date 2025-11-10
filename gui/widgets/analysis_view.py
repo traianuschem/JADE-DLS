@@ -504,8 +504,11 @@ class AnalysisView(QWidget):
                     if source_ax.get_legend():
                         ax.legend()
 
-                    # Copy grid
-                    ax.grid(source_ax.xaxis._gridOnMajor or source_ax.yaxis._gridOnMajor)
+                    # Copy grid (matplotlib 3.9+ compatible)
+                    # Check if grid is visible by examining gridlines
+                    x_gridlines = source_ax.xaxis.get_gridlines()
+                    grid_visible = any(line.get_visible() for line in x_gridlines) if x_gridlines else False
+                    ax.grid(grid_visible)
 
             self.figure.tight_layout()
             self.canvas.draw()
