@@ -18,25 +18,47 @@ import os
 
 # Step: Load Data
 # Timestamp: 2025-11-10 14:25:00
-data_folder = "/path/to/your/data"
+
+# Load data from folder
+data_folder = r"/path/to/your/data"
 datafiles = glob.glob(os.path.join(data_folder, "*.asc"))
+
+# Filter out averaged files
 filtered_files = [f for f in datafiles
                   if "averaged" not in os.path.basename(f).lower()]
-print(f"Found {len(filtered_files)} .asc files")
 
-# ========== Step 2: Extract Countrates ==========
+print(f"Found {len(filtered_files)} .asc files in {data_folder}")
 
-# Step: Extract Countrates
-# Timestamp: 2025-11-10 14:25:15
+# Initialize data dictionaries
 countrates_data = {}
+correlations_data = {}
+df_basedata = pd.DataFrame()
+
+
+# ========== Step 2: Extract Data ==========
+
+# Step: Extract Data
+# Timestamp: 2025-11-10 14:25:15
+
+# Extract countrates from all files
 for file in filtered_files:
     try:
         df = extract_data(file)
         countrates_data[os.path.basename(file)] = df
     except Exception as e:
-        print(f"Error loading {file}: {e}")
+        print(f"Error extracting countrates from {file}: {e}")
 
-print(f"Loaded countrates for {len(countrates_data)} files")
+print(f"Extracted countrates from {len(countrates_data)} files")
+
+# Extract correlations from all files
+for file in filtered_files:
+    try:
+        df = extract_correlation(file)
+        correlations_data[os.path.basename(file)] = df
+    except Exception as e:
+        print(f"Error extracting correlations from {file}: {e}")
+
+print(f"Extracted correlations from {len(correlations_data)} files")
 
 # ========== Step 3: Filter Countrates ==========
 
@@ -51,33 +73,19 @@ files_to_exclude_countrates = [
 ]
 
 # Filter countrates data
-if 'countrates' in locals():
-    countrates_data = {k: v for k, v in countrates_data.items()
-                    if k not in files_to_exclude_countrates}
-    print(f"Excluded {len(files_to_exclude_countrates)} files from countrates")
+countrates_data = {k: v for k, v in countrates_data.items()
+                if k not in files_to_exclude_countrates}
 
-# Update basedata to match
-if 'df_basedata' in locals():
+print(f"Filtered countrates: {len(files_to_exclude_countrates)} files excluded, {len(countrates_data)} files remaining")
+
+# Update basedata to match (if it exists)
+if 'df_basedata' in locals() and len(df_basedata) > 0:
     df_basedata = df_basedata[~df_basedata['filename'].isin(files_to_exclude_countrates)]
     df_basedata = df_basedata.reset_index(drop=True)
     df_basedata.index = df_basedata.index + 1
 
-# ========== Step 4: Extract Correlations ==========
 
-# Step: Extract Correlations
-# Timestamp: 2025-11-10 14:27:00
-correlations_data = {}
-for file in filtered_files:
-    if os.path.basename(file) not in files_to_exclude_countrates:
-        try:
-            df = extract_correlation(file)
-            correlations_data[os.path.basename(file)] = df
-        except Exception as e:
-            print(f"Error loading correlation {file}: {e}")
-
-print(f"Loaded correlations for {len(correlations_data)} files")
-
-# ========== Step 5: Filter Correlations ==========
+# ========== Step 4: Filter Correlations ==========
 
 # Step: Filter Correlations
 # Timestamp: 2025-11-10 14:28:15
@@ -89,18 +97,19 @@ files_to_exclude_correlations = [
 ]
 
 # Filter correlations data
-if 'correlations' in locals():
-    correlations_data = {k: v for k, v in correlations_data.items()
-                    if k not in files_to_exclude_correlations}
-    print(f"Excluded {len(files_to_exclude_correlations)} files from correlations")
+correlations_data = {k: v for k, v in correlations_data.items()
+                if k not in files_to_exclude_correlations}
 
-# Update basedata to match
-if 'df_basedata' in locals():
+print(f"Filtered correlations: {len(files_to_exclude_correlations)} files excluded, {len(correlations_data)} files remaining")
+
+# Update basedata to match (if it exists)
+if 'df_basedata' in locals() and len(df_basedata) > 0:
     df_basedata = df_basedata[~df_basedata['filename'].isin(files_to_exclude_correlations)]
     df_basedata = df_basedata.reset_index(drop=True)
     df_basedata.index = df_basedata.index + 1
 
-# ========== Step 6: Cumulant Analysis ==========
+
+# ========== Step 5: Cumulant Analysis ==========
 
 # Step: Cumulant Analysis
 # Timestamp: 2025-11-10 14:29:00

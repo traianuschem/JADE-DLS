@@ -437,6 +437,70 @@ class JADEDLSMainWindow(QMainWindow):
         # Store raw data
         self.loaded_data = data
         num_files = data.get('num_files', 0)
+        data_folder = data.get('data_folder', '')
+
+        # Add data loading step to pipeline with reproducible code
+        load_code = f"""
+# Load data from folder
+data_folder = r"{data_folder}"
+datafiles = glob.glob(os.path.join(data_folder, "*.asc"))
+
+# Filter out averaged files
+filtered_files = [f for f in datafiles
+                  if "averaged" not in os.path.basename(f).lower()]
+
+print(f"Found {{len(filtered_files)}} .asc files in {{data_folder}}")
+
+# Initialize data dictionaries
+countrates_data = {{}}
+correlations_data = {{}}
+df_basedata = pd.DataFrame()
+"""
+
+        from gui.core.pipeline import AnalysisStep
+        load_step = AnalysisStep(
+            name="Load Data",
+            step_type='custom',
+            custom_code=load_code,
+            params={
+                'data_folder': data_folder,
+                'num_files': num_files
+            }
+        )
+        self.pipeline.steps.append(load_step)
+
+        # Add extraction step for countrates and correlations
+        extract_code = """
+# Extract countrates from all files
+for file in filtered_files:
+    try:
+        df = extract_data(file)
+        countrates_data[os.path.basename(file)] = df
+    except Exception as e:
+        print(f"Error extracting countrates from {file}: {e}")
+
+print(f"Extracted countrates from {len(countrates_data)} files")
+
+# Extract correlations from all files
+for file in filtered_files:
+    try:
+        df = extract_correlation(file)
+        correlations_data[os.path.basename(file)] = df
+    except Exception as e:
+        print(f"Error extracting correlations from {file}: {e}")
+
+print(f"Extracted correlations from {len(correlations_data)} files")
+"""
+
+        extract_step = AnalysisStep(
+            name="Extract Data",
+            step_type='custom',
+            custom_code=extract_code,
+            params={
+                'num_files': num_files
+            }
+        )
+        self.pipeline.steps.append(extract_step)
 
         # Update status
         self.status_manager.complete_operation(

@@ -55,7 +55,8 @@ class AnalysisStep:
 
     def generate_code(self) -> str:
         """Generate Python code for this step"""
-        if self.step_type == 'custom' and self.custom_code:
+        # If we have custom code (for filters or manual steps), use that
+        if self.custom_code:
             return f"""
 # Step: {self.name}
 # Timestamp: {self.timestamp}
@@ -152,13 +153,13 @@ files_to_exclude_{filter_type} = [
 ]
 
 # Filter {filter_type} data
-if '{filter_type}' in locals():
-    {filter_type}_data = {{k: v for k, v in {filter_type}_data.items()
-                    if k not in files_to_exclude_{filter_type}}}
-    print(f"Excluded {{len(files_to_exclude_{filter_type})}} files from {filter_type}")
+{filter_type}_data = {{k: v for k, v in {filter_type}_data.items()
+                if k not in files_to_exclude_{filter_type}}}
 
-# Update basedata to match
-if 'df_basedata' in locals():
+print(f"Filtered {filter_type}: {{len(files_to_exclude_{filter_type})}} files excluded, {{len({filter_type}_data)}} files remaining")
+
+# Update basedata to match (if it exists)
+if 'df_basedata' in locals() and len(df_basedata) > 0:
     df_basedata = df_basedata[~df_basedata['filename'].isin(files_to_exclude_{filter_type})]
     df_basedata = df_basedata.reset_index(drop=True)
     df_basedata.index = df_basedata.index + 1
@@ -167,7 +168,7 @@ if 'df_basedata' in locals():
             code = f"""
 # Filtering step: No files excluded from {filter_type}
 # All {original_count} files kept
-print("No files excluded from {filter_type} filtering")
+print(f"No files excluded from {filter_type} filtering - {{len({filter_type}_data)}} files kept")
 """
 
         # Create step with custom code
