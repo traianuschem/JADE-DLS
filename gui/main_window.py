@@ -15,6 +15,7 @@ from gui.widgets.inspector_panel import InspectorPanel
 from gui.core.pipeline import TransparentPipeline
 from gui.core.status_manager import StatusManager, ProgressDialog
 from gui.core.data_loader import DataLoader
+from gui.dialogs.filtering_dialogs import CountrateFilterDialog, CorrelationFilterDialog
 
 
 class JADEDLSMainWindow(QMainWindow):
@@ -407,34 +408,109 @@ class JADEDLSMainWindow(QMainWindow):
             self.progress_dialog.close()
             self.progress_dialog = None
 
-        # Store data
+        # Store raw data
         self.loaded_data = data
-
-        # Update pipeline
-        self.pipeline.data = data
-        self.pipeline.data_loaded.emit(data.get('data_folder', 'Unknown'))
+        num_files = data.get('num_files', 0)
 
         # Update status
-        num_files = data.get('num_files', 0)
         self.status_manager.complete_operation(
             f"Successfully loaded {num_files} files"
         )
+
+        # Now show filtering dialogs if data exists
+        filtered_data = data.copy()
+
+        # Step 1: Filter count rates
+        if 'countrates' in data and len(data['countrates']) > 0:
+            self.status_manager.start_operation("Filtering count rates")
+
+            countrate_dialog = CountrateFilterDialog(data['countrates'], self)
+            result = countrate_dialog.exec_()
+
+            if result == countrate_dialog.Accepted:
+                filtered_countrates = countrate_dialog.get_filtered_data()
+                filtered_data['countrates'] = filtered_countrates
+                excluded_count = len(data['countrates']) - len(filtered_countrates)
+
+                if excluded_count > 0:
+                    self.status_manager.update(
+                        f"Excluded {excluded_count} files based on count rates"
+                    )
+                else:
+                    self.status_manager.update("No count rates excluded")
+            else:
+                # User cancelled - use all data
+                self.status_manager.update("Count rate filtering cancelled - using all data")
+
+        # Step 2: Filter correlations
+        if 'correlations' in data and len(data['correlations']) > 0:
+            self.status_manager.start_operation("Filtering correlations")
+
+            # Only show correlations that weren't excluded in countrate step
+            correlations_to_filter = {k: v for k, v in data['correlations'].items()
+                                     if k in filtered_data.get('countrates', data['correlations']).keys()}
+
+            correlation_dialog = CorrelationFilterDialog(correlations_to_filter, self)
+            result = correlation_dialog.exec_()
+
+            if result == correlation_dialog.Accepted:
+                filtered_correlations = correlation_dialog.get_filtered_data()
+                filtered_data['correlations'] = filtered_correlations
+                excluded_count = len(correlations_to_filter) - len(filtered_correlations)
+
+                if excluded_count > 0:
+                    self.status_manager.update(
+                        f"Excluded {excluded_count} files based on correlations"
+                    )
+                else:
+                    self.status_manager.update("No correlations excluded")
+            else:
+                # User cancelled - use all data
+                self.status_manager.update("Correlation filtering cancelled - using all data")
+                filtered_data['correlations'] = correlations_to_filter
+
+        # Step 3: Update base data to match filtered correlations
+        if 'basedata' in filtered_data and 'correlations' in filtered_data:
+            import pandas as pd
+            basedata = filtered_data['basedata']
+
+            # Keep only base data for files that have correlations
+            remaining_files = list(filtered_data['correlations'].keys())
+            filtered_basedata = basedata[basedata['filename'].isin(remaining_files)]
+
+            filtered_data['basedata'] = filtered_basedata
+            filtered_data['num_files'] = len(remaining_files)
+
+        # Store filtered data in pipeline
+        self.pipeline.data = filtered_data
+        self.pipeline.data_loaded.emit(filtered_data.get('data_folder', 'Unknown'))
 
         # Update analysis view
         self.analysis_view.update_data_overview()
 
         # Mark workflow step as complete
         self.workflow_panel.mark_step_complete('load_data')
+        self.workflow_panel.mark_step_complete('preprocess')
         self.workflow_panel.update_progress()
 
-        # Show success message
+        # Show summary
+        final_count = filtered_data.get('num_files', 0)
+        excluded_total = num_files - final_count
+
+        summary_msg = f"Data loading and filtering complete!\n\n"
+        summary_msg += f"Original files: {num_files}\n"
+        summary_msg += f"Excluded: {excluded_total}\n"
+        summary_msg += f"Final dataset: {final_count} files\n\n"
+        summary_msg += f"Base data: {len(filtered_data.get('basedata', []))} entries\n"
+        summary_msg += f"Correlations: {len(filtered_data.get('correlations', {}))} datasets\n"
+        summary_msg += f"Count rates: {len(filtered_data.get('countrates', {}))} datasets"
+
+        self.status_manager.ready()
+
         QMessageBox.information(
             self,
-            "Data Loaded",
-            f"Successfully loaded {num_files} files.\n\n"
-            f"Base data: {len(data.get('basedata', []))} entries\n"
-            f"Correlations: {len(data.get('correlations', {}))} datasets\n"
-            f"Count rates: {len(data.get('countrates', {}))} datasets"
+            "Data Ready",
+            summary_msg
         )
 
     def on_load_error(self, error_message):
