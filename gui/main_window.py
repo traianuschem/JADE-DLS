@@ -1185,6 +1185,10 @@ print(method_c_results)
             results: List of tuples (method_name, result_dataframe)
             analyzer: CumulantAnalyzer instance with results
         """
+        print(f"[MAIN WINDOW] _display_cumulant_results called with {len(results)} methods")
+        for method_name, result_df in results:
+            print(f"[MAIN WINDOW]   - {method_name}: {result_df.shape[0]} rows")
+
         # Clear previous results
         self.analysis_view.clear_results()
 

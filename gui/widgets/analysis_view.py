@@ -361,7 +361,9 @@ class AnalysisView(QWidget):
     def _update_results_table(self, method_name, results_df, regression_stats=None):
         """Update results table with new results"""
         print(f"[ANALYSIS VIEW] _update_results_table called for {method_name}")
+        print(f"  results_df type: {type(results_df)}")
         print(f"  results_df shape: {results_df.shape if not results_df.empty else 'empty'}")
+        print(f"  results_df columns: {results_df.columns.tolist() if not results_df.empty else 'empty'}")
         print(f"  results_df:\n{results_df}")
 
         if results_df.empty:
@@ -370,9 +372,12 @@ class AnalysisView(QWidget):
 
         # Get existing row count
         current_rows = self.results_table.rowCount()
+        print(f"[ANALYSIS VIEW] Current row count before adding: {current_rows}")
+        print(f"[ANALYSIS VIEW] Adding {len(results_df)} rows for {method_name}")
 
         # Add rows for new results
         for i, row in results_df.iterrows():
+            print(f"[ANALYSIS VIEW]   Adding row {i} at position {current_rows + i}")
             self.results_table.insertRow(current_rows + i)
 
             # Method - use the 'Fit' column for the full description
@@ -436,6 +441,8 @@ class AnalysisView(QWidget):
             self.results_table.setItem(current_rows + i, 5,
                                       QTableWidgetItem(str(res_val)))
 
+        new_row_count = self.results_table.rowCount()
+        print(f"[ANALYSIS VIEW] Finished adding rows. New row count: {new_row_count}")
         self.results_table.resizeColumnsToContents()
 
         # Update details text with formatted output
