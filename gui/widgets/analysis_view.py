@@ -329,7 +329,7 @@ class AnalysisView(QWidget):
 
     # ========== Cumulant Analysis Display Methods ==========
 
-    def display_cumulant_results(self, method_name, results_df, plots_dict=None, fit_quality=None, switch_tab=True, regression_stats=None, regression_model=None):
+    def display_cumulant_results(self, method_name, results_df, plots_dict=None, fit_quality=None, switch_tab=True, regression_stats=None):
         """
         Display cumulant analysis results in Results and Plots tabs
 
@@ -339,11 +339,10 @@ class AnalysisView(QWidget):
             plots_dict: Dictionary {filename: (fig, data)} or None
             fit_quality: Dictionary {filename: {'R2': float, ...}} or None
             switch_tab: Whether to switch to appropriate tab (default True)
-            regression_stats: For Method A - dict with regression statistics
-            regression_model: For Methods B/C - statsmodels OLS model object
+            regression_stats: Dictionary with regression statistics (all methods)
         """
         # Update Results tab
-        self._update_results_table(method_name, results_df, regression_stats, regression_model)
+        self._update_results_table(method_name, results_df, regression_stats)
 
         # Update Plots tab if plots are available
         if plots_dict:
@@ -359,7 +358,7 @@ class AnalysisView(QWidget):
         """Switch to Results tab"""
         self.tabs.setCurrentIndex(2)
 
-    def _update_results_table(self, method_name, results_df, regression_stats=None, regression_model=None):
+    def _update_results_table(self, method_name, results_df, regression_stats=None):
         """Update results table with new results"""
         print(f"[ANALYSIS VIEW] _update_results_table called for {method_name}")
         print(f"  results_df shape: {results_df.shape if not results_df.empty else 'empty'}")
@@ -519,13 +518,13 @@ class AnalysisView(QWidget):
 
             new_section += "</table>"
 
-        elif regression_model:
-            # Methods B/C: Single regression from statsmodels
+        elif regression_stats and 'summary' in regression_stats:
+            # Methods B/C: Use pre-computed summary string
             new_section += "<h4>Linear Regression: Γ vs q² (scipy OLS)</h4>"
             new_section += "<pre style='background-color: #f5f5f5; padding: 10px; border: 1px solid #ddd; overflow-x: auto;'>"
 
-            # Get summary as string
-            summary_str = str(regression_model.summary())
+            # Use pre-computed summary string from dict
+            summary_str = regression_stats['summary']
             new_section += summary_str
 
             new_section += "</pre>"

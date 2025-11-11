@@ -349,8 +349,17 @@ class CumulantAnalyzer:
         self.method_b_results['Residuals'] = 'N/A'
         self.method_b_results['PDI'] = polydispersity_method_B
 
-        # Store regression model for detailed output
-        self.method_b_regression_model = model
+        # Store regression statistics as strings/dicts (not model object)
+        self.method_b_regression_stats = {
+            'summary': str(model.summary()),
+            'params': model.params.to_dict(),
+            'rsquared': float(model.rsquared),
+            'rsquared_adj': float(model.rsquared_adj),
+            'fvalue': float(model.fvalue),
+            'f_pvalue': float(model.f_pvalue),
+            'aic': float(model.aic),
+            'bic': float(model.bic)
+        }
 
         return self.method_b_results
 
@@ -524,8 +533,17 @@ class CumulantAnalyzer:
         print(f"[CUMULANT METHOD C DEBUG] Final DataFrame:")
         print(self.method_c_results)
 
-        # Store regression model for detailed output
-        self.method_c_regression_model = model
+        # Store regression statistics as strings/dicts (not model object)
+        self.method_c_regression_stats = {
+            'summary': str(model.summary()),
+            'params': model.params.to_dict(),
+            'rsquared': float(model.rsquared),
+            'rsquared_adj': float(model.rsquared_adj),
+            'fvalue': float(model.fvalue),
+            'f_pvalue': float(model.f_pvalue),
+            'aic': float(model.aic),
+            'bic': float(model.bic)
+        }
 
         return self.method_c_results
 

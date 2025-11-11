@@ -346,10 +346,10 @@ def analyze_diffusion_coefficient(data_df, q_squared_col, gamma_cols, method_nam
         all_results.append(results_dict)
         
         #set labels and title
-        plt.xlabel('q$^2$ [nm$^{-2}$]')
-        plt.ylabel(f'$\Gamma$ [{gamma_unit}]')
-        
-        title = 'q$^2$ vs. $\Gamma$'
+        plt.xlabel(r'q$^2$ [nm$^{-2}$]')
+        plt.ylabel(fr'$\Gamma$ [{gamma_unit}]')
+
+        title = r'q$^2$ vs. $\Gamma$'
         if method_name:
             title += f' ({method_name})'
         plt.title(title)
