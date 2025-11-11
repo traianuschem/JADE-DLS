@@ -225,6 +225,17 @@ class CumulantAnalyzer:
         )
         polydispersity_method_A_3 = cumulant_method_A_data['polydispersity_3rd_order'].mean()
 
+        # Debug: Print data before calling calculate_cumulant_results_A
+        print(f"[CUMULANT METHOD A DEBUG] Data before calculate_cumulant_results_A:")
+        print(f"  A_diff shape: {A_diff.shape}")
+        print(f"  A_diff:\n{A_diff}")
+        print(f"  cumulant_method_A_diff shape: {cumulant_method_A_diff.shape}")
+        print(f"  cumulant_method_A_diff:\n{cumulant_method_A_diff}")
+        print(f"  polydispersity_method_A_2: {polydispersity_method_A_2}")
+        print(f"  polydispersity_method_A_3: {polydispersity_method_A_3}")
+        print(f"  c_value: {self.c_value}")
+        print(f"  delta_c: {self.delta_c}")
+
         # Calculate final results
         self.method_a_results = calculate_cumulant_results_A(
             A_diff,

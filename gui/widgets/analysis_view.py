@@ -188,9 +188,9 @@ class AnalysisView(QWidget):
         results_layout = QVBoxLayout()
 
         self.results_table = QTableWidget()
-        self.results_table.setColumnCount(6)
+        self.results_table.setColumnCount(5)
         self.results_table.setHorizontalHeaderLabels([
-            "Method", "Rh (nm)", "Error (nm)", "R²", "PDI", "Residuals"
+            "Method", "Rh (nm)", "Error (nm)", "R²", "PDI"
         ])
         # Enable sorting and better column sizing
         self.results_table.setSortingEnabled(True)
@@ -436,11 +436,6 @@ class AnalysisView(QWidget):
                 pdi_item = QTableWidgetItem(pdi_str)
             self.results_table.setItem(current_rows + i, 4, pdi_item)
 
-            # Residuals
-            res_val = row.get('Residuals', 'N/A')
-            self.results_table.setItem(current_rows + i, 5,
-                                      QTableWidgetItem(str(res_val)))
-
         new_row_count = self.results_table.rowCount()
         print(f"[ANALYSIS VIEW] Finished adding rows. New row count: {new_row_count}")
         self.results_table.resizeColumnsToContents()
@@ -482,9 +477,9 @@ class AnalysisView(QWidget):
         new_section += "</table>"
 
         # Add detailed fit statistics for Gamma vs q² linear regression
-        if regression_stats:
+        if regression_stats and 'regression_results' in regression_stats:
             # Method A: Multiple regressions (1st, 2nd, 3rd order)
-            new_section += "<h4>Linear Regression: Γ vs q²</h4>"
+            new_section += "<h4>Detailed Fit Results: Γ vs q² Linear Regressions</h4>"
             new_section += "<table border='1' cellpadding='5' cellspacing='0' style='border-collapse: collapse; width: 100%;'>"
             new_section += "<tr style='background-color: #e0e0e0; font-weight: bold;'>"
             new_section += "<th>Order</th><th>Slope (D×10¹⁵ m²/s)</th><th>Std Error</th><th>R²</th><th>Quality</th>"
@@ -527,8 +522,8 @@ class AnalysisView(QWidget):
 
         elif regression_stats and 'summary' in regression_stats:
             # Methods B/C: Use pre-computed summary string
-            new_section += "<h4>Linear Regression: Γ vs q² (scipy OLS)</h4>"
-            new_section += "<pre style='background-color: #f5f5f5; padding: 10px; border: 1px solid #ddd; overflow-x: auto;'>"
+            new_section += "<h4>Detailed Fit Results: Γ vs q² Linear Regression (OLS)</h4>"
+            new_section += "<pre style='background-color: #f5f5f5; padding: 10px; border: 1px solid #ddd; overflow-x: auto; font-family: monospace; font-size: 11px;'>"
 
             # Use pre-computed summary string from dict
             summary_str = regression_stats['summary']
