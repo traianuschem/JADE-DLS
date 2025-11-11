@@ -8,77 +8,6 @@ import numpy as np
 from scipy.constants import k as boltzmann_constant
 from typing import Dict, List, Tuple, Any
 import os
-from scipy.stats import linregress
-
-
-def create_ols_summary(X, Y, result):
-    """
-    Create OLS summary text from scipy linregress result
-
-    Args:
-        X: Independent variable data
-        Y: Dependent variable data
-        result: scipy.stats.linregress result object
-
-    Returns:
-        str: Formatted summary text similar to statsmodels
-    """
-    n = len(X)
-    slope = result.slope
-    intercept = result.intercept
-    r_squared = result.rvalue ** 2
-    stderr_slope = result.stderr
-    stderr_intercept = result.intercept_stderr
-
-    # Calculate additional statistics
-    y_pred = slope * X + intercept
-    residuals = Y - y_pred
-    sse = np.sum(residuals ** 2)
-    sst = np.sum((Y - np.mean(Y)) ** 2)
-    mse = sse / (n - 2)
-
-    # Adjusted R²
-    adj_r_squared = 1 - (1 - r_squared) * (n - 1) / (n - 2)
-
-    # F-statistic
-    f_stat = (r_squared / 1) / ((1 - r_squared) / (n - 2))
-
-    # AIC and BIC (simplified)
-    aic = n * np.log(sse / n) + 2 * 2
-    bic = n * np.log(sse / n) + 2 * np.log(n)
-
-    summary = f"""                            OLS Regression Results
-==============================================================================
-Dep. Variable:                      y   R-squared:                       {r_squared:.3f}
-Model:                            OLS   Adj. R-squared:                  {adj_r_squared:.3f}
-No. Observations:                 {n:3d}   F-statistic:                     {f_stat:.3f}
-Df Residuals:                     {n-2:3d}
-Df Model:                           1
-==============================================================================
-                 coef    std err          t      P>|t|
-------------------------------------------------------------------------------
-const      {intercept:10.4e}  {stderr_intercept:10.3e}    {intercept/stderr_intercept:8.3f}      {result.pvalue:6.3f}
-x1         {slope:10.4e}  {stderr_slope:10.3e}    {slope/stderr_slope:8.3f}      {result.pvalue:6.3f}
-==============================================================================
-
-Notes:
-Slope (x1 coefficient): {slope:.6e}
-Standard Error of Slope: {stderr_slope:.6e}
-R-squared: {r_squared:.6f}
-"""
-
-    return summary, {
-        'slope': slope,
-        'intercept': intercept,
-        'stderr_slope': stderr_slope,
-        'stderr_intercept': stderr_intercept,
-        'rsquared': r_squared,
-        'rsquared_adj': adj_r_squared,
-        'fvalue': f_stat,
-        'f_pvalue': result.pvalue,
-        'aic': aic,
-        'bic': bic
-    }
 
 
 class CumulantAnalyzer:
@@ -209,7 +138,7 @@ class CumulantAnalyzer:
         """
         from cumulants import extract_cumulants, calculate_cumulant_results_A
         from gui.analysis.cumulant_plotting import create_summary_plot
-        from scipy.stats import linregress
+        import statsmodels.api as sm
 
         # Ensure basedata is prepared
         if self.df_basedata is None:
@@ -256,19 +185,15 @@ class CumulantAnalyzer:
             if gamma_col in cumulant_method_A_data.columns:
                 X = cumulant_method_A_data['q^2']
                 Y = cumulant_method_A_data[gamma_col]
-
-                # Use scipy linregress instead of statsmodels
-                result = linregress(X, Y)
-                slope = result.slope
-                std_err = result.stderr
-                r_squared = result.rvalue ** 2
+                X_with_const = sm.add_constant(X)
+                model = sm.OLS(Y, X_with_const).fit()
 
                 results_list.append({
                     'gamma_col': gamma_col,
-                    'q^2_coef': slope,
-                    'q^2_se': std_err,
-                    'R_squared': r_squared,
-                    'Normality': 'Normal' if r_squared > 0.9 else 'Check'
+                    'q^2_coef': model.params.iloc[1],
+                    'q^2_se': model.bse.iloc[1],
+                    'R_squared': model.rsquared,
+                    'Normality': 'Normal' if model.rsquared > 0.9 else 'Check'
                 })
 
         cumulant_method_A_diff = pd.DataFrame(results_list)
@@ -372,12 +297,13 @@ class CumulantAnalyzer:
 
         # Analyze diffusion coefficient (without plotting)
         # We'll create our own summary plot
+        import statsmodels.api as sm
 
-        # Linear regression using scipy
+        # Linear regression
         X = cumulant_method_B_data['q^2']
         Y = cumulant_method_B_data['b']
-        result = linregress(X, Y)
-        summary_text, stats_dict = create_ols_summary(X, Y, result)
+        X_with_const = sm.add_constant(X)
+        model = sm.OLS(Y, X_with_const).fit()
 
         # Create summary plot
         self.method_b_summary_plot = create_summary_plot(
@@ -400,8 +326,8 @@ class CumulantAnalyzer:
 
         # Calculate diffusion coefficients
         B_diff = pd.DataFrame()
-        B_diff['D [m^2/s]'] = [stats_dict['slope'] * 10**(-18)]
-        B_diff['std err D [m^2/s]'] = [stats_dict['stderr_slope'] * 10**(-18)]
+        B_diff['D [m^2/s]'] = [model.params.iloc[1] * 10**(-18)]
+        B_diff['std err D [m^2/s]'] = [model.bse.iloc[1] * 10**(-18)]
 
         # Calculate polydispersity
         cumulant_method_B_data['polydispersity'] = (
@@ -418,21 +344,21 @@ class CumulantAnalyzer:
             (B_diff['std err D [m^2/s]'][0] / B_diff['D [m^2/s]'][0])**2
         )
         self.method_b_results['Rh error [nm]'] = fractional_error_Rh_B * self.method_b_results['Rh [nm]']
-        self.method_b_results['R_squared'] = [stats_dict['rsquared']]
+        self.method_b_results['R_squared'] = [model.rsquared]
         self.method_b_results['Fit'] = 'Rh from linear cumulant fit'
         self.method_b_results['Residuals'] = 'N/A'
         self.method_b_results['PDI'] = polydispersity_method_B
 
         # Store regression statistics as strings/dicts (not model object)
         self.method_b_regression_stats = {
-            'summary': summary_text,
-            'params': {'const': stats_dict['intercept'], 'x1': stats_dict['slope']},
-            'rsquared': float(stats_dict['rsquared']),
-            'rsquared_adj': float(stats_dict['rsquared_adj']),
-            'fvalue': float(stats_dict['fvalue']),
-            'f_pvalue': float(stats_dict['f_pvalue']),
-            'aic': float(stats_dict['aic']),
-            'bic': float(stats_dict['bic'])
+            'summary': str(model.summary()),
+            'params': model.params.to_dict(),
+            'rsquared': float(model.rsquared),
+            'rsquared_adj': float(model.rsquared_adj),
+            'fvalue': float(model.fvalue),
+            'f_pvalue': float(model.f_pvalue),
+            'aic': float(model.aic),
+            'bic': float(model.bic)
         }
 
         return self.method_b_results
@@ -543,6 +469,7 @@ class CumulantAnalyzer:
                 }
 
         # Linear regression for diffusion coefficient
+        import statsmodels.api as sm
 
         # Debug: Check data before regression
         print(f"[CUMULANT METHOD C DEBUG] Data for regression:")
@@ -555,18 +482,18 @@ class CumulantAnalyzer:
 
         X = cumulant_method_C_data['q^2']
         Y = cumulant_method_C_data['best_b']
-        result = linregress(X, Y)
-        summary_text, stats_dict = create_ols_summary(X, Y, result)
+        X_with_const = sm.add_constant(X)
+        model = sm.OLS(Y, X_with_const).fit()
 
         print(f"[CUMULANT METHOD C DEBUG] Regression results:")
-        print(f"  slope: {stats_dict['slope']}")
-        print(f"  R²: {stats_dict['rsquared']}")
-        print(f"  slope: {stats_dict['slope']}")
+        print(f"  params: {model.params}")
+        print(f"  R²: {model.rsquared}")
+        print(f"  slope (params[1]): {model.params.iloc[1]}")
 
         # Create DataFrame with diffusion coefficients
         C_diff = pd.DataFrame()
-        C_diff['D [m^2/s]'] = [stats_dict['slope'] * 10**(-18)]
-        C_diff['std err D [m^2/s]'] = [stats_dict['stderr_slope'] * 10**(-18)]
+        C_diff['D [m^2/s]'] = [model.params.iloc[1] * 10**(-18)]
+        C_diff['std err D [m^2/s]'] = [model.bse.iloc[1] * 10**(-18)]
 
         print(f"[CUMULANT METHOD C DEBUG] Diffusion coefficient:")
         print(f"  D [m^2/s]: {C_diff['D [m^2/s]'][0]}")
@@ -598,7 +525,7 @@ class CumulantAnalyzer:
         print(f"  Calculated Rh error: {rh_error}")
 
         self.method_c_results['Rh error [nm]'] = [rh_error]
-        self.method_c_results['R_squared'] = [stats_dict['rsquared']]
+        self.method_c_results['R_squared'] = [model.rsquared]
         self.method_c_results['Fit'] = ['Rh from iterative non-linear cumulant fit']
         self.method_c_results['Residuals'] = ['N/A']
         self.method_c_results['PDI'] = [polydispersity_method_C]
@@ -608,14 +535,14 @@ class CumulantAnalyzer:
 
         # Store regression statistics as strings/dicts (not model object)
         self.method_c_regression_stats = {
-            'summary': summary_text,
-            'params': {'const': stats_dict['intercept'], 'x1': stats_dict['slope']},
-            'rsquared': float(stats_dict['rsquared']),
-            'rsquared_adj': float(stats_dict['rsquared_adj']),
-            'fvalue': float(stats_dict['fvalue']),
-            'f_pvalue': float(stats_dict['f_pvalue']),
-            'aic': float(stats_dict['aic']),
-            'bic': float(stats_dict['bic'])
+            'summary': str(model.summary()),
+            'params': model.params.to_dict(),
+            'rsquared': float(model.rsquared),
+            'rsquared_adj': float(model.rsquared_adj),
+            'fvalue': float(model.fvalue),
+            'f_pvalue': float(model.f_pvalue),
+            'aic': float(model.aic),
+            'bic': float(model.bic)
         }
 
         return self.method_c_results
