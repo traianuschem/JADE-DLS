@@ -329,7 +329,7 @@ class AnalysisView(QWidget):
 
     # ========== Cumulant Analysis Display Methods ==========
 
-    def display_cumulant_results(self, method_name, results_df, plots_dict=None, fit_quality=None, switch_tab=True):
+    def display_cumulant_results(self, method_name, results_df, plots_dict=None, fit_quality=None, switch_tab=True, regression_stats=None, regression_model=None):
         """
         Display cumulant analysis results in Results and Plots tabs
 
@@ -339,9 +339,11 @@ class AnalysisView(QWidget):
             plots_dict: Dictionary {filename: (fig, data)} or None
             fit_quality: Dictionary {filename: {'R2': float, ...}} or None
             switch_tab: Whether to switch to appropriate tab (default True)
+            regression_stats: For Method A - dict with regression statistics
+            regression_model: For Methods B/C - statsmodels OLS model object
         """
         # Update Results tab
-        self._update_results_table(method_name, results_df)
+        self._update_results_table(method_name, results_df, regression_stats, regression_model)
 
         # Update Plots tab if plots are available
         if plots_dict:
@@ -357,9 +359,14 @@ class AnalysisView(QWidget):
         """Switch to Results tab"""
         self.tabs.setCurrentIndex(2)
 
-    def _update_results_table(self, method_name, results_df):
+    def _update_results_table(self, method_name, results_df, regression_stats=None, regression_model=None):
         """Update results table with new results"""
+        print(f"[ANALYSIS VIEW] _update_results_table called for {method_name}")
+        print(f"  results_df shape: {results_df.shape if not results_df.empty else 'empty'}")
+        print(f"  results_df:\n{results_df}")
+
         if results_df.empty:
+            print(f"[ANALYSIS VIEW WARNING] results_df is empty for {method_name}!")
             return
 
         # Get existing row count
@@ -468,37 +475,60 @@ class AnalysisView(QWidget):
             new_section += "</tr>"
         new_section += "</table>"
 
-        # Add detailed fit statistics if available
-        if hasattr(self, 'current_fit_quality') and self.current_fit_quality:
-            new_section += "<h4>Detailed Fit Statistics:</h4>"
+        # Add detailed fit statistics for Gamma vs q² linear regression
+        if regression_stats:
+            # Method A: Multiple regressions (1st, 2nd, 3rd order)
+            new_section += "<h4>Linear Regression: Γ vs q²</h4>"
             new_section += "<table border='1' cellpadding='5' cellspacing='0' style='border-collapse: collapse; width: 100%;'>"
             new_section += "<tr style='background-color: #e0e0e0; font-weight: bold;'>"
-            new_section += "<th>Dataset</th><th>R²</th><th>RMSE</th><th>Status</th>"
+            new_section += "<th>Order</th><th>Slope (D×10¹⁵ m²/s)</th><th>Std Error</th><th>R²</th><th>Quality</th>"
             new_section += "</tr>"
 
-            for filename, quality in list(self.current_fit_quality.items())[:10]:  # Show first 10
+            for result in regression_stats.get('regression_results', []):
                 new_section += "<tr>"
-                new_section += f"<td>{filename}</td>"
-                new_section += f"<td>{quality.get('R2', 'N/A'):.4f}</td>"
-                new_section += f"<td>{quality.get('residuals', quality.get('RMSE', 'N/A'))}</td>"
+                gamma_col = result.get('gamma_col', '')
+                if '1st' in gamma_col:
+                    order = "1st"
+                elif '2nd' in gamma_col:
+                    order = "2nd"
+                elif '3rd' in gamma_col:
+                    order = "3rd"
+                else:
+                    order = gamma_col
 
-                r2 = quality.get('R2', 0)
+                slope = result.get('q^2_coef', 0)
+                std_err = result.get('q^2_se', 0)
+                r2 = result.get('R_squared', 0)
+
+                new_section += f"<td>{order}</td>"
+                new_section += f"<td>{slope:.6f}</td>"
+                new_section += f"<td>{std_err:.6f}</td>"
+                new_section += f"<td>{r2:.6f}</td>"
+
                 if r2 > 0.99:
-                    status = "✓ Excellent"
+                    quality = "✓ Excellent"
                     color = "green"
                 elif r2 > 0.95:
-                    status = "○ Good"
+                    quality = "○ Good"
                     color = "orange"
                 else:
-                    status = "✗ Check"
+                    quality = "✗ Check"
                     color = "red"
-                new_section += f"<td style='color: {color}; font-weight: bold;'>{status}</td>"
+                new_section += f"<td style='color: {color}; font-weight: bold;'>{quality}</td>"
                 new_section += "</tr>"
 
-            if len(self.current_fit_quality) > 10:
-                new_section += f"<tr><td colspan='4' style='font-style: italic; text-align: center;'>... and {len(self.current_fit_quality) - 10} more datasets</td></tr>"
-
             new_section += "</table>"
+
+        elif regression_model:
+            # Methods B/C: Single regression from statsmodels
+            new_section += "<h4>Linear Regression: Γ vs q² (scipy OLS)</h4>"
+            new_section += "<pre style='background-color: #f5f5f5; padding: 10px; border: 1px solid #ddd; overflow-x: auto;'>"
+
+            # Get summary as string
+            summary_str = str(regression_model.summary())
+            new_section += summary_str
+
+            new_section += "</pre>"
 
         # Append to existing HTML or create new
         if current_html and "<body" in current_html:

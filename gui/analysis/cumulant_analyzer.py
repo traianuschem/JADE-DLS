@@ -235,6 +235,18 @@ class CumulantAnalyzer:
             self.delta_c
         )
 
+        print(f"[CUMULANT METHOD A DEBUG] Final results:")
+        print(f"  Shape: {self.method_a_results.shape}")
+        print(f"  Columns: {self.method_a_results.columns.tolist()}")
+        print(self.method_a_results)
+
+        # Store regression statistics for detailed output
+        self.method_a_regression_stats = {
+            'gamma_cols': gamma_cols,
+            'regression_results': results_list,
+            'diffusion_data': A_diff
+        }
+
         return self.method_a_results
 
     def run_method_b(self, fit_limits: Tuple[float, float]) -> pd.DataFrame:
@@ -336,6 +348,9 @@ class CumulantAnalyzer:
         self.method_b_results['Fit'] = 'Rh from linear cumulant fit'
         self.method_b_results['Residuals'] = 'N/A'
         self.method_b_results['PDI'] = polydispersity_method_B
+
+        # Store regression model for detailed output
+        self.method_b_regression_model = model
 
         return self.method_b_results
 
@@ -508,6 +523,9 @@ class CumulantAnalyzer:
 
         print(f"[CUMULANT METHOD C DEBUG] Final DataFrame:")
         print(self.method_c_results)
+
+        # Store regression model for detailed output
+        self.method_c_regression_model = model
 
         return self.method_c_results
 
