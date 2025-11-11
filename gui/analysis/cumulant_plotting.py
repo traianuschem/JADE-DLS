@@ -382,21 +382,23 @@ def create_summary_plot(data_df, q_squared_col, gamma_cols, method_names=None, g
         method_name = method_names[i] if i < len(method_names) else ''
         Y_full = data_df[gamma_col]
 
-        # Scatter plot
-        ax.scatter(X_full, Y_full, alpha=0.6, label=f'{method_name} Data',
-                  color=colors[i % len(colors)])
+        # Scatter plot with larger, more visible markers
+        ax.scatter(X_full, Y_full, alpha=0.7, s=50,
+                  label=f'{method_name} Data',
+                  color=colors[i % len(colors)],
+                  marker='o', edgecolors='black', linewidths=0.5)
 
         # Linear regression
         X_fit_with_constant = sm.add_constant(X_full)
         model = sm.OLS(Y_full, X_fit_with_constant).fit()
 
-        # Plot regression line
+        # Plot regression line with thinner line to emphasize data points
         X_line = np.linspace(X_full.min(), X_full.max(), 100)
         X_line_with_constant = sm.add_constant(X_line)
         y_predicted_line = model.predict(X_line_with_constant)
-        ax.plot(X_line, y_predicted_line, '-',
+        ax.plot(X_line, y_predicted_line, '-', linewidth=2,
                label=f'{method_name} Fit (R²={model.rsquared:.4f})',
-               color=colors[i % len(colors)])
+               color=colors[i % len(colors)], alpha=0.8)
 
     ax.set_xlabel(f'q² [nm⁻²]')
     ax.set_ylabel(f'Γ [{gamma_unit}]')

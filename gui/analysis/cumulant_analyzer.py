@@ -364,6 +364,8 @@ class CumulantAnalyzer:
         self.method_b_regression_stats = {
             'summary': str(model.summary()),
             'params': model.params.to_dict(),
+            'stderr_intercept': float(model.bse.iloc[0]),
+            'stderr_slope': float(model.bse.iloc[1]),
             'rsquared': float(model.rsquared),
             'rsquared_adj': float(model.rsquared_adj),
             'fvalue': float(model.fvalue),
@@ -548,6 +550,8 @@ class CumulantAnalyzer:
         self.method_c_regression_stats = {
             'summary': str(model.summary()),
             'params': model.params.to_dict(),
+            'stderr_intercept': float(model.bse.iloc[0]),
+            'stderr_slope': float(model.bse.iloc[1]),
             'rsquared': float(model.rsquared),
             'rsquared_adj': float(model.rsquared_adj),
             'fvalue': float(model.fvalue),

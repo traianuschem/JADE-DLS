@@ -521,15 +521,54 @@ class AnalysisView(QWidget):
             new_section += "</table>"
 
         elif regression_stats and 'summary' in regression_stats:
-            # Methods B/C: Use pre-computed summary string
-            new_section += "<h4>Detailed Fit Results: Γ vs q² Linear Regression (OLS)</h4>"
-            new_section += "<pre style='background-color: #f5f5f5; padding: 10px; border: 1px solid #ddd; overflow-x: auto; font-family: monospace; font-size: 11px;'>"
+            # Methods B/C: Extract key statistics and display in formatted table
+            new_section += "<h4>Detailed Fit Results: Γ vs q² Linear Regression</h4>"
 
-            # Use pre-computed summary string from dict
-            summary_str = regression_stats['summary']
-            new_section += summary_str
+            # Model Statistics Table
+            new_section += "<table border='1' cellpadding='8' cellspacing='0' style='border-collapse: collapse; width: 100%; margin-bottom: 15px;'>"
+            new_section += "<tr style='background-color: #d0e0f0; font-weight: bold;'><th colspan='2'>Model Statistics</th></tr>"
+            new_section += f"<tr><td style='width: 40%;'><b>R-squared</b></td><td>{regression_stats['rsquared']:.6f}</td></tr>"
+            new_section += f"<tr><td><b>Adj. R-squared</b></td><td>{regression_stats['rsquared_adj']:.6f}</td></tr>"
+            new_section += f"<tr><td><b>F-statistic</b></td><td>{regression_stats['fvalue']:.3e}</td></tr>"
+            new_section += f"<tr><td><b>Prob (F-statistic)</b></td><td>{regression_stats['f_pvalue']:.3e}</td></tr>"
+            new_section += f"<tr><td><b>AIC</b></td><td>{regression_stats['aic']:.2f}</td></tr>"
+            new_section += f"<tr><td><b>BIC</b></td><td>{regression_stats['bic']:.2f}</td></tr>"
+            new_section += "</table>"
 
-            new_section += "</pre>"
+            # Coefficients Table
+            new_section += "<table border='1' cellpadding='8' cellspacing='0' style='border-collapse: collapse; width: 100%;'>"
+            new_section += "<tr style='background-color: #d0e0f0; font-weight: bold;'>"
+            new_section += "<th>Coefficient</th><th>Value</th><th>Std Error</th></tr>"
+
+            params = regression_stats.get('params', {})
+            if 'const' in params and 'x1' in params:
+                # We have intercept and slope - get stderr if available
+                const_val = params['const']
+                slope_val = params['x1']
+                stderr_slope = regression_stats.get('stderr_slope', '-')
+                stderr_intercept = regression_stats.get('stderr_intercept', '-')
+
+                if stderr_intercept != '-':
+                    new_section += f"<tr><td><b>Intercept</b></td><td>{const_val:.4e}</td><td>{stderr_intercept:.4e}</td></tr>"
+                else:
+                    new_section += f"<tr><td><b>Intercept</b></td><td>{const_val:.4e}</td><td>-</td></tr>"
+
+                if stderr_slope != '-':
+                    new_section += f"<tr><td><b>Slope (q²)</b></td><td>{slope_val:.4e}</td><td>{stderr_slope:.4e}</td></tr>"
+                else:
+                    new_section += f"<tr><td><b>Slope (q²)</b></td><td>{slope_val:.4e}</td><td>-</td></tr>"
+
+            new_section += "</table>"
+
+            # Add interpretation
+            r2 = regression_stats['rsquared']
+            if r2 > 0.99:
+                quality_msg = "<p style='color: green; font-weight: bold;'>✓ Excellent fit (R² > 0.99)</p>"
+            elif r2 > 0.95:
+                quality_msg = "<p style='color: orange; font-weight: bold;'>○ Good fit (R² > 0.95)</p>"
+            else:
+                quality_msg = "<p style='color: red; font-weight: bold;'>⚠ Check fit quality (R² < 0.95)</p>"
+            new_section += quality_msg
 
         # Append to existing HTML or create new
         if current_html and "<body" in current_html:

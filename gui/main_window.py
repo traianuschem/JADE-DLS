@@ -1227,8 +1227,14 @@ print(method_c_results)
                 )
 
             elif 'B' in method_name:
+                plots_dict = {}
                 if hasattr(analyzer, 'method_b_plots'):
-                    plots_dict = analyzer.method_b_plots
+                    plots_dict.update(analyzer.method_b_plots)
+
+                # Add summary plot (Gamma vs q²) if available
+                if hasattr(analyzer, 'method_b_summary_plot'):
+                    plots_dict['Method B Summary'] = (analyzer.method_b_summary_plot, {})
+
                 if hasattr(analyzer, 'method_b_fit_quality'):
                     fit_quality = analyzer.method_b_fit_quality
 
@@ -1244,8 +1250,14 @@ print(method_c_results)
                 )
 
             elif 'C' in method_name:
+                plots_dict = {}
                 if hasattr(analyzer, 'method_c_plots'):
-                    plots_dict = analyzer.method_c_plots
+                    plots_dict.update(analyzer.method_c_plots)
+
+                # Add summary plot (Gamma vs q²) if available
+                if hasattr(analyzer, 'method_c_summary_plot'):
+                    plots_dict['Method C Summary'] = (analyzer.method_c_summary_plot, {})
+
                 if hasattr(analyzer, 'method_c_fit_quality'):
                     fit_quality = analyzer.method_c_fit_quality
 
