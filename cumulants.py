@@ -254,11 +254,12 @@ def analyze_diffusion_coefficient(data_df, q_squared_col, gamma_cols, method_nam
         if x_range is not None:
             if not isinstance(x_range, (tuple, list)) or len(x_range) != 2:
                 raise ValueError("x_range must be a tuple or list of length 2: (min_x, max_x)")
-            
+
             min_x, max_x = x_range
             mask = (X_full >= min_x) & (X_full <= max_x)
-            X_fit = X_full[mask]
-            Y_fit = Y_full[mask]
+            # Reset index to avoid alignment issues with boolean indexing
+            X_fit = X_full[mask].reset_index(drop=True)
+            Y_fit = Y_full[mask].reset_index(drop=True)
             
             if len(X_fit) < 2:
                 print(f"Warning: Only {len(X_fit)} data points in specified x_range for {gamma_col}. Need at least 2 points for fitting.")
