@@ -157,12 +157,25 @@ class JADEDLSApp:
         # Apply to root window
         self.root.configure(bg=self.current_style.BG_MEDIUM)
 
-        # Update text widgets
+        # Update text widgets - keep them white with black text for readability
+        text_widgets = []
         if hasattr(self, 'log_text'):
-            self.log_text.configure(
-                bg=self.current_style.BG_LIGHT,
-                fg=self.current_style.FG_TEXT,
-                insertbackground=self.current_style.FG_TEXT)
+            text_widgets.append(self.log_text)
+        if hasattr(self, 'summary_text'):
+            text_widgets.append(self.summary_text)
+        if hasattr(self, 'method_a_results'):
+            text_widgets.append(self.method_a_results)
+        if hasattr(self, 'method_b_results'):
+            text_widgets.append(self.method_b_results)
+        if hasattr(self, 'method_c_results'):
+            text_widgets.append(self.method_c_results)
+
+        # Always use white background with black text for readability
+        for widget in text_widgets:
+            widget.configure(
+                bg='#ffffff',
+                fg='#000000',
+                insertbackground='#000000')
 
     def create_menu(self):
         """Create menu bar"""
@@ -766,36 +779,126 @@ class JADEDLSApp:
             messagebox.showerror("Error", "Please run Method B analysis first!")
             return
 
+        self.log("\n" + "="*60)
+        self.log("Opening post-filter dialog for Method B...")
+
         # Create dialog for entering indices to remove
         dialog = tk.Toplevel(self.root)
         dialog.title("Post-Filter Method B Results")
-        dialog.geometry("400x300")
+        dialog.geometry("600x500")
 
         # Apply theme to dialog
         dialog.configure(bg=self.current_style.BG_MEDIUM)
 
-        ttk.Label(dialog, text="Enter row indices to remove (comma-separated):").pack(pady=10)
+        ttk.Label(dialog, text="Current Data - Enter row indices to REMOVE (comma-separated):",
+                 font=('TkDefaultFont', 10, 'bold')).pack(pady=10)
 
-        # Show current data
-        text_widget = scrolledtext.ScrolledText(dialog, height=10, width=50)
+        # Show current data with white background
+        text_widget = scrolledtext.ScrolledText(
+            dialog,
+            height=15,
+            width=70,
+            bg='#ffffff',
+            fg='#000000')
         text_widget.pack(padx=10, pady=5)
-        text_widget.insert(1.0, self.method_B_data.to_string())
+        text_widget.insert(1.0, self.method_B_data[['filename', 'angle [°]', 'q^2', 'b', 'R-squared']].to_string())
         text_widget.configure(state='disabled')
 
-        ttk.Label(dialog, text="Indices to remove:").pack(pady=5)
+        ttk.Label(dialog, text="Row indices to remove (e.g., 1,5,8):").pack(pady=5)
         indices_entry = ttk.Entry(dialog, width=40)
         indices_entry.pack(pady=5)
 
         def apply_filter():
-            indices_str = indices_entry.get()
-            self.method_B_data = remove_rows_by_index(self.method_B_data, indices_str)
-            self.log(f"Applied post-filtering to Method B data. Remaining rows: {len(self.method_B_data)}")
+            indices_str = indices_entry.get().strip()
+            if not indices_str:
+                self.log("Post-filter cancelled - no indices specified")
+                dialog.destroy()
+                return
+
+            self.log(f"Applying filter to remove indices: {indices_str}")
+
+            # Apply filter
+            filtered_data = remove_rows_by_index(self.method_B_data.copy(), indices_str)
+
+            if len(filtered_data) == len(self.method_B_data):
+                self.log("No rows were removed - check your indices")
+                messagebox.showwarning("Warning", "No rows were removed. Check your indices.")
+                return
+
+            self.method_B_data = filtered_data
+            self.log(f"Removed rows. Remaining datasets: {len(self.method_B_data)}")
+
             dialog.destroy()
-            # Re-run analysis with filtered data
-            self.run_method_b()
+
+            # Recalculate diffusion coefficient with filtered data
+            self.recalculate_method_b_results()
 
         ttk.Button(dialog, text="Apply Filter", command=apply_filter).pack(pady=10)
         ttk.Button(dialog, text="Cancel", command=dialog.destroy).pack()
+
+    def recalculate_method_b_results(self):
+        """Recalculate Method B results after filtering (without re-fitting)"""
+        try:
+            self.log("\n" + "="*60)
+            self.log("Recalculating Method B results with filtered data...")
+
+            # Get q-range if specified
+            x_range = None
+            qmin_text = self.method_b_qmin.get().strip()
+            qmax_text = self.method_b_qmax.get().strip()
+            if qmin_text and qmax_text:
+                try:
+                    x_range = (float(qmin_text), float(qmax_text))
+                    self.log(f"Using q² range: {x_range}")
+                except ValueError:
+                    self.log("Warning: Invalid q-range values, using full range")
+
+            # Analyze diffusion with filtered data
+            cumulant_method_B_diff = analyze_diffusion_coefficient(
+                data_df=self.method_B_data,
+                q_squared_col='q^2',
+                gamma_cols=['b'],
+                method_names=['Method B'],
+                x_range=x_range)
+
+            # Calculate results
+            B_diff = pd.DataFrame()
+            B_diff['D [m^2/s]'] = cumulant_method_B_diff['q^2_coef']*10**(-18)
+            B_diff['std err D [m^2/s]'] = cumulant_method_B_diff['q^2_se']*10**(-18)
+
+            # Polydispersity
+            self.method_B_data['polydispersity'] = \
+                self.method_B_data['c'] / (self.method_B_data['b'])**2
+            polydispersity_B = self.method_B_data['polydispersity'].mean()
+
+            # Create results
+            results = pd.DataFrame()
+            results['Rh [nm]'] = self.c_value * (1/B_diff['D [m^2/s]'][0]) * 10**9
+            fractional_error_Rh_B = np.sqrt(
+                (self.delta_c / self.c_value)**2 +
+                (B_diff['std err D [m^2/s]'][0] / B_diff['D [m^2/s]'][0])**2)
+            results['Rh error [nm]'] = fractional_error_Rh_B * results['Rh [nm]']
+            results['R_squared'] = cumulant_method_B_diff['R_squared']
+            results['Fit'] = 'Rh from linear cumulant fit (filtered)'
+            results['Residuals'] = cumulant_method_B_diff['Normality']
+            results['PDI'] = polydispersity_B
+
+            # Display results
+            self.method_b_results.delete(1.0, tk.END)
+            self.method_b_results.insert(1.0, "FILTERED RESULTS\n")
+            self.method_b_results.insert(tk.END, "="*60 + "\n\n")
+            self.method_b_results.insert(tk.END, results.to_string())
+            self.method_b_results.insert(tk.END, f"\n\nUsing {len(self.method_B_data)} datasets (after filtering)\n")
+            self.method_b_results.insert(tk.END, "You can apply additional filters if needed.\n")
+
+            self.log("Method B recalculation complete!")
+            self.log(f"\nFiltered Results:\n{results.to_string()}")
+
+        except Exception as e:
+            self.log(f"ERROR in Method B recalculation: {str(e)}")
+            import traceback
+            self.log(traceback.format_exc())
+            messagebox.showerror("Error", f"Recalculation failed:\n{str(e)}")
 
     def postfilter_method_c(self):
         """Post-filter Method C results"""
@@ -803,8 +906,130 @@ class JADEDLSApp:
             messagebox.showerror("Error", "Please run Method C analysis first!")
             return
 
-        # Similar implementation as Method B
-        messagebox.showinfo("Info", "Method C post-filtering will be implemented.")
+        self.log("\n" + "="*60)
+        self.log("Opening post-filter dialog for Method C...")
+
+        # Create dialog for entering indices to remove
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Post-Filter Method C Results")
+        dialog.geometry("600x500")
+
+        # Apply theme to dialog
+        dialog.configure(bg=self.current_style.BG_MEDIUM)
+
+        ttk.Label(dialog, text="Current Data - Enter row indices to REMOVE (comma-separated):",
+                 font=('TkDefaultFont', 10, 'bold')).pack(pady=10)
+
+        # Show current data with white background
+        text_widget = scrolledtext.ScrolledText(
+            dialog,
+            height=15,
+            width=70,
+            bg='#ffffff',
+            fg='#000000')
+        text_widget.pack(padx=10, pady=5)
+
+        # Show relevant columns for Method C
+        display_cols = ['filename', 'angle [°]', 'q^2', 'best_b', 'R-squared']
+        available_cols = [col for col in display_cols if col in self.method_C_data.columns]
+        text_widget.insert(1.0, self.method_C_data[available_cols].to_string())
+        text_widget.configure(state='disabled')
+
+        ttk.Label(dialog, text="Row indices to remove (e.g., 1,5,8):").pack(pady=5)
+        indices_entry = ttk.Entry(dialog, width=40)
+        indices_entry.pack(pady=5)
+
+        def apply_filter():
+            indices_str = indices_entry.get().strip()
+            if not indices_str:
+                self.log("Post-filter cancelled - no indices specified")
+                dialog.destroy()
+                return
+
+            self.log(f"Applying filter to remove indices: {indices_str}")
+
+            # Apply filter
+            filtered_data = remove_rows_by_index(self.method_C_data.copy(), indices_str)
+
+            if len(filtered_data) == len(self.method_C_data):
+                self.log("No rows were removed - check your indices")
+                messagebox.showwarning("Warning", "No rows were removed. Check your indices.")
+                return
+
+            self.method_C_data = filtered_data
+            self.log(f"Removed rows. Remaining datasets: {len(self.method_C_data)}")
+
+            dialog.destroy()
+
+            # Recalculate diffusion coefficient with filtered data
+            self.recalculate_method_c_results()
+
+        ttk.Button(dialog, text="Apply Filter", command=apply_filter).pack(pady=10)
+        ttk.Button(dialog, text="Cancel", command=dialog.destroy).pack()
+
+    def recalculate_method_c_results(self):
+        """Recalculate Method C results after filtering (without re-fitting)"""
+        try:
+            self.log("\n" + "="*60)
+            self.log("Recalculating Method C results with filtered data...")
+
+            # Get q-range if specified
+            x_range = None
+            qmin_text = self.method_c_qmin.get().strip()
+            qmax_text = self.method_c_qmax.get().strip()
+            if qmin_text and qmax_text:
+                try:
+                    x_range = (float(qmin_text), float(qmax_text))
+                    self.log(f"Using q² range: {x_range}")
+                except ValueError:
+                    self.log("Warning: Invalid q-range values, using full range")
+
+            # Analyze diffusion with filtered data
+            cumulant_method_C_diff = analyze_diffusion_coefficient(
+                data_df=self.method_C_data,
+                q_squared_col='q^2',
+                gamma_cols=['best_b'],
+                method_names=['Method C'],
+                x_range=x_range)
+
+            # Calculate results
+            C_diff = pd.DataFrame()
+            C_diff['D [m^2/s]'] = cumulant_method_C_diff['q^2_coef']*10**(-18)
+            C_diff['std err D [m^2/s]'] = cumulant_method_C_diff['q^2_se']*10**(-18)
+
+            # Polydispersity
+            self.method_C_data['polydispersity'] = \
+                self.method_C_data['best_c'] / (self.method_C_data['best_b'])**2
+            polydispersity_C = self.method_C_data['polydispersity'].mean()
+
+            # Create results
+            results = pd.DataFrame()
+            results['Rh [nm]'] = self.c_value * (1/C_diff['D [m^2/s]'][0]) * 10**9
+            fractional_error_Rh_C = np.sqrt(
+                (self.delta_c / self.c_value)**2 +
+                (C_diff['std err D [m^2/s]'][0] / C_diff['D [m^2/s]'][0])**2)
+            results['Rh error [nm]'] = fractional_error_Rh_C * results['Rh [nm]']
+            results['R_squared'] = cumulant_method_C_diff['R_squared']
+            results['Fit'] = 'Rh from iterative non-linear cumulant fit (filtered)'
+            results['Residuals'] = cumulant_method_C_diff['Normality']
+            results['PDI'] = polydispersity_C
+
+            # Display results
+            self.method_c_results.delete(1.0, tk.END)
+            self.method_c_results.insert(1.0, "FILTERED RESULTS\n")
+            self.method_c_results.insert(tk.END, "="*60 + "\n\n")
+            self.method_c_results.insert(tk.END, results.to_string())
+            self.method_c_results.insert(tk.END, f"\n\nUsing {len(self.method_C_data)} datasets (after filtering)\n")
+            self.method_c_results.insert(tk.END, "You can apply additional filters if needed.\n")
+
+            self.log("Method C recalculation complete!")
+            self.log(f"\nFiltered Results:\n{results.to_string()}")
+
+        except Exception as e:
+            self.log(f"ERROR in Method C recalculation: {str(e)}")
+            import traceback
+            self.log(traceback.format_exc())
+            messagebox.showerror("Error", f"Recalculation failed:\n{str(e)}")
 
     def export_results(self):
         """Export all results to files"""
