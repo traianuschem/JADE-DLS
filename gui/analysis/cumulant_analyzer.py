@@ -56,9 +56,11 @@ class CumulantAnalyzer:
         # Get list of files from correlations (these are the filtered ones)
         filtered_files = list(self.loaded_data['correlations'].keys())
 
-        # Create mapping from filename to full path
+        # Create mapping from filename to full path (case-insensitive for Linux)
         import glob
-        datafiles = glob.glob(os.path.join(self.data_folder, "*.asc"))
+        datafiles = []
+        datafiles.extend(glob.glob(os.path.join(self.data_folder, "*.asc")))
+        datafiles.extend(glob.glob(os.path.join(self.data_folder, "*.ASC")))
         file_to_path = {os.path.basename(f): f for f in datafiles}
 
         # Extract base data for filtered files only
@@ -144,9 +146,11 @@ class CumulantAnalyzer:
         if self.df_basedata is None:
             self.prepare_basedata()
 
-        # Get mapping from filename to full path
+        # Get mapping from filename to full path (case-insensitive for Linux)
         import glob
-        datafiles = glob.glob(os.path.join(self.data_folder, "*.asc"))
+        datafiles = []
+        datafiles.extend(glob.glob(os.path.join(self.data_folder, "*.asc")))
+        datafiles.extend(glob.glob(os.path.join(self.data_folder, "*.ASC")))
         file_to_path = {os.path.basename(f): f for f in datafiles}
 
         # Extract cumulant data

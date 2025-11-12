@@ -49,10 +49,12 @@ class DataLoadWorker(QThread):
             all_data = {}
             all_data['data_folder'] = self.data_folder
 
-            # Step 1: Find files
-            self.progress.emit(0, 5, "Searching for .asc files...")
-            print(f"[DATA LOADER] Searching for .asc files...")
-            datafiles = glob.glob(os.path.join(self.data_folder, "*.asc"))
+            # Step 1: Find files (case-insensitive for Linux compatibility)
+            self.progress.emit(0, 5, "Searching for .asc/.ASC files...")
+            print(f"[DATA LOADER] Searching for .asc/.ASC files...")
+            datafiles = []
+            datafiles.extend(glob.glob(os.path.join(self.data_folder, "*.asc")))
+            datafiles.extend(glob.glob(os.path.join(self.data_folder, "*.ASC")))
 
             # Filter out averaged files
             filtered_files = [f for f in datafiles

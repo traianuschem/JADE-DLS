@@ -592,15 +592,17 @@ class JADEDLSMainWindow(QMainWindow):
 
         # Add data loading step to pipeline with reproducible code
         load_code = f"""
-# Load data from folder
+# Load data from folder (case-insensitive for Linux compatibility)
 data_folder = r"{data_folder}"
-datafiles = glob.glob(os.path.join(data_folder, "*.asc"))
+datafiles = []
+datafiles.extend(glob.glob(os.path.join(data_folder, "*.asc")))
+datafiles.extend(glob.glob(os.path.join(data_folder, "*.ASC")))
 
 # Filter out averaged files
 filtered_files = [f for f in datafiles
                   if "averaged" not in os.path.basename(f).lower()]
 
-print(f"Found {{len(filtered_files)}} .asc files in {{data_folder}}")
+print(f"Found {{len(filtered_files)}} .asc/.ASC files in {{data_folder}}")
 
 # Initialize data dictionaries
 countrates_data = {{}}
@@ -978,8 +980,10 @@ from cumulants import extract_cumulants, analyze_diffusion_coefficient, calculat
 import glob
 import os
 
-# Get file paths
-datafiles = glob.glob(os.path.join(data_folder, "*.asc"))
+# Get file paths (case-insensitive for Linux compatibility)
+datafiles = []
+datafiles.extend(glob.glob(os.path.join(data_folder, "*.asc")))
+datafiles.extend(glob.glob(os.path.join(data_folder, "*.ASC")))
 file_to_path = {os.path.basename(f): f for f in datafiles}
 
 # Extract cumulant data
