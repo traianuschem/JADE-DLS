@@ -150,15 +150,26 @@ def calculate_cumulant_results_A(A_diff, cumulant_method_A_diff, polydispersity_
     pdi_values = [None, polydispersity_method_A_2, polydispersity_method_A_3]
 
     for i, order in enumerate(orders):
-        result = pd.DataFrame()
-        result['Rh [nm]'] = c * (1 / A_diff['D [m^2/s]'][i]) * 10**9
+        # Calculate values as scalars
+        rh_value = c * (1 / A_diff['D [m^2/s]'][i]) * 10**9
         fractional_error_Rh = np.sqrt((delta_c / c)**2 + (A_diff['std err D [m^2/s]'][i] / A_diff['D [m^2/s]'][i])**2)
-        result['Rh error [nm]'] = fractional_error_Rh * result['Rh [nm]']
-        result['R_squared'] = cumulant_method_A_diff['R_squared'][i]
-        result['Fit'] = f'Rh from {order}st order cumulant fit' if order == 1 else f'Rh from {order}nd order cumulant fit' if order == 2 else f'Rh from {order}rd order cumulant fit'
-        result['Residuals'] = cumulant_method_A_diff['Normality'][i]
-        if i > 0: #PDI is only for 2nd and 3rd order
-            result['PDI'] = pdi_values[i]
+        rh_error_value = fractional_error_Rh * rh_value
+        r2_value = cumulant_method_A_diff['R_squared'][i]
+        fit_name = f'Rh from {order}st order cumulant fit' if order == 1 else f'Rh from {order}nd order cumulant fit' if order == 2 else f'Rh from {order}rd order cumulant fit'
+        normality_value = cumulant_method_A_diff['Normality'][i]
+
+        # Create DataFrame with lists to ensure rows are created
+        result = pd.DataFrame({
+            'Rh [nm]': [rh_value],
+            'Rh error [nm]': [rh_error_value],
+            'R_squared': [r2_value],
+            'Fit': [fit_name],
+            'Residuals': [normality_value]
+        })
+
+        if i > 0:  # PDI is only for 2nd and 3rd order
+            result['PDI'] = [pdi_values[i]]
+
         results.append(result)
 
     df_cumulant_method_A_results = pd.concat(results, ignore_index=True)
