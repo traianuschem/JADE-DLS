@@ -96,17 +96,26 @@ class AnalysisView(QWidget):
 
         # Navigation controls (initially hidden)
         self.nav_widget = QWidget()
-        nav_layout = QHBoxLayout()
+        nav_layout = QVBoxLayout()
 
-        from PyQt5.QtWidgets import QPushButton, QListWidget
+        from PyQt5.QtWidgets import QPushButton, QListWidget, QComboBox
 
+        # Plot filter (above the list)
+        filter_layout = QHBoxLayout()
+        filter_label = QLabel("Filter:")
+        self.plot_filter_combo = QComboBox()
+        self.plot_filter_combo.addItems(["All Plots", "Diffusion Analysis Plots", "Fit Plots"])
+        self.plot_filter_combo.currentTextChanged.connect(self._on_plot_filter_changed)
+        filter_layout.addWidget(filter_label)
+        filter_layout.addWidget(self.plot_filter_combo)
+        filter_layout.addStretch()
+        nav_layout.addLayout(filter_layout)
+
+        # Plot list (above the plot area, limited height)
         self.plot_list = QListWidget()
-        self.plot_list.setMaximumWidth(200)
+        self.plot_list.setMaximumHeight(120)
         self.plot_list.currentRowChanged.connect(self._on_plot_selected)
         nav_layout.addWidget(self.plot_list)
-
-        # Right side: plot and navigation
-        right_layout = QVBoxLayout()
 
         # Navigation buttons
         nav_buttons = QHBoxLayout()
@@ -122,7 +131,7 @@ class AnalysisView(QWidget):
         nav_buttons.addWidget(self.grid_view_btn)
         nav_buttons.addStretch()
 
-        right_layout.addLayout(nav_buttons)
+        nav_layout.addLayout(nav_buttons)
 
         # Plot container
         plot_group = QGroupBox("Current Plot")
@@ -152,14 +161,13 @@ class AnalysisView(QWidget):
             pass
 
         plot_group.setLayout(plot_layout)
-        right_layout.addWidget(plot_group)
+        nav_layout.addWidget(plot_group)
 
         # Plot info label
         self.plot_info_label = QLabel("")
         self.plot_info_label.setWordWrap(True)
-        right_layout.addWidget(self.plot_info_label)
+        nav_layout.addWidget(self.plot_info_label)
 
-        nav_layout.addLayout(right_layout)
         self.nav_widget.setLayout(nav_layout)
         self.nav_widget.hide()  # Initially hidden
 
@@ -167,8 +175,9 @@ class AnalysisView(QWidget):
 
         widget.setLayout(layout)
 
-        # Store current plots
+        # Store current plots and all plots for filtering
         self.current_plots = {}
+        self.all_plots = {}  # Store all plots before filtering
         self.current_plot_index = 0
 
         return widget
@@ -213,6 +222,19 @@ class AnalysisView(QWidget):
 
         details_group.setLayout(details_layout)
         layout.addWidget(details_group)
+
+        # Post-filtering button section (initially hidden)
+        self.postfilter_widget = QWidget()
+        postfilter_layout = QHBoxLayout()
+        postfilter_layout.addWidget(QLabel("<b>Post-Filter:</b>"))
+
+        # Buttons for each method (created dynamically when methods are loaded)
+        self.postfilter_buttons = {}
+
+        postfilter_layout.addStretch()
+        self.postfilter_widget.setLayout(postfilter_layout)
+        self.postfilter_widget.hide()  # Initially hidden
+        layout.addWidget(self.postfilter_widget)
 
         widget.setLayout(layout)
         return widget
@@ -353,6 +375,10 @@ class AnalysisView(QWidget):
         elif switch_tab:
             # Switch to Results tab
             self.tabs.setCurrentIndex(2)
+
+        # Add postfilter button for Methods B and C
+        if 'Method B' in method_name or 'Method C' in method_name:
+            self._add_postfilter_button(method_name, results_df)
 
     def show_results_tab(self):
         """Switch to Results tab"""
@@ -595,15 +621,91 @@ class AnalysisView(QWidget):
 
             new_section += "</table>"
 
-            # Add interpretation
+            # Add Fit Quality Assessment Table with Optimal Ranges
+            new_section += "<h4>Fit Quality Assessment</h4>"
+            new_section += f"<table border='1' cellpadding='8' cellspacing='0' style='border-collapse: collapse; width: 100%; margin-bottom: 15px; color: {text_color};'>"
+            new_section += f"<tr style='background-color: {model_header_bg}; font-weight: bold;'>"
+            new_section += "<th>Metric</th><th>Value</th><th>Optimal Range</th><th>Assessment</th></tr>"
+
+            # Helper function to assess fit quality
+            def assess_metric(value, good_min=None, good_max=None, acceptable_min=None, acceptable_max=None):
+                """Assess a metric value against optimal ranges"""
+                if good_min is not None and good_max is not None:
+                    if good_min <= value <= good_max:
+                        return ("✓ Excellent", "green")
+                elif good_min is not None:
+                    if value >= good_min:
+                        return ("✓ Excellent", "green")
+                elif good_max is not None:
+                    if value <= good_max:
+                        return ("✓ Excellent", "green")
+
+                if acceptable_min is not None and acceptable_max is not None:
+                    if acceptable_min <= value <= acceptable_max:
+                        return ("○ Acceptable", "orange")
+                elif acceptable_min is not None:
+                    if value >= acceptable_min:
+                        return ("○ Acceptable", "orange")
+                elif acceptable_max is not None:
+                    if value <= acceptable_max:
+                        return ("○ Acceptable", "orange")
+
+                return ("✗ Poor", "red")
+
+            # R²
             r2 = regression_stats['rsquared']
-            if r2 > 0.99:
-                quality_msg = "<p style='color: green; font-weight: bold;'>✓ Excellent fit (R² > 0.99)</p>"
-            elif r2 > 0.95:
-                quality_msg = "<p style='color: orange; font-weight: bold;'>○ Good fit (R² > 0.95)</p>"
+            r2_assessment, r2_color = assess_metric(r2, good_min=0.95, acceptable_min=0.90)
+            new_section += f"<tr><td><b>R²</b></td><td>{r2:.4f}</td>"
+            new_section += f"<td>> 0.95 (Excellent)<br>0.90-0.95 (Acceptable)<br>< 0.90 (Poor)</td>"
+            new_section += f"<td style='color: {r2_color}; font-weight: bold;'>{r2_assessment}</td></tr>"
+
+            # Adjusted R²
+            r2_adj = regression_stats['rsquared_adj']
+            r2_adj_assessment, r2_adj_color = assess_metric(r2_adj, good_min=0.95, acceptable_min=0.90)
+            new_section += f"<tr><td><b>Adjusted R²</b></td><td>{r2_adj:.4f}</td>"
+            new_section += f"<td>> 0.95 (Excellent)<br>0.90-0.95 (Acceptable)<br>< 0.90 (Poor)</td>"
+            new_section += f"<td style='color: {r2_adj_color}; font-weight: bold;'>{r2_adj_assessment}</td></tr>"
+
+            # F-statistic
+            fvalue = regression_stats['fvalue']
+            f_assessment, f_color = assess_metric(fvalue, good_min=100, acceptable_min=10)
+            new_section += f"<tr><td><b>F-statistic</b></td><td>{fvalue:.2f}</td>"
+            new_section += f"<td>> 100 (Excellent)<br>10-100 (Acceptable)<br>< 10 (Poor)</td>"
+            new_section += f"<td style='color: {f_color}; font-weight: bold;'>{f_assessment}</td></tr>"
+
+            # p-value (F-test)
+            f_pvalue = regression_stats['f_pvalue']
+            # For p-value, lower is better
+            if f_pvalue < 0.001:
+                p_assessment, p_color = ("✓ Excellent", "green")
+            elif f_pvalue < 0.05:
+                p_assessment, p_color = ("○ Acceptable", "orange")
             else:
-                quality_msg = "<p style='color: red; font-weight: bold;'>⚠ Check fit quality (R² < 0.95)</p>"
+                p_assessment, p_color = ("✗ Poor", "red")
+            new_section += f"<tr><td><b>p-value (F-test)</b></td><td>{f_pvalue:.3e}</td>"
+            new_section += f"<td>< 0.001 (Excellent)<br>0.001-0.05 (Acceptable)<br>> 0.05 (Poor)</td>"
+            new_section += f"<td style='color: {p_color}; font-weight: bold;'>{p_assessment}</td></tr>"
+
+            # Overall Assessment
+            new_section += "</table>"
+
+            # Overall quality message
+            overall_good = sum([
+                r2 > 0.95,
+                r2_adj > 0.95,
+                fvalue > 100,
+                f_pvalue < 0.001
+            ])
+
+            if overall_good >= 3:
+                quality_msg = "<p style='color: green; font-weight: bold; font-size: 14pt;'>✓ Overall Fit Quality: EXCELLENT</p>"
+            elif overall_good >= 2:
+                quality_msg = "<p style='color: orange; font-weight: bold; font-size: 14pt;'>○ Overall Fit Quality: ACCEPTABLE</p>"
+            else:
+                quality_msg = "<p style='color: red; font-weight: bold; font-size: 14pt;'>⚠ Overall Fit Quality: POOR - Consider adjusting fit parameters</p>"
             new_section += quality_msg
+
+            new_section += "<p style='font-size: 9pt; color: gray;'><i>Note: AIC and BIC are informational. Lower values indicate better fit when comparing models, but absolute values don't have universal thresholds.</i></p>"
 
         # Append to existing HTML or create new
         if current_html and "<body" in current_html:
@@ -631,6 +733,11 @@ class AnalysisView(QWidget):
 
         # Merge new plots with existing ones
         self.current_plots.update(plots_dict)
+        # Also update all_plots to include new plots
+        if not hasattr(self, 'all_plots'):
+            self.all_plots = {}
+        self.all_plots.update(plots_dict)
+
         if fit_quality:
             self.current_fit_quality.update(fit_quality)
 
@@ -812,6 +919,58 @@ class AnalysisView(QWidget):
                 self._show_plot_by_item(item)
                 break
 
+    def _on_plot_filter_changed(self, filter_text):
+        """Handle plot filter change"""
+        # Save current all plots if not already saved
+        if not self.all_plots and self.current_plots:
+            self.all_plots = self.current_plots.copy()
+
+        # If we have no plots saved, nothing to filter
+        if not self.all_plots:
+            return
+
+        # Apply filter
+        if filter_text == "All Plots":
+            # Show all plots
+            self.current_plots = self.all_plots.copy()
+        elif filter_text == "Diffusion Analysis Plots":
+            # Show only summary/diffusion plots (keys ending with "Summary")
+            self.current_plots = {k: v for k, v in self.all_plots.items()
+                                 if "Summary" in k or "Diffusion" in k}
+        elif filter_text == "Fit Plots":
+            # Show only fit plots (keys NOT ending with "Summary")
+            self.current_plots = {k: v for k, v in self.all_plots.items()
+                                 if "Summary" not in k and "Diffusion" not in k}
+
+        # Rebuild plot list
+        self._rebuild_plot_list()
+
+    def _rebuild_plot_list(self):
+        """Rebuild the plot list widget based on current_plots"""
+        self.plot_list.clear()
+
+        if not self.current_plots:
+            return
+
+        # Add plots to list
+        for i, (filename, (fig, data)) in enumerate(self.current_plots.items()):
+            # Check if we have fit quality info
+            quality_str = ""
+            if hasattr(self, 'current_fit_quality') and filename in self.current_fit_quality:
+                r2 = self.current_fit_quality[filename].get('R2', 0)
+                quality_str = f" (R²={r2:.3f})"
+
+            item = QListWidgetItem(f"{i + 1}. {filename}{quality_str}")
+            item.setData(Qt.UserRole, filename)
+            self.plot_list.addItem(item)
+
+        # Show first plot
+        if self.plot_list.count() > 0:
+            self.plot_list.setCurrentRow(0)
+            item = self.plot_list.item(0)
+            if item and item.data(Qt.UserRole):
+                self._show_plot_by_item(item)
+
     def _show_grid_view(self):
         """Show all plots in grid view"""
         from PyQt5.QtWidgets import QDialog, QScrollArea, QGridLayout
@@ -896,10 +1055,64 @@ class AnalysisView(QWidget):
         grid_dialog.setLayout(layout)
         grid_dialog.exec_()
 
+    def _add_postfilter_button(self, method_name, results_df):
+        """Add a postfilter button for the given method"""
+        # Check if button already exists for this method
+        if method_name in self.postfilter_buttons:
+            return
+
+        # Create button
+        btn = QPushButton(f"🔧 Post-Filter {method_name}")
+        btn.setToolTip(f"Remove bad fits and recalculate results for {method_name}")
+        btn.clicked.connect(lambda: self._open_postfilter_dialog(method_name, results_df))
+
+        # Add to layout
+        layout = self.postfilter_widget.layout()
+        # Insert before the stretch (which is the last item)
+        layout.insertWidget(layout.count() - 1, btn)
+
+        # Store button reference
+        self.postfilter_buttons[method_name] = btn
+
+        # Show the postfilter widget
+        self.postfilter_widget.show()
+
+    def _open_postfilter_dialog(self, method_name, results_df):
+        """Open the postfilter dialog for the given method"""
+        from gui.dialogs.postfilter_dialog import show_postfilter_dialog
+
+        # Show postfilter dialog
+        new_results_df = show_postfilter_dialog(results_df, method_name, self)
+
+        if new_results_df is not None:
+            # Update the results display with filtered results
+            # Note: This will update the table, but won't rerun the full analysis
+            # The user may want to rerun the analysis after seeing filtered results
+            from PyQt5.QtWidgets import QMessageBox
+            QMessageBox.information(
+                self,
+                "Post-Filter Applied",
+                f"Filtered results preview shown for {method_name}.\n\n"
+                "Note: This is a preview only. To fully reprocess the data,\n"
+                "please re-run the cumulant analysis with the filtered data."
+            )
+
     def clear_results(self):
         """Clear all results"""
         self.results_table.setRowCount(0)
         self.details_text.clear()
         self.current_plots = {}
+        self.all_plots = {}
+        self.plot_list.clear()
         self.nav_widget.hide()
         self.plot_placeholder.show()
+        # Reset filter to "All Plots"
+        if hasattr(self, 'plot_filter_combo'):
+            self.plot_filter_combo.setCurrentText("All Plots")
+        # Clear postfilter buttons
+        if hasattr(self, 'postfilter_buttons'):
+            for btn in self.postfilter_buttons.values():
+                btn.deleteLater()
+            self.postfilter_buttons.clear()
+        if hasattr(self, 'postfilter_widget'):
+            self.postfilter_widget.hide()

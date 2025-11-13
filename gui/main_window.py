@@ -515,8 +515,19 @@ class JADEDLSMainWindow(QMainWindow):
 
     def on_run_analysis(self, analysis_type):
         """Handle run analysis request from workflow panel"""
-        if analysis_type == 'preprocess':
+        if analysis_type == 'load_data':
+            self.load_data()
+        elif analysis_type == 'preprocess':
             self.run_preprocessing()
+        elif analysis_type in ['cumulant_a', 'cumulant_b', 'cumulant_c']:
+            # All cumulant methods go through the same dialog
+            self.run_cumulant_analysis()
+        elif analysis_type == 'nnls':
+            self.run_nnls_analysis()
+        elif analysis_type == 'regularized':
+            self.run_regularized_analysis()
+        elif analysis_type == 'compare':
+            self.compare_results()
         elif analysis_type == 'all':
             # Run all steps sequentially
             self.run_preprocessing()
