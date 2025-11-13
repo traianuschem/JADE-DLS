@@ -153,6 +153,10 @@ class AnalysisView(QWidget):
             self.canvas = FigureCanvasQTAgg(self.figure)
             self.toolbar = NavigationToolbar2QT(self.canvas, widget)
 
+            # Enable context menu for canvas
+            self.canvas.setContextMenuPolicy(Qt.CustomContextMenu)
+            self.canvas.customContextMenuRequested.connect(self._show_plot_context_menu)
+
             plot_layout.addWidget(self.toolbar)
             plot_layout.addWidget(self.canvas)
             self.plot_placeholder.hide()
@@ -205,6 +209,9 @@ class AnalysisView(QWidget):
         self.results_table.setSortingEnabled(True)
         self.results_table.horizontalHeader().setStretchLastSection(True)
         self.results_table.setAlternatingRowColors(True)
+        # Enable context menu
+        self.results_table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.results_table.customContextMenuRequested.connect(self._show_results_context_menu)
         results_layout.addWidget(self.results_table)
 
         results_group.setLayout(results_layout)
@@ -1221,3 +1228,282 @@ class AnalysisView(QWidget):
             self.postfilter_buttons.clear()
         if hasattr(self, 'postfilter_widget'):
             self.postfilter_widget.hide()
+
+    def _show_results_context_menu(self, position):
+        """Show context menu for results table"""
+        from PyQt5.QtWidgets import QMenu, QAction, QApplication
+
+        menu = QMenu()
+
+        # Copy actions
+        copy_cell_action = QAction("📋 Copy Cell", self)
+        copy_cell_action.triggered.connect(self._copy_cell)
+        menu.addAction(copy_cell_action)
+
+        copy_row_action = QAction("📋 Copy Row", self)
+        copy_row_action.triggered.connect(self._copy_row)
+        menu.addAction(copy_row_action)
+
+        copy_column_action = QAction("📋 Copy Column", self)
+        copy_column_action.triggered.connect(self._copy_column)
+        menu.addAction(copy_column_action)
+
+        menu.addSeparator()
+
+        copy_table_action = QAction("📋 Copy Entire Table", self)
+        copy_table_action.triggered.connect(self._copy_table)
+        menu.addAction(copy_table_action)
+
+        # Show menu
+        menu.exec_(self.results_table.mapToGlobal(position))
+
+    def _copy_cell(self):
+        """Copy selected cell to clipboard"""
+        from PyQt5.QtWidgets import QApplication
+
+        current_item = self.results_table.currentItem()
+        if current_item:
+            QApplication.clipboard().setText(current_item.text())
+
+    def _copy_row(self):
+        """Copy selected row to clipboard"""
+        from PyQt5.QtWidgets import QApplication
+
+        current_row = self.results_table.currentRow()
+        if current_row >= 0:
+            row_data = []
+            for col in range(self.results_table.columnCount()):
+                item = self.results_table.item(current_row, col)
+                if item:
+                    row_data.append(item.text())
+                else:
+                    row_data.append("")
+            QApplication.clipboard().setText("\t".join(row_data))
+
+    def _copy_column(self):
+        """Copy selected column to clipboard"""
+        from PyQt5.QtWidgets import QApplication
+
+        current_col = self.results_table.currentColumn()
+        if current_col >= 0:
+            # Include header
+            header_item = self.results_table.horizontalHeaderItem(current_col)
+            col_data = [header_item.text() if header_item else ""]
+
+            # Add all cells in column
+            for row in range(self.results_table.rowCount()):
+                item = self.results_table.item(row, current_col)
+                if item:
+                    col_data.append(item.text())
+                else:
+                    col_data.append("")
+
+            QApplication.clipboard().setText("\n".join(col_data))
+
+    def _copy_table(self):
+        """Copy entire table to clipboard"""
+        from PyQt5.QtWidgets import QApplication
+
+        # Include headers
+        headers = []
+        for col in range(self.results_table.columnCount()):
+            header_item = self.results_table.horizontalHeaderItem(col)
+            headers.append(header_item.text() if header_item else "")
+
+        table_data = ["\t".join(headers)]
+
+        # Add all rows
+        for row in range(self.results_table.rowCount()):
+            row_data = []
+            for col in range(self.results_table.columnCount()):
+                item = self.results_table.item(row, col)
+                if item:
+                    row_data.append(item.text())
+                else:
+                    row_data.append("")
+            table_data.append("\t".join(row_data))
+
+        QApplication.clipboard().setText("\n".join(table_data))
+
+    def _show_plot_context_menu(self, position):
+        """Show context menu for plot canvas"""
+        from PyQt5.QtWidgets import QMenu, QAction
+
+        menu = QMenu()
+
+        # Legend submenu
+        legend_menu = menu.addMenu("📊 Legend")
+
+        toggle_legend_action = QAction("Toggle On/Off", self)
+        toggle_legend_action.triggered.connect(self._toggle_legend)
+        legend_menu.addAction(toggle_legend_action)
+
+        legend_menu.addSeparator()
+
+        positions = [
+            ("Upper Right", "upper right"),
+            ("Upper Left", "upper left"),
+            ("Lower Right", "lower right"),
+            ("Lower Left", "lower left"),
+            ("Center", "center"),
+            ("Best (auto)", "best")
+        ]
+
+        for label, pos in positions:
+            action = QAction(label, self)
+            action.triggered.connect(lambda checked, p=pos: self._set_legend_position(p))
+            legend_menu.addAction(action)
+
+        # Grid submenu
+        grid_menu = menu.addMenu("⚏ Grid")
+
+        toggle_grid_action = QAction("Toggle On/Off", self)
+        toggle_grid_action.triggered.connect(self._toggle_grid)
+        grid_menu.addAction(toggle_grid_action)
+
+        grid_menu.addSeparator()
+
+        major_grid_action = QAction("Major Grid", self)
+        major_grid_action.triggered.connect(lambda: self._set_grid('major'))
+        grid_menu.addAction(major_grid_action)
+
+        minor_grid_action = QAction("Minor Grid", self)
+        minor_grid_action.triggered.connect(lambda: self._set_grid('minor'))
+        grid_menu.addAction(minor_grid_action)
+
+        both_grid_action = QAction("Both Grids", self)
+        both_grid_action.triggered.connect(lambda: self._set_grid('both'))
+        grid_menu.addAction(both_grid_action)
+
+        # Scale submenu
+        scale_menu = menu.addMenu("📐 Scale")
+
+        scales = [
+            ("Linear-Linear", "linear", "linear"),
+            ("Log-Linear", "log", "linear"),
+            ("Linear-Log", "linear", "log"),
+            ("Log-Log", "log", "log")
+        ]
+
+        for label, xscale, yscale in scales:
+            action = QAction(label, self)
+            action.triggered.connect(lambda checked, xs=xscale, ys=yscale: self._set_scale(xs, ys))
+            scale_menu.addAction(action)
+
+        # Color scheme submenu
+        color_menu = menu.addMenu("🎨 Color Scheme")
+
+        schemes = ["default", "viridis", "plasma", "inferno", "magma", "cividis"]
+
+        for scheme in schemes:
+            action = QAction(scheme.capitalize(), self)
+            action.triggered.connect(lambda checked, s=scheme: self._set_color_scheme(s))
+            color_menu.addAction(action)
+
+        menu.addSeparator()
+
+        # Reset action
+        reset_action = QAction("🔄 Reset Plot Style", self)
+        reset_action.triggered.connect(self._reset_plot_style)
+        menu.addAction(reset_action)
+
+        # Show menu
+        menu.exec_(self.canvas.mapToGlobal(position))
+
+    def _toggle_legend(self):
+        """Toggle legend on/off"""
+        if not self.figure.axes:
+            return
+
+        for ax in self.figure.axes:
+            legend = ax.get_legend()
+            if legend:
+                legend.set_visible(not legend.get_visible())
+            else:
+                ax.legend()
+
+        self.canvas.draw()
+
+    def _set_legend_position(self, position):
+        """Set legend position"""
+        if not self.figure.axes:
+            return
+
+        for ax in self.figure.axes:
+            legend = ax.get_legend()
+            if legend:
+                ax.legend(loc=position)
+
+        self.canvas.draw()
+
+    def _toggle_grid(self):
+        """Toggle grid on/off"""
+        if not self.figure.axes:
+            return
+
+        for ax in self.figure.axes:
+            ax.grid(not ax.xaxis._gridOnMajor)
+
+        self.canvas.draw()
+
+    def _set_grid(self, which='major'):
+        """Set grid type"""
+        if not self.figure.axes:
+            return
+
+        for ax in self.figure.axes:
+            ax.grid(True, which=which, alpha=0.3)
+
+        self.canvas.draw()
+
+    def _set_scale(self, xscale, yscale):
+        """Set axis scales"""
+        if not self.figure.axes:
+            return
+
+        for ax in self.figure.axes:
+            try:
+                ax.set_xscale(xscale)
+                ax.set_yscale(yscale)
+            except Exception as e:
+                print(f"Could not set scale: {e}")
+
+        self.canvas.draw()
+
+    def _set_color_scheme(self, scheme):
+        """Set color scheme for plots"""
+        if not self.figure.axes:
+            return
+
+        try:
+            import matplotlib.pyplot as plt
+            if scheme != "default":
+                plt.style.use(scheme)
+            else:
+                plt.style.use('default')
+
+            # Redraw current plot
+            current_item = self.plot_list.currentItem()
+            if current_item:
+                self._show_plot_by_item(current_item)
+
+        except Exception as e:
+            print(f"Could not set color scheme: {e}")
+
+    def _reset_plot_style(self):
+        """Reset plot style to default"""
+        if not self.figure.axes:
+            return
+
+        # Reset to default matplotlib style
+        try:
+            import matplotlib.pyplot as plt
+            plt.style.use('default')
+
+            # Redraw current plot
+            current_item = self.plot_list.currentItem()
+            if current_item:
+                self._show_plot_by_item(current_item)
+
+        except Exception as e:
+            print(f"Could not reset plot style: {e}")

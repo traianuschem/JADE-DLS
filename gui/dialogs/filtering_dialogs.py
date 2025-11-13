@@ -66,6 +66,15 @@ class CountrateFilterDialog(QDialog):
         info.setWordWrap(True)
         layout.addWidget(info)
 
+        # Keyboard shortcuts banner
+        shortcuts_label = QLabel(
+            "<b>Keyboard Shortcuts:</b><br>"
+            "Ctrl+X = Toggle exclude/include current file"
+        )
+        shortcuts_label.setStyleSheet("background-color: #e8f4f8; padding: 8px; border: 1px solid #b8d4e8; border-radius: 4px;")
+        shortcuts_label.setWordWrap(True)
+        layout.addWidget(shortcuts_label)
+
         # File list
         self.file_list = QListWidget()
         self.file_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
@@ -238,6 +247,33 @@ class CountrateFilterDialog(QDialog):
             f"Remaining: {remaining}"
         )
 
+    def toggle_exclude_current(self):
+        """Toggle exclusion status of current file"""
+        current_item = self.file_list.currentItem()
+        if current_item:
+            filename = current_item.data(Qt.UserRole)
+            if filename in self.excluded_files:
+                # Unmark
+                self.excluded_files.remove(filename)
+                current_item.setForeground(Qt.black)
+                current_item.setText(filename)
+            else:
+                # Mark as bad
+                self.excluded_files.add(filename)
+                current_item.setForeground(Qt.red)
+                current_item.setText(f"❌ {filename}")
+
+            self.update_stats()
+            self.update_plot()
+
+    def keyPressEvent(self, event):
+        """Handle keyboard shortcuts"""
+        # Ctrl+X: Toggle exclude/include current file
+        if event.modifiers() == Qt.ControlModifier and event.key() == Qt.Key_X:
+            self.toggle_exclude_current()
+        else:
+            super().keyPressEvent(event)
+
     def get_filtered_data(self):
         """Get filtered countrate data (excluding marked files)"""
         return {k: v for k, v in self.countrate_data.items()
@@ -297,6 +333,15 @@ class CorrelationFilterDialog(QDialog):
         )
         info.setWordWrap(True)
         layout.addWidget(info)
+
+        # Keyboard shortcuts banner
+        shortcuts_label = QLabel(
+            "<b>Keyboard Shortcuts:</b><br>"
+            "Ctrl+X = Toggle exclude/include current file"
+        )
+        shortcuts_label.setStyleSheet("background-color: #e8f4f8; padding: 8px; border: 1px solid #b8d4e8; border-radius: 4px;")
+        shortcuts_label.setWordWrap(True)
+        layout.addWidget(shortcuts_label)
 
         # File list
         self.file_list = QListWidget()
@@ -476,6 +521,33 @@ class CorrelationFilterDialog(QDialog):
             f"Excluded: {excluded}\n"
             f"Remaining: {remaining}"
         )
+
+    def toggle_exclude_current(self):
+        """Toggle exclusion status of current file"""
+        current_item = self.file_list.currentItem()
+        if current_item:
+            filename = current_item.data(Qt.UserRole)
+            if filename in self.excluded_files:
+                # Unmark
+                self.excluded_files.remove(filename)
+                current_item.setForeground(Qt.black)
+                current_item.setText(filename)
+            else:
+                # Mark as bad
+                self.excluded_files.add(filename)
+                current_item.setForeground(Qt.red)
+                current_item.setText(f"❌ {filename}")
+
+            self.update_stats()
+            self.update_plot()
+
+    def keyPressEvent(self, event):
+        """Handle keyboard shortcuts"""
+        # Ctrl+X: Toggle exclude/include current file
+        if event.modifiers() == Qt.ControlModifier and event.key() == Qt.Key_X:
+            self.toggle_exclude_current()
+        else:
+            super().keyPressEvent(event)
 
     def get_filtered_data(self):
         """Get filtered correlation data (excluding marked files)"""
