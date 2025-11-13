@@ -351,7 +351,7 @@ class AnalysisView(QWidget):
 
     # ========== Cumulant Analysis Display Methods ==========
 
-    def display_cumulant_results(self, method_name, results_df, plots_dict=None, fit_quality=None, switch_tab=True, regression_stats=None):
+    def display_cumulant_results(self, method_name, results_df, plots_dict=None, fit_quality=None, switch_tab=True, regression_stats=None, analyzer=None):
         """
         Display cumulant analysis results in Results and Plots tabs
 
@@ -362,7 +362,12 @@ class AnalysisView(QWidget):
             fit_quality: Dictionary {filename: {'R2': float, ...}} or None
             switch_tab: Whether to switch to appropriate tab (default True)
             regression_stats: Dictionary with regression statistics (all methods)
+            analyzer: CumulantAnalyzer instance for recomputation (optional)
         """
+        # Store analyzer for Method C postfilter recomputation
+        if analyzer is not None and 'Method C' in method_name:
+            self.method_c_analyzer = analyzer
+
         # Update Results tab
         self._update_results_table(method_name, results_df, regression_stats)
 
@@ -378,7 +383,7 @@ class AnalysisView(QWidget):
 
         # Add postfilter button for Methods B and C
         if 'Method B' in method_name or 'Method C' in method_name:
-            self._add_postfilter_button(method_name, results_df)
+            self._add_postfilter_button(method_name, results_df, plots_dict, fit_quality)
 
     def show_results_tab(self):
         """Switch to Results tab"""
@@ -826,7 +831,20 @@ class AnalysisView(QWidget):
                     else:
                         ax = self.figure.add_subplot(111)
 
-                    # Copy lines
+                    # Copy scatter plots (collections) - MUST come before lines for proper z-order
+                    for collection in source_ax.collections:
+                        offsets = collection.get_offsets()
+                        if len(offsets) > 0:
+                            ax.scatter(offsets[:, 0], offsets[:, 1],
+                                     label=collection.get_label(),
+                                     c=collection.get_facecolors(),
+                                     s=collection.get_sizes(),
+                                     alpha=collection.get_alpha(),
+                                     edgecolors=collection.get_edgecolors(),
+                                     linewidths=collection.get_linewidths(),
+                                     marker=collection.get_paths()[0] if collection.get_paths() else 'o')
+
+                    # Copy lines (fit lines, etc.)
                     for line in source_ax.get_lines():
                         ax.plot(line.get_xdata(), line.get_ydata(),
                                label=line.get_label(),
@@ -1055,7 +1073,7 @@ class AnalysisView(QWidget):
         grid_dialog.setLayout(layout)
         grid_dialog.exec_()
 
-    def _add_postfilter_button(self, method_name, results_df):
+    def _add_postfilter_button(self, method_name, results_df, plots_dict=None, fit_quality=None):
         """Add a postfilter button for the given method"""
         # Check if button already exists for this method
         if method_name in self.postfilter_buttons:
@@ -1064,7 +1082,13 @@ class AnalysisView(QWidget):
         # Create button
         btn = QPushButton(f"🔧 Post-Filter {method_name}")
         btn.setToolTip(f"Remove bad fits and recalculate results for {method_name}")
-        btn.clicked.connect(lambda: self._open_postfilter_dialog(method_name, results_df))
+
+        # Different behavior for Method C vs Method B
+        if 'Method C' in method_name:
+            btn.clicked.connect(lambda: self._open_postfilter_dialog_method_c(
+                method_name, results_df, plots_dict, fit_quality))
+        else:
+            btn.clicked.connect(lambda: self._open_postfilter_dialog(method_name, results_df))
 
         # Add to layout
         layout = self.postfilter_widget.layout()
@@ -1096,6 +1120,87 @@ class AnalysisView(QWidget):
                 "Note: This is a preview only. To fully reprocess the data,\n"
                 "please re-run the cumulant analysis with the filtered data."
             )
+
+    def _open_postfilter_dialog_method_c(self, method_name, results_df, plots_dict, fit_quality):
+        """Open the Method C post-fit filtering dialog with visual inspection"""
+        from gui.dialogs import MethodCPostFitDialog
+        from PyQt5.QtWidgets import QMessageBox
+
+        # Check if analyzer is available
+        if not hasattr(self, 'method_c_analyzer') or self.method_c_analyzer is None:
+            QMessageBox.warning(
+                self,
+                "Analyzer Not Available",
+                "Cannot perform post-fit filtering: analyzer instance not available.\n"
+                "Please re-run Method C analysis."
+            )
+            return
+
+        # Check if we have plots
+        if not plots_dict or not fit_quality:
+            QMessageBox.warning(
+                self,
+                "No Fit Data",
+                "Cannot perform post-fit filtering: no fit plots or quality data available."
+            )
+            return
+
+        # Open the visual inspection dialog
+        dialog = MethodCPostFitDialog(
+            plots_dict=plots_dict,
+            fit_quality=fit_quality,
+            results_df=results_df,
+            analyzer=self.method_c_analyzer,
+            parent=self
+        )
+
+        if dialog.exec_():
+            # User confirmed - get the filtered results
+            filter_results = dialog.get_filtered_results()
+
+            if filter_results:
+                included_files = filter_results['included_files']
+                excluded_files = filter_results['excluded_files']
+
+                print(f"[POST-FIT FILTER] Recomputing with {len(included_files)} files")
+                print(f"[POST-FIT FILTER] Excluded {len(excluded_files)} files: {excluded_files}")
+
+                try:
+                    # Get q_range if it was used in original analysis
+                    q_range = getattr(self.method_c_analyzer, 'last_q_range', None)
+
+                    # Recompute diffusion analysis with only selected files
+                    recomputed_results = self.method_c_analyzer.recompute_method_c_diffusion(
+                        included_files=included_files,
+                        q_range=q_range
+                    )
+
+                    # Update the results table with the new filtered results
+                    self._update_results_table(
+                        f"Method C (filtered, N={len(included_files)})",
+                        recomputed_results,
+                        regression_stats=None
+                    )
+
+                    # Show success message
+                    QMessageBox.information(
+                        self,
+                        "Post-Fit Filtering Complete",
+                        f"Method C diffusion analysis recomputed with {len(included_files)} selected fits.\n\n"
+                        f"Results added as: 'Method C (filtered, N={len(included_files)})'\n\n"
+                        f"Excluded files ({len(excluded_files)}): {', '.join(excluded_files[:5])}"
+                        f"{'...' if len(excluded_files) > 5 else ''}"
+                    )
+
+                except Exception as e:
+                    QMessageBox.critical(
+                        self,
+                        "Recomputation Failed",
+                        f"Failed to recompute diffusion analysis:\n{str(e)}"
+                    )
+                    print(f"[ERROR] Recomputation failed: {e}")
+                    import traceback
+                    traceback.print_exc()
 
     def clear_results(self):
         """Clear all results"""

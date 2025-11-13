@@ -129,11 +129,14 @@ class CumulantAnalyzer:
 
         return self.processed_correlations
 
-    def run_method_a(self) -> pd.DataFrame:
+    def run_method_a(self, q_range=None) -> pd.DataFrame:
         """
         Run Cumulant Method A
 
         Extracts cumulant fit data from ALV software output
+
+        Args:
+            q_range: Optional tuple (min_q, max_q) to restrict Diffusion Analysis
 
         Returns:
             DataFrame with results (Rh, errors, R^2, PDI)
@@ -178,6 +181,14 @@ class CumulantAnalyzer:
         )
         cumulant_method_A_data = cumulant_method_A_data.reset_index(drop=True)
         cumulant_method_A_data.index = cumulant_method_A_data.index + 1
+
+        # Apply q-range filter if specified
+        if q_range is not None:
+            min_q, max_q = q_range
+            mask = (cumulant_method_A_data['q^2'] >= min_q) & (cumulant_method_A_data['q^2'] <= max_q)
+            cumulant_method_A_data = cumulant_method_A_data[mask].reset_index(drop=True)
+            cumulant_method_A_data.index = cumulant_method_A_data.index + 1
+            print(f"[METHOD A] Applied q² range filter: {min_q} - {max_q} nm⁻², {len(cumulant_method_A_data)} points remaining")
 
         # Perform linear regression for each gamma column without showing plots
         gamma_cols = ['1st order frequency [1/ms]',
@@ -264,7 +275,7 @@ class CumulantAnalyzer:
 
         return self.method_a_results
 
-    def run_method_b(self, fit_limits: Tuple[float, float]) -> pd.DataFrame:
+    def run_method_b(self, fit_limits: Tuple[float, float], q_range=None) -> pd.DataFrame:
         """
         Run Cumulant Method B
 
@@ -272,6 +283,7 @@ class CumulantAnalyzer:
 
         Args:
             fit_limits: Tuple of (min_time, max_time) for fitting
+            q_range: Optional tuple (min_q, max_q) to restrict Diffusion Analysis
 
         Returns:
             DataFrame with results (Rh, errors, R^2, PDI)
@@ -309,6 +321,14 @@ class CumulantAnalyzer:
         )
         cumulant_method_B_data = cumulant_method_B_data.reset_index(drop=True)
         cumulant_method_B_data.index = cumulant_method_B_data.index + 1
+
+        # Apply q-range filter if specified
+        if q_range is not None:
+            min_q, max_q = q_range
+            mask = (cumulant_method_B_data['q^2'] >= min_q) & (cumulant_method_B_data['q^2'] <= max_q)
+            cumulant_method_B_data = cumulant_method_B_data[mask].reset_index(drop=True)
+            cumulant_method_B_data.index = cumulant_method_B_data.index + 1
+            print(f"[METHOD B] Applied q² range filter: {min_q} - {max_q} nm⁻², {len(cumulant_method_B_data)} points remaining")
 
         # Analyze diffusion coefficient (without plotting)
         # We'll create our own summary plot
@@ -380,7 +400,7 @@ class CumulantAnalyzer:
 
         return self.method_b_results
 
-    def run_method_c(self, params: Dict[str, Any]) -> pd.DataFrame:
+    def run_method_c(self, params: Dict[str, Any], q_range=None) -> pd.DataFrame:
         """
         Run Cumulant Method C
 
@@ -394,6 +414,7 @@ class CumulantAnalyzer:
                 - adaptation_strategy: str ('individual', 'global', 'representative')
                 - optimizer: str ('lm', 'trf', 'dogbox')
                 - initial_parameters: list of initial parameter guesses
+            q_range: Optional tuple (min_q, max_q) to restrict Diffusion Analysis
 
         Returns:
             DataFrame with results (Rh, errors, R^2, PDI)
@@ -448,7 +469,7 @@ class CumulantAnalyzer:
             )
 
         # Run fitting (without showing plots)
-        cumulant_method_C_fit, self.method_c_plots = plot_processed_correlations_iterative_no_show(
+        self.method_c_fit, self.method_c_plots = plot_processed_correlations_iterative_no_show(
             self.processed_correlations,
             chosen_fit_function,
             params['fit_limits'],
@@ -459,12 +480,23 @@ class CumulantAnalyzer:
         # Merge with basedata
         cumulant_method_C_data = pd.merge(
             self.df_basedata,
-            cumulant_method_C_fit,
+            self.method_c_fit,
             on='filename',
             how='outer'
         )
         cumulant_method_C_data = cumulant_method_C_data.reset_index(drop=True)
         cumulant_method_C_data.index = cumulant_method_C_data.index + 1
+
+        # Store q_range for potential recomputation
+        self.last_q_range = q_range
+
+        # Apply q-range filter if specified
+        if q_range is not None:
+            min_q, max_q = q_range
+            mask = (cumulant_method_C_data['q^2'] >= min_q) & (cumulant_method_C_data['q^2'] <= max_q)
+            cumulant_method_C_data = cumulant_method_C_data[mask].reset_index(drop=True)
+            cumulant_method_C_data.index = cumulant_method_C_data.index + 1
+            print(f"[METHOD C] Applied q² range filter: {min_q} - {max_q} nm⁻², {len(cumulant_method_C_data)} points remaining")
 
         # Create summary plot
         self.method_c_summary_plot = create_summary_plot(
@@ -477,8 +509,8 @@ class CumulantAnalyzer:
 
         # Extract fit quality metrics
         self.method_c_fit_quality = {}
-        for filename in cumulant_method_C_fit['filename']:
-            row = cumulant_method_C_fit[cumulant_method_C_fit['filename'] == filename]
+        for filename in self.method_c_fit['filename']:
+            row = self.method_c_fit[self.method_c_fit['filename'] == filename]
             if not row.empty:
                 self.method_c_fit_quality[filename] = {
                     'R2': row['R_squared'].values[0] if 'R_squared' in row else 0,
@@ -565,6 +597,92 @@ class CumulantAnalyzer:
         }
 
         return self.method_c_results
+
+    def recompute_method_c_diffusion(self, included_files: list, q_range=None) -> pd.DataFrame:
+        """
+        Recompute Method C Diffusion Analysis with only selected files
+
+        Used for post-fit filtering - recompute with only good fits
+
+        Args:
+            included_files: List of filenames to include
+            q_range: Optional tuple (min_q, max_q) to restrict Diffusion Analysis
+
+        Returns:
+            DataFrame with recomputed results (Rh, errors, R^2, PDI)
+        """
+        import statsmodels.api as sm
+        from gui.analysis.cumulant_plotting import create_summary_plot
+
+        # Check if Method C data exists
+        if not hasattr(self, 'method_c_fit') or self.method_c_fit is None:
+            raise ValueError("Method C must be run first before recomputing!")
+
+        # Filter the fit data to only include selected files
+        cumulant_method_C_fit_filtered = self.method_c_fit[
+            self.method_c_fit['filename'].isin(included_files)
+        ].copy()
+
+        if len(cumulant_method_C_fit_filtered) == 0:
+            raise ValueError("No files selected for recomputation!")
+
+        # Merge with basedata
+        cumulant_method_C_data = pd.merge(
+            self.df_basedata,
+            cumulant_method_C_fit_filtered,
+            on='filename',
+            how='inner'  # Only include files that exist in both
+        )
+        cumulant_method_C_data = cumulant_method_C_data.reset_index(drop=True)
+        cumulant_method_C_data.index = cumulant_method_C_data.index + 1
+
+        # Apply q-range filter if specified
+        if q_range is not None:
+            min_q, max_q = q_range
+            mask = (cumulant_method_C_data['q^2'] >= min_q) & (cumulant_method_C_data['q^2'] <= max_q)
+            cumulant_method_C_data = cumulant_method_C_data[mask].reset_index(drop=True)
+            cumulant_method_C_data.index = cumulant_method_C_data.index + 1
+            print(f"[METHOD C RECOMPUTE] Applied q² range filter: {min_q} - {max_q} nm⁻², {len(cumulant_method_C_data)} points remaining")
+
+        print(f"[METHOD C RECOMPUTE] Recomputing with {len(cumulant_method_C_data)} data points")
+
+        # Linear regression for diffusion coefficient
+        X = cumulant_method_C_data['q^2']
+        Y = cumulant_method_C_data['best_b']
+        X_with_const = sm.add_constant(X)
+        model = sm.OLS(Y, X_with_const).fit()
+
+        # Create DataFrame with diffusion coefficients
+        C_diff = pd.DataFrame()
+        C_diff['D [m^2/s]'] = [model.params.iloc[1] * 10**(-18)]
+        C_diff['std err D [m^2/s]'] = [model.bse.iloc[1] * 10**(-18)]
+
+        # Calculate polydispersity
+        cumulant_method_C_data['polydispersity'] = (
+            cumulant_method_C_data['best_c'] / (cumulant_method_C_data['best_b'])**2
+        )
+        polydispersity_method_C = cumulant_method_C_data['polydispersity'].mean()
+
+        # Calculate final results
+        recomputed_results = pd.DataFrame()
+        rh_value = self.c_value * (1 / C_diff['D [m^2/s]'][0]) * 10**9
+        recomputed_results['Rh [nm]'] = [rh_value]
+
+        fractional_error_Rh_C = np.sqrt(
+            (self.delta_c / self.c_value)**2 +
+            (C_diff['std err D [m^2/s]'][0] / C_diff['D [m^2/s]'][0])**2
+        )
+        rh_error = fractional_error_Rh_C * rh_value
+        recomputed_results['Rh error [nm]'] = [rh_error]
+        recomputed_results['R_squared'] = [model.rsquared]
+        recomputed_results['Fit'] = [f'Method C filtered (N={len(included_files)})']
+        recomputed_results['Residuals'] = ['N/A']
+        recomputed_results['PDI'] = [polydispersity_method_C]
+
+        print(f"[METHOD C RECOMPUTE] Recomputed Rh: {rh_value:.2f} ± {rh_error:.2f} nm")
+        print(f"[METHOD C RECOMPUTE] R²: {model.rsquared:.4f}")
+
+        return recomputed_results
 
     def get_combined_results(self) -> pd.DataFrame:
         """

@@ -375,11 +375,14 @@ class JADEDLSMainWindow(QMainWindow):
 
                 results = []
 
+                # Get q-range if specified
+                q_range = config.get('q_range', None)
+
                 # Run selected methods
                 if 'A' in config['methods']:
                     self.status_manager.update("Running Cumulant Method A...")
                     try:
-                        result_a = analyzer.run_method_a()
+                        result_a = analyzer.run_method_a(q_range=q_range)
                         results.append(('Method A', result_a))
 
                         # Add to pipeline
@@ -396,7 +399,8 @@ class JADEDLSMainWindow(QMainWindow):
                     self.status_manager.update("Running Cumulant Method B...")
                     try:
                         result_b = analyzer.run_method_b(
-                            config['method_b_params']['fit_limits']
+                            config['method_b_params']['fit_limits'],
+                            q_range=q_range
                         )
                         results.append(('Method B', result_b))
 
@@ -413,7 +417,7 @@ class JADEDLSMainWindow(QMainWindow):
                 if 'C' in config['methods']:
                     self.status_manager.update("Running Cumulant Method C...")
                     try:
-                        result_c = analyzer.run_method_c(config['method_c_params'])
+                        result_c = analyzer.run_method_c(config['method_c_params'], q_range=q_range)
                         results.append(('Method C', result_c))
 
                         # Add to pipeline
@@ -1284,7 +1288,7 @@ print(method_c_results)
                 # Don't switch tabs yet
                 self.analysis_view.display_cumulant_results(
                     method_name, result_df, plots_dict, fit_quality, switch_tab=False,
-                    regression_stats=regression_stats
+                    regression_stats=regression_stats, analyzer=analyzer
                 )
 
         # After all methods are loaded, switch to Results tab to show the summary

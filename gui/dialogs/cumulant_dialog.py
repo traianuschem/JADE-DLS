@@ -109,7 +109,6 @@ class CumulantAnalysisDialog(QDialog):
             "<b>Method A: ALV Software Cumulant Data</b><br><br>"
             "This method extracts cumulant fit results directly from the ALV correlator "
             "software output in the .asc files.<br><br>"
-            "No additional parameters required - analysis is fully automatic.<br><br>"
             "Results include:<br>"
             "• 1st order cumulant fit<br>"
             "• 2nd order cumulant fit (with polydispersity index)<br>"
@@ -117,6 +116,53 @@ class CumulantAnalysisDialog(QDialog):
         )
         info_label.setWordWrap(True)
         layout.addWidget(info_label)
+
+        # q-range selection (common to all methods)
+        q_range_group = QGroupBox("Diffusion Analysis q² Range (optional)")
+        q_range_layout = QFormLayout()
+
+        # Enable checkbox
+        self.q_range_enabled = QCheckBox("Restrict q² range for Γ vs q² fit")
+        q_range_layout.addRow(self.q_range_enabled)
+
+        # Min/Max inputs
+        q_limit_layout = QHBoxLayout()
+        self.q_min = QDoubleSpinBox()
+        self.q_min.setRange(0, 1000)
+        self.q_min.setValue(0.0)
+        self.q_min.setDecimals(6)
+        self.q_min.setSuffix(" nm⁻²")
+        self.q_min.setEnabled(False)
+
+        self.q_max = QDoubleSpinBox()
+        self.q_max.setRange(0, 1000)
+        self.q_max.setValue(100.0)
+        self.q_max.setDecimals(6)
+        self.q_max.setSuffix(" nm⁻²")
+        self.q_max.setEnabled(False)
+
+        q_limit_layout.addWidget(QLabel("Min:"))
+        q_limit_layout.addWidget(self.q_min)
+        q_limit_layout.addWidget(QLabel("Max:"))
+        q_limit_layout.addWidget(self.q_max)
+
+        q_range_layout.addRow("q² Range:", q_limit_layout)
+
+        # Info
+        q_info = QLabel(
+            "<i>Use this to exclude outliers at very low or high q² values<br>"
+            "from the Diffusion Coefficient analysis (Γ vs q² linear fit).</i>"
+        )
+        q_info.setWordWrap(True)
+        q_range_layout.addRow("", q_info)
+
+        q_range_group.setLayout(q_range_layout)
+        layout.addWidget(q_range_group)
+
+        # Connect enable checkbox
+        self.q_range_enabled.toggled.connect(self.q_min.setEnabled)
+        self.q_range_enabled.toggled.connect(self.q_max.setEnabled)
+
         layout.addStretch()
 
         tab.setLayout(layout)
@@ -284,6 +330,20 @@ class CumulantAnalysisDialog(QDialog):
         if self.method_c_check.isChecked():
             self.selected_methods.append('C')
 
+        # Collect q-range parameter (applies to all methods)
+        self.q_range = None
+        if self.q_range_enabled.isChecked():
+            q_min_val = self.q_min.value()
+            q_max_val = self.q_max.value()
+            if q_min_val >= q_max_val:
+                QMessageBox.warning(
+                    self,
+                    "Invalid q² Range",
+                    f"Minimum q² ({q_min_val}) must be less than maximum ({q_max_val})."
+                )
+                return
+            self.q_range = (q_min_val, q_max_val)
+
         # Collect parameters for Method B
         if 'B' in self.selected_methods:
             self.method_b_params = {
@@ -346,12 +406,14 @@ class CumulantAnalysisDialog(QDialog):
         Returns:
             dict: Configuration dictionary with keys:
                 - 'methods': list of selected methods ['A', 'B', 'C']
+                - 'q_range': tuple (min, max) or None for q² restriction
                 - 'method_a_params': dict of Method A parameters
                 - 'method_b_params': dict of Method B parameters
                 - 'method_c_params': dict of Method C parameters
         """
         return {
             'methods': self.selected_methods,
+            'q_range': self.q_range,
             'method_a_params': self.method_a_params,
             'method_b_params': self.method_b_params,
             'method_c_params': self.method_c_params
