@@ -1,0 +1,25 @@
+# JADE-DLS GUI Requirements
+# Python 3.7+
+
+# Core dependencies (already in main project)
+numpy>=1.19.0
+pandas>=1.2.0
+scipy>=1.6.0
+matplotlib>=3.3.0
+statsmodels>=0.12.0
+
+# GUI Framework
+PyQt5>=5.15.0
+
+# Jupyter notebook export
+nbformat>=5.1.0
+jupyter>=1.0.0
+
+# Optional but recommended
+ipywidgets>=7.6.0  # For interactive widgets in exported notebooks
+
+# Code formatting (for code export)
+black>=21.0  # Optional, for auto-formatting exported code
+
+# PDF generation (optional, for report export)
+reportlab>=3.5.0  # If implementing PDF reports
