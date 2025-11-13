@@ -370,19 +370,29 @@ class CumulantAnalyzer:
         )
         polydispersity_method_B = cumulant_method_B_data['polydispersity'].mean()
 
-        # Calculate final results
-        self.method_b_results = pd.DataFrame()
-        self.method_b_results['Rh [nm]'] = self.c_value * (1 / B_diff['D [m^2/s]'][0]) * 10**9
+        # Calculate final results - use lists to ensure DataFrame rows are created
+        rh_value = self.c_value * (1 / B_diff['D [m^2/s]'][0]) * 10**9
 
         fractional_error_Rh_B = np.sqrt(
             (self.delta_c / self.c_value)**2 +
             (B_diff['std err D [m^2/s]'][0] / B_diff['D [m^2/s]'][0])**2
         )
-        self.method_b_results['Rh error [nm]'] = fractional_error_Rh_B * self.method_b_results['Rh [nm]']
-        self.method_b_results['R_squared'] = [model.rsquared]
-        self.method_b_results['Fit'] = 'Rh from linear cumulant fit'
-        self.method_b_results['Residuals'] = 'N/A'
-        self.method_b_results['PDI'] = polydispersity_method_B
+        rh_error_value = fractional_error_Rh_B * rh_value
+
+        # Create DataFrame with lists to ensure rows are created
+        self.method_b_results = pd.DataFrame({
+            'Rh [nm]': [rh_value],
+            'Rh error [nm]': [rh_error_value],
+            'R_squared': [model.rsquared],
+            'Fit': ['Rh from linear cumulant fit'],
+            'Residuals': ['N/A'],
+            'PDI': [polydispersity_method_B]
+        })
+
+        print(f"[CUMULANT METHOD B DEBUG] Final results:")
+        print(f"  Rh value: {rh_value}")
+        print(f"  Shape: {self.method_b_results.shape}")
+        print(self.method_b_results)
 
         # Store regression statistics as strings/dicts (not model object)
         self.method_b_regression_stats = {

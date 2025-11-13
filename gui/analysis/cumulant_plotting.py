@@ -383,7 +383,7 @@ def create_summary_plot(data_df, q_squared_col, gamma_cols, method_names=None, g
         Y_full = data_df[gamma_col]
 
         # Scatter plot with larger, more visible markers
-        ax.scatter(X_full, Y_full, alpha=0.7, s=50,
+        ax.scatter(X_full, Y_full, alpha=0.7, s=20,
                   label=f'{method_name} Data',
                   color=colors[i % len(colors)],
                   marker='o', edgecolors='black', linewidths=0.5)

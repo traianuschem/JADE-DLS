@@ -343,12 +343,13 @@ import os
         with open(filename, 'w') as f:
             nbformat.write(nb, f)
 
-    def export_to_pdf(self, filename: str):
+    def export_to_pdf(self, filename: str, cumulant_analyzer=None):
         """
         Export complete analysis report to PDF
 
         Args:
             filename: Output PDF filename
+            cumulant_analyzer: Optional CumulantAnalyzer instance with results
         """
         # This would use reportlab or similar to create a PDF
         # For now, we'll create a simple text-based report
@@ -368,10 +369,173 @@ Analysis Steps:
             report += f"   Function: {step.function_name}\n"
             report += f"   Parameters: {step.params}\n"
 
+        # Add Results Summary if cumulant analysis was performed
+        if cumulant_analyzer is not None:
+            report += self._format_cumulant_results(cumulant_analyzer)
+
         # For now, save as text (PDF generation would need reportlab)
         text_filename = filename.replace('.pdf', '.txt')
         with open(text_filename, 'w') as f:
             f.write(report)
+
+    def _format_cumulant_results(self, analyzer) -> str:
+        """
+        Format cumulant analysis results for export
+
+        Args:
+            analyzer: CumulantAnalyzer instance
+
+        Returns:
+            Formatted string with results
+        """
+        report = "\n\nResults Summary:\n"
+        report += "================\n\n"
+
+        # Method A
+        if hasattr(analyzer, 'method_a_results') and not analyzer.method_a_results.empty:
+            report += "Method A - Linear Cumulant Analysis:\n"
+            report += "-" * 60 + "\n\n"
+
+            # Get regression stats
+            regression_stats = getattr(analyzer, 'method_a_regression_stats', {})
+            models_list = regression_stats.get('models', [])
+
+            for i, row_idx in enumerate(analyzer.method_a_results.index):
+                row = analyzer.method_a_results.loc[row_idx]
+                fit_name = row['Fit']
+
+                # Determine order
+                if '1st' in fit_name:
+                    order_label = "1st Order"
+                elif '2nd' in fit_name:
+                    order_label = "2nd Order"
+                elif '3rd' in fit_name:
+                    order_label = "3rd Order"
+                else:
+                    order_label = "Unknown Order"
+
+                report += f"  {order_label}:\n"
+                report += f"    Rh [nm]:              {row['Rh [nm]']:.2f} ± {row['Rh error [nm]']:.2f}\n"
+                report += f"    PDI:                  {row['PDI']:.4f}\n"
+                report += f"    R²:                   {row['R_squared']:.6f}\n"
+
+                # Add detailed statistics if available
+                if i < len(models_list):
+                    model_stats = models_list[i]
+                    report += f"    Adj. R²:              {model_stats.get('rsquared_adj', 0):.6f}\n"
+                    report += f"    F-statistic:          {model_stats.get('fvalue', 0):.2f}\n"
+                    report += f"    p-value (F):          {model_stats.get('f_pvalue', 0):.4e}\n"
+
+                    if model_stats.get('condition_number') is not None:
+                        report += f"    Condition Number:     {model_stats.get('condition_number', 0):.2f}\n"
+
+                    report += f"    AIC:                  {model_stats.get('aic', 0):.2f}\n"
+                    report += f"    BIC:                  {model_stats.get('bic', 0):.2f}\n"
+                    report += f"    Observations:         {model_stats.get('nobs', 0)}\n"
+
+                    # Regression coefficients
+                    params = model_stats.get('params', {})
+                    stderr_intercept = model_stats.get('stderr_intercept', 0)
+                    stderr_slope = model_stats.get('stderr_slope', 0)
+
+                    report += f"    Intercept:            {params.get('const', 0):.4e} ± {stderr_intercept:.4e}\n"
+
+                    # Find slope key
+                    slope_key = None
+                    for key in params.keys():
+                        if key != 'const':
+                            slope_key = key
+                            break
+                    if slope_key:
+                        report += f"    Slope (q²):           {params[slope_key]:.4e} ± {stderr_slope:.4e}\n"
+
+                report += "\n"
+
+        # Method B
+        if hasattr(analyzer, 'method_b_results') and not analyzer.method_b_results.empty:
+            report += "Method B - Linear Fit of ln[sqrt(g2)]:\n"
+            report += "-" * 60 + "\n\n"
+
+            row = analyzer.method_b_results.iloc[0]
+            report += f"  Rh [nm]:              {row['Rh [nm]']:.2f} ± {row['Rh error [nm]']:.2f}\n"
+            report += f"  PDI:                  {row['PDI']:.4f}\n"
+            report += f"  R²:                   {row['R_squared']:.6f}\n"
+
+            # Add detailed statistics if available
+            regression_stats = getattr(analyzer, 'method_b_regression_stats', {})
+            if regression_stats:
+                report += f"  Adj. R²:              {regression_stats.get('rsquared_adj', 0):.6f}\n"
+                report += f"  F-statistic:          {regression_stats.get('fvalue', 0):.2f}\n"
+                report += f"  p-value (F):          {regression_stats.get('f_pvalue', 0):.4e}\n"
+
+                if regression_stats.get('condition_number') is not None:
+                    report += f"  Condition Number:     {regression_stats.get('condition_number', 0):.2f}\n"
+
+                report += f"  AIC:                  {regression_stats.get('aic', 0):.2f}\n"
+                report += f"  BIC:                  {regression_stats.get('bic', 0):.2f}\n"
+                report += f"  Observations:         {regression_stats.get('nobs', 0)}\n"
+
+                # Regression coefficients
+                params = regression_stats.get('params', {})
+                stderr_intercept = regression_stats.get('stderr_intercept', 0)
+                stderr_slope = regression_stats.get('stderr_slope', 0)
+
+                report += f"  Intercept:            {params.get('const', 0):.4e} ± {stderr_intercept:.4e}\n"
+
+                # Find slope key
+                slope_key = None
+                for key in params.keys():
+                    if key != 'const':
+                        slope_key = key
+                        break
+                if slope_key:
+                    report += f"  Slope (q²):           {params[slope_key]:.4e} ± {stderr_slope:.4e}\n"
+
+            report += "\n"
+
+        # Method C
+        if hasattr(analyzer, 'method_c_results') and not analyzer.method_c_results.empty:
+            report += "Method C - Iterative Non-Linear Fit:\n"
+            report += "-" * 60 + "\n\n"
+
+            row = analyzer.method_c_results.iloc[0]
+            report += f"  Rh [nm]:              {row['Rh [nm]']:.2f} ± {row['Rh error [nm]']:.2f}\n"
+            report += f"  PDI:                  {row['PDI']:.4f}\n"
+            report += f"  R²:                   {row['R_squared']:.6f}\n"
+
+            # Add detailed statistics if available
+            regression_stats = getattr(analyzer, 'method_c_regression_stats', {})
+            if regression_stats:
+                report += f"  Adj. R²:              {regression_stats.get('rsquared_adj', 0):.6f}\n"
+                report += f"  F-statistic:          {regression_stats.get('fvalue', 0):.2f}\n"
+                report += f"  p-value (F):          {regression_stats.get('f_pvalue', 0):.4e}\n"
+
+                if regression_stats.get('condition_number') is not None:
+                    report += f"  Condition Number:     {regression_stats.get('condition_number', 0):.2f}\n"
+
+                report += f"  AIC:                  {regression_stats.get('aic', 0):.2f}\n"
+                report += f"  BIC:                  {regression_stats.get('bic', 0):.2f}\n"
+                report += f"  Observations:         {regression_stats.get('nobs', 0)}\n"
+
+                # Regression coefficients
+                params = regression_stats.get('params', {})
+                stderr_intercept = regression_stats.get('stderr_intercept', 0)
+                stderr_slope = regression_stats.get('stderr_slope', 0)
+
+                report += f"  Intercept:            {params.get('const', 0):.4e} ± {stderr_intercept:.4e}\n"
+
+                # Find slope key
+                slope_key = None
+                for key in params.keys():
+                    if key != 'const':
+                        slope_key = key
+                        break
+                if slope_key:
+                    report += f"  Slope (q²):           {params[slope_key]:.4e} ± {stderr_slope:.4e}\n"
+
+            report += "\n"
+
+        return report
 
     def get_parameter_history(self) -> pd.DataFrame:
         """

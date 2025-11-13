@@ -325,7 +325,9 @@ class JADEDLSMainWindow(QMainWindow):
 
         if filename:
             try:
-                self.pipeline.export_to_pdf(filename)
+                # Pass cumulant analyzer if available
+                analyzer = getattr(self, 'cumulant_analyzer', None)
+                self.pipeline.export_to_pdf(filename, cumulant_analyzer=analyzer)
                 QMessageBox.information(
                     self,
                     "Export Successful",
@@ -1204,6 +1206,9 @@ print(method_c_results)
             results: List of tuples (method_name, result_dataframe)
             analyzer: CumulantAnalyzer instance with results
         """
+        # Store analyzer for export
+        self.cumulant_analyzer = analyzer
+
         print(f"[MAIN WINDOW] _display_cumulant_results called with {len(results)} methods")
         for method_name, result_df in results:
             print(f"[MAIN WINDOW]   - {method_name}: {result_df.shape[0]} rows")
