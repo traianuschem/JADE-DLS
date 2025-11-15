@@ -368,20 +368,55 @@ class DataLoadWorker(QThread):
         return all_correlations
 
     def _calculate_q_vectors(self, df):
-        """Calculate scattering vector q and q^2"""
+        """
+        Calculate scattering vector q and q^2
+        Includes robust handling of missing/invalid data
+        """
         if df.empty:
             return df
 
-        # Calculate q
-        df['q'] = abs(
-            ((4 * np.pi * df['refractive_index']) / df['wavelength [nm]']) *
-            np.sin(np.radians(df['angle [°]']) / 2)
-        )
+        try:
+            # Check if required columns exist
+            required_cols = ['angle [°]', 'wavelength [nm]', 'refractive_index']
+            missing_cols = [col for col in required_cols if col not in df.columns]
+            if missing_cols:
+                print(f"[DATA LOADER ERROR] Missing required columns for q calculation: {missing_cols}")
+                return df
 
-        # Calculate q^2
-        df['q^2'] = df['q'] ** 2
+            # Count rows before filtering
+            rows_before = len(df)
 
-        return df
+            # Remove rows with None/NaN values in required columns
+            df = df.dropna(subset=required_cols)
+
+            rows_after = len(df)
+            if rows_before != rows_after:
+                print(f"[DATA LOADER] Removed {rows_before - rows_after} rows with missing metadata")
+
+            if df.empty:
+                print(f"[DATA LOADER ERROR] No valid rows remaining after removing incomplete data")
+                return df
+
+            # Calculate q (scattering vector)
+            # q = (4π n / λ) * sin(θ/2)
+            df['q'] = abs(
+                ((4 * np.pi * df['refractive_index']) / df['wavelength [nm]']) *
+                np.sin(np.radians(df['angle [°]']) / 2)
+            )
+
+            # Calculate q^2
+            df['q^2'] = df['q'] ** 2
+
+            print(f"[DATA LOADER] Calculated q and q² for {len(df)} files")
+
+            return df
+
+        except Exception as e:
+            print(f"[DATA LOADER ERROR] Failed to calculate q vectors: {type(e).__name__}: {e}")
+            import traceback
+            traceback.print_exc()
+            # Return original dataframe without q columns
+            return df
 
     def cancel(self):
         """Cancel the loading process"""
