@@ -177,14 +177,14 @@ class CumulantAnalysisDialog(QDialog):
         fit_limits_layout = QHBoxLayout()
         self.b_fit_min = QDoubleSpinBox()
         self.b_fit_min.setRange(0, 100)
-        self.b_fit_min.setValue(1e-6)  # 1 microsecond
+        self.b_fit_min.setValue(0.0)  # Start from 0 (as in original Jupyter notebook)
         self.b_fit_min.setDecimals(9)
         self.b_fit_min.setSingleStep(0.000001)
         self.b_fit_min.setSuffix(" s")
 
         self.b_fit_max = QDoubleSpinBox()
         self.b_fit_max.setRange(0, 100)
-        self.b_fit_max.setValue(1.0)  # 1 second
+        self.b_fit_max.setValue(0.0002)  # 200 microseconds (as in original Jupyter notebook)
         self.b_fit_max.setDecimals(6)
         self.b_fit_max.setSingleStep(0.0001)
         self.b_fit_max.setSuffix(" s")

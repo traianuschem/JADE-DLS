@@ -145,11 +145,19 @@ class CumulantAnalyzer:
         from gui.analysis.cumulant_plotting import create_summary_plot
         import statsmodels.api as sm
 
+        print("\n" + "="*60)
+        print("CUMULANT METHOD A - ALV SOFTWARE CUMULANT DATA")
+        print("="*60)
+        if q_range:
+            print(f"q² range restriction: {q_range[0]:.4e} - {q_range[1]:.4e} nm⁻²")
+
         # Ensure basedata is prepared
         if self.df_basedata is None:
+            print("[Step 1/4] Preparing basedata...")
             self.prepare_basedata()
 
         # Get mapping from filename to full path (case-insensitive for Linux)
+        print("[Step 2/4] Extracting cumulant data from ALV files...")
         import glob
         datafiles = []
         datafiles.extend(glob.glob(os.path.join(self.data_folder, "*.asc")))
@@ -168,6 +176,8 @@ class CumulantAnalyzer:
 
         if not all_cumulant_data:
             raise ValueError("No cumulant data could be extracted from files!")
+
+        print(f"            Extracted cumulant data from {len(all_cumulant_data)} files")
 
         df_extracted_cumulants = pd.concat(all_cumulant_data, ignore_index=True)
         df_extracted_cumulants.index = df_extracted_cumulants.index + 1
@@ -188,15 +198,18 @@ class CumulantAnalyzer:
             mask = (cumulant_method_A_data['q^2'] >= min_q) & (cumulant_method_A_data['q^2'] <= max_q)
             cumulant_method_A_data = cumulant_method_A_data[mask].reset_index(drop=True)
             cumulant_method_A_data.index = cumulant_method_A_data.index + 1
-            print(f"[METHOD A] Applied q² range filter: {min_q} - {max_q} nm⁻², {len(cumulant_method_A_data)} points remaining")
+            print(f"            Applied q² range filter: {min_q:.4e} - {max_q:.4e} nm⁻²")
+            print(f"            {len(cumulant_method_A_data)} data points remaining")
 
         # Perform linear regression for each gamma column without showing plots
+        print("[Step 3/4] Performing linear regression for each order...")
         gamma_cols = ['1st order frequency [1/ms]',
                      '2nd order frequency [1/ms]',
                      '3rd order frequency [1/ms]']
 
         results_list = []
-        for gamma_col in gamma_cols:
+        for i, gamma_col in enumerate(gamma_cols, 1):
+            print(f"            Order {i}: {gamma_col}")
             if gamma_col in cumulant_method_A_data.columns:
                 X = cumulant_method_A_data['q^2']
                 Y = cumulant_method_A_data[gamma_col]
@@ -291,14 +304,24 @@ class CumulantAnalyzer:
         from cumulants import calculate_g2_B, analyze_diffusion_coefficient
         from gui.analysis.cumulant_plotting import plot_processed_correlations_no_show, create_summary_plot
 
+        print("\n" + "="*60)
+        print("CUMULANT METHOD B - LINEAR FIT")
+        print("="*60)
+        print(f"Fit limits: {fit_limits[0]:.6f} - {fit_limits[1]:.6f} s")
+        if q_range:
+            print(f"q² range restriction: {q_range[0]:.4e} - {q_range[1]:.4e} nm⁻²")
+
         # Ensure data is prepared
         if self.df_basedata is None:
+            print("[Step 1/5] Preparing basedata...")
             self.prepare_basedata()
 
         if self.processed_correlations is None:
+            print("[Step 2/5] Preparing processed correlations...")
             self.prepare_processed_correlations()
 
         # Calculate sqrt(g2)
+        print("[Step 3/5] Calculating sqrt(g2) and dropping negative values...")
         processed_correlations = calculate_g2_B(self.processed_correlations)
 
         # Define fit function (up to 1st moment extension)
@@ -306,11 +329,13 @@ class CumulantAnalyzer:
             return 0.5 * np.log(a) - b * x + 0.5 * c * x**2
 
         # Plot and fit (without showing)
+        print(f"[Step 4/5] Fitting {len(processed_correlations)} correlation functions...")
         cumulant_method_B_fit, self.method_b_plots = plot_processed_correlations_no_show(
             processed_correlations,
             fit_function,
             fit_limits
         )
+        print(f"            Successfully fitted {len(cumulant_method_B_fit)} datasets")
 
         # Merge with basedata
         cumulant_method_B_data = pd.merge(
@@ -328,10 +353,12 @@ class CumulantAnalyzer:
             mask = (cumulant_method_B_data['q^2'] >= min_q) & (cumulant_method_B_data['q^2'] <= max_q)
             cumulant_method_B_data = cumulant_method_B_data[mask].reset_index(drop=True)
             cumulant_method_B_data.index = cumulant_method_B_data.index + 1
-            print(f"[METHOD B] Applied q² range filter: {min_q} - {max_q} nm⁻², {len(cumulant_method_B_data)} points remaining")
+            print(f"            Applied q² range filter: {min_q:.4e} - {max_q:.4e} nm⁻²")
+            print(f"            {len(cumulant_method_B_data)} data points remaining")
 
         # Analyze diffusion coefficient (without plotting)
         # We'll create our own summary plot
+        print(f"[Step 5/5] Analyzing diffusion coefficient (Γ vs q²)...")
         import statsmodels.api as sm
 
         # Linear regression
@@ -339,6 +366,9 @@ class CumulantAnalyzer:
         Y = cumulant_method_B_data['b']
         X_with_const = sm.add_constant(X)
         model = sm.OLS(Y, X_with_const).fit()
+
+        print(f"            Slope (D): {model.params.iloc[1]:.4e} s⁻¹·nm²")
+        print(f"            R²: {model.rsquared:.6f}")
 
         # Create summary plot
         self.method_b_summary_plot = create_summary_plot(
@@ -371,6 +401,9 @@ class CumulantAnalyzer:
         polydispersity_method_B = cumulant_method_B_data['polydispersity'].mean()
 
         # Calculate final results - use lists to ensure DataFrame rows are created
+        print("\nCalculating hydrodynamic radius...")
+        print(f"  D = {B_diff['D [m^2/s]'][0]:.4e} ± {B_diff['std err D [m^2/s]'][0]:.4e} m²/s")
+
         rh_value = self.c_value * (1 / B_diff['D [m^2/s]'][0]) * 10**9
 
         fractional_error_Rh_B = np.sqrt(
@@ -389,10 +422,11 @@ class CumulantAnalyzer:
             'PDI': [polydispersity_method_B]
         })
 
-        print(f"[CUMULANT METHOD B DEBUG] Final results:")
-        print(f"  Rh value: {rh_value}")
-        print(f"  Shape: {self.method_b_results.shape}")
-        print(self.method_b_results)
+        print(f"\nFINAL RESULTS:")
+        print(f"  Rh = {rh_value:.2f} ± {rh_error_value:.2f} nm")
+        print(f"  PDI = {polydispersity_method_B:.4f}")
+        print(f"  R² = {model.rsquared:.6f}")
+        print("="*60 + "\n")
 
         # Store regression statistics as strings/dicts (not model object)
         self.method_b_regression_stats = {
