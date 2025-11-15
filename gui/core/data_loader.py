@@ -56,6 +56,20 @@ class DataLoadWorker(QThread):
             datafiles.extend(glob.glob(os.path.join(self.data_folder, "*.asc")))
             datafiles.extend(glob.glob(os.path.join(self.data_folder, "*.ASC")))
 
+            # Remove duplicates (case-insensitive on Windows can cause duplicates)
+            # Use a set to track unique absolute paths
+            seen = set()
+            unique_files = []
+            for f in datafiles:
+                abs_path = os.path.abspath(f).lower()
+                if abs_path not in seen:
+                    seen.add(abs_path)
+                    unique_files.append(f)
+
+            if len(datafiles) != len(unique_files):
+                print(f"[DATA LOADER] Removed {len(datafiles) - len(unique_files)} duplicate file entries")
+            datafiles = unique_files
+
             # Filter out averaged files
             filtered_files = [f for f in datafiles
                             if "averaged" not in os.path.basename(f).lower()]
@@ -164,41 +178,113 @@ class DataLoadWorker(QThread):
             self.error.emit(f"Error loading data: {str(e)}")
 
     def _extract_basedata(self, files):
-        """Extract base data from all files"""
+        """
+        Extract base data from all files with batch processing
+        to avoid memory issues with large datasets
+        """
+        import gc  # Garbage collection
+
         all_data = []
         total = len(files)
+        batch_size = 20  # Process in batches to avoid memory issues
+        failed_files = []
 
         for i, file in enumerate(files):
             if self.is_cancelled:
                 return None
 
-            self.progress.emit(2, 5, f"Extracting base data: {i+1}/{total} files")
+            # Update progress more frequently
+            if i % 5 == 0 or i == total - 1:
+                self.progress.emit(2, 5, f"Extracting base data: {i+1}/{total} files")
 
             try:
+                # Extract data with timeout protection
                 extracted_data = extract_data(file)
-                if extracted_data is not None:
+
+                if extracted_data is not None and not extracted_data.empty:
                     filename = os.path.basename(file)
                     extracted_data['filename'] = filename
                     all_data.append(extracted_data)
                     print(f"[DATA LOADER]   ✓ {filename}")
                 else:
                     # File couldn't be processed
-                    error_msg = f"Could not extract data from {os.path.basename(file)}"
-                    self.errors.append({'file': os.path.basename(file), 'step': 'basedata', 'error': error_msg})
-                    print(f"[DATA LOADER WARNING] {error_msg}")
+                    filename = os.path.basename(file)
+                    error_msg = f"No data extracted (file may be corrupt or empty)"
+                    self.errors.append({
+                        'file': filename,
+                        'step': 'basedata',
+                        'error': error_msg
+                    })
+                    failed_files.append(filename)
+                    print(f"[DATA LOADER]   ✗ {filename} - {error_msg}")
+
+            except MemoryError:
+                filename = os.path.basename(file)
+                error_msg = "Out of memory"
+                self.errors.append({
+                    'file': filename,
+                    'step': 'basedata',
+                    'error': error_msg
+                })
+                failed_files.append(filename)
+                print(f"[DATA LOADER]   ✗ {filename} - MEMORY ERROR")
+                # Force garbage collection
+                gc.collect()
+                continue
+
             except Exception as e:
-                error_msg = f"Failed to extract data: {str(e)}"
-                self.errors.append({'file': os.path.basename(file), 'step': 'basedata', 'error': error_msg})
-                print(f"[DATA LOADER ERROR] Failed to extract basedata from {os.path.basename(file)}: {e}")
+                filename = os.path.basename(file)
+                error_msg = f"{type(e).__name__}: {str(e)}"
+                self.errors.append({
+                    'file': filename,
+                    'step': 'basedata',
+                    'error': error_msg
+                })
+                failed_files.append(filename)
+                print(f"[DATA LOADER]   ✗ {filename} - ERROR: {error_msg}")
                 import traceback
                 traceback.print_exc()
                 continue
 
+            # Batch processing: concatenate every batch_size files
+            # This prevents memory buildup
+            if len(all_data) >= batch_size:
+                try:
+                    # Concatenate batch and clear list
+                    batch_df = pd.concat(all_data, ignore_index=True)
+                    all_data = [batch_df]  # Keep only the concatenated result
+                    gc.collect()  # Free memory
+                except Exception as e:
+                    print(f"[DATA LOADER ERROR] Failed to concatenate batch: {e}")
+                    # Continue anyway - data is still in all_data list
+
+        # Final concatenation
         if all_data:
-            df = pd.concat(all_data, ignore_index=True)
-            df.index = df.index + 1
-            return df
+            try:
+                if len(all_data) == 1 and isinstance(all_data[0], pd.DataFrame):
+                    df = all_data[0]
+                else:
+                    df = pd.concat(all_data, ignore_index=True)
+
+                df.index = df.index + 1
+
+                # Print summary
+                if failed_files:
+                    print(f"[DATA LOADER] Base data extraction complete:")
+                    print(f"[DATA LOADER]   ✓ Success: {len(df)} files")
+                    print(f"[DATA LOADER]   ✗ Failed: {len(failed_files)} files")
+
+                # Force garbage collection
+                gc.collect()
+
+                return df
+            except Exception as e:
+                print(f"[DATA LOADER ERROR] Failed to create final DataFrame: {e}")
+                import traceback
+                traceback.print_exc()
+                return pd.DataFrame()
         else:
+            print(f"[DATA LOADER ERROR] No data extracted from any file")
             return pd.DataFrame()
 
     def _extract_countrates(self, files):

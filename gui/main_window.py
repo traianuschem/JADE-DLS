@@ -980,6 +980,64 @@ print(f"Extracted correlations from {len(correlations_data)} files")
 
     # ========== Cumulant Analysis Helper Methods ==========
 
+    def _add_basedata_calculation_to_pipeline(self):
+        """
+        Add basedata statistics and c/delta_c calculation to pipeline
+        This should be called once before any cumulant methods
+        """
+        from gui.core.pipeline import AnalysisStep
+
+        # Check if already added
+        if hasattr(self, '_basedata_calc_added') and self._basedata_calc_added:
+            return
+
+        code = """
+# Calculate basedata statistics and c/delta_c constants
+# These are needed for all cumulant methods to calculate Rh
+
+# Calculate mean and error for temperature and viscosity
+mean_temperature = df_basedata['temperature [K]'].mean()
+std_temperature = df_basedata['temperature [K]'].std()
+sem_temperature = df_basedata['temperature [K]'].sem()
+
+mean_viscosity = df_basedata['viscosity [cp]'].mean()
+std_viscosity = df_basedata['viscosity [cp]'].std()
+sem_viscosity = df_basedata['viscosity [cp]'].sem()
+
+df_basedata_stats = pd.DataFrame({
+    'mean temperature [K]': [mean_temperature],
+    'std temperature [K]': [std_temperature],
+    'sem temperature [K]': [sem_temperature],
+    'mean viscosity [cp]': [mean_viscosity],
+    'std viscosity [cp]': [std_viscosity],
+    'sem viscosity [cp]': [sem_viscosity]
+})
+
+# Calculate c and error for determination of Rh [ c = kb*T/(6*pi*eta) ]
+from scipy.constants import k  # Boltzmann constant
+c = (k * df_basedata_stats['mean temperature [K]']) / (6 * np.pi * df_basedata_stats['mean viscosity [cp]'] * 10**(-3))
+c = c.values[0]  # Extract scalar value
+
+fractional_error_c = np.sqrt(
+    (df_basedata_stats['std temperature [K]'] / df_basedata_stats['mean temperature [K]'])**2 +
+    (df_basedata_stats['std viscosity [cp]'] / df_basedata_stats['mean viscosity [cp]'])**2
+)
+delta_c = (fractional_error_c * c).values[0]  # Extract scalar value
+
+print(f"\\nc = {c:.4e} +/- {delta_c:.4e}")
+print(f"Relative error in c: {(delta_c/c):.4%}\\n")
+"""
+
+        step = AnalysisStep(
+            name="Calculate c and delta_c",
+            step_type='custom',
+            custom_code=code,
+            params={}
+        )
+        self.pipeline.steps.append(step)
+        self.pipeline.step_added.emit(step.to_dict())
+        self._basedata_calc_added = True
+
     def _add_cumulant_step_to_pipeline(self, method: str, config: dict):
         """
         Add cumulant analysis step to pipeline for code export
@@ -989,6 +1047,9 @@ print(f"Extracted correlations from {len(correlations_data)} files")
             config: Configuration dictionary from dialog
         """
         from gui.core.pipeline import AnalysisStep
+
+        # Ensure c/delta_c calculation is added first
+        self._add_basedata_calculation_to_pipeline()
 
         if method == 'A':
             code = """
