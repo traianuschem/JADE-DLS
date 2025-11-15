@@ -103,15 +103,18 @@ def extract_data(file_path):
                         # Skip problematic lines
                         continue
 
-            # Verify we got at least some data
-            if all(v[0] is None for v in data.values()):
+            # Verify we got ALL required data (not just some)
+            # All fields must be present for valid DLS analysis
+            if any(v[0] is None for v in data.values()):
+                missing_fields = [k for k, v in data.items() if v[0] is None]
                 if encoding_idx == len(encodings) - 1:
-                    print(f"WARNING: No metadata found in {os.path.basename(file_path)}")
+                    print(f"WARNING: Incomplete metadata in {os.path.basename(file_path)}")
+                    print(f"         Missing fields: {', '.join(missing_fields)}")
                     return None
                 else:
                     continue  # Try next encoding
 
-            # Successfully extracted data, return DataFrame
+            # Successfully extracted complete data, return DataFrame
             return pd.DataFrame(data)
 
         except UnicodeDecodeError:
