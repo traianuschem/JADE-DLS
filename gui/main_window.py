@@ -341,8 +341,17 @@ class JADEDLSMainWindow(QMainWindow):
 
     def run_cumulant_analysis(self):
         """Run cumulant analysis"""
-        # Check if data is loaded
-        if not self.loaded_data or 'correlations' not in self.loaded_data:
+        # Use filtered data from pipeline if available, otherwise use loaded_data
+        # This ensures that filtering is respected!
+        if hasattr(self.pipeline, 'data') and self.pipeline.data and 'correlations' in self.pipeline.data:
+            working_data = self.pipeline.data
+            data_source = "filtered"
+            print(f"[Cumulant] Using filtered data from pipeline ({len(working_data.get('correlations', {}))} datasets)")
+        elif self.loaded_data and 'correlations' in self.loaded_data:
+            working_data = self.loaded_data
+            data_source = "original"
+            print(f"[Cumulant] Using original loaded data ({len(working_data.get('correlations', {}))} datasets)")
+        else:
             QMessageBox.warning(
                 self,
                 "No Data",
@@ -351,13 +360,19 @@ class JADEDLSMainWindow(QMainWindow):
             return
 
         # Check if data folder is available
-        if 'data_folder' not in self.loaded_data:
+        if 'data_folder' not in working_data:
             QMessageBox.warning(
                 self,
                 "Missing Information",
                 "Data folder information is missing. Please reload the data."
             )
             return
+
+        # Inform user about data source
+        if data_source == "filtered":
+            num_datasets = len(working_data.get('correlations', {}))
+            # Don't show dialog here - will be distracting before parameter dialog
+            print(f"[Cumulant] Will analyze {num_datasets} filtered datasets")
 
         # Show configuration dialog
         dialog = CumulantAnalysisDialog(self)
@@ -370,8 +385,8 @@ class JADEDLSMainWindow(QMainWindow):
             try:
                 # Create analyzer
                 analyzer = CumulantAnalyzer(
-                    self.loaded_data,
-                    self.loaded_data['data_folder']
+                    working_data,
+                    working_data['data_folder']
                 )
 
                 # Prepare basedata
@@ -988,9 +1003,19 @@ print(f"Extracted correlations from {len(correlations_data)} files")
         Calculate c and delta_c constants needed for Rh calculation
         Stores results in self.loaded_data
         """
+        self._calculate_c_and_delta_c_for_data(self.loaded_data)
+
+    def _calculate_c_and_delta_c_for_data(self, data_dict):
+        """
+        Calculate c and delta_c constants for a given data dictionary
+        Stores results in the provided data dictionary
+
+        Args:
+            data_dict: Dictionary containing 'df_basedata' key
+        """
         from scipy.constants import k  # Boltzmann constant
 
-        df_basedata = self.loaded_data['df_basedata']
+        df_basedata = data_dict['df_basedata']
 
         # Calculate mean and error for temperature and viscosity
         mean_temperature = df_basedata['temperature [K]'].mean()
@@ -1009,12 +1034,11 @@ print(f"Extracted correlations from {len(correlations_data)} files")
         )
         delta_c = fractional_error_c * c
 
-        # Store in loaded_data as Series to maintain compatibility
-        self.loaded_data['c'] = pd.Series([c])
-        self.loaded_data['delta_c'] = pd.Series([delta_c])
+        # Store in data_dict as Series to maintain compatibility
+        data_dict['c'] = pd.Series([c])
+        data_dict['delta_c'] = pd.Series([delta_c])
 
-        print(f"Calculated c = {c:.4e} +/- {delta_c:.4e}")
-        print(f"Relative error in c: {(delta_c/c):.4%}")
+        print(f"[C calculation] c = {c:.4e} +/- {delta_c:.4e} (rel. error: {(delta_c/c):.4%})")
 
     def _add_basedata_calculation_to_pipeline(self):
         """
@@ -1403,17 +1427,26 @@ print(method_c_results)
 
     def run_nnls_analysis(self):
         """Run NNLS (Non-Negative Least Squares) analysis"""
-        # Check if data is loaded
-        if not self.loaded_data or 'correlations' not in self.loaded_data:
+        # Use filtered data from pipeline if available, otherwise use loaded_data
+        # This ensures that filtering is respected!
+        if hasattr(self.pipeline, 'data') and self.pipeline.data and 'correlations' in self.pipeline.data:
+            working_data = self.pipeline.data
+            data_source = "filtered"
+            print(f"[NNLS] Using filtered data from pipeline ({len(working_data.get('correlations', {}))} datasets)")
+        elif self.loaded_data and 'correlations' in self.loaded_data:
+            working_data = self.loaded_data
+            data_source = "original"
+            print(f"[NNLS] Using original loaded data ({len(working_data.get('correlations', {}))} datasets)")
+        else:
             QMessageBox.warning(
                 self,
                 "No Data",
-                "Please load and preprocess data first (File > Load Data)"
+                "Please load data first (File > Load Data)"
             )
             return
 
         # Check for basedata
-        if 'basedata' not in self.loaded_data:
+        if 'basedata' not in working_data:
             QMessageBox.warning(
                 self,
                 "Missing Basedata",
@@ -1423,33 +1456,43 @@ print(method_c_results)
             return
 
         # Prepare df_basedata and calculate c/delta_c if not already done
-        if 'df_basedata' not in self.loaded_data:
+        if 'df_basedata' not in working_data:
             # Create df_basedata from basedata if needed
-            self.loaded_data['df_basedata'] = self.loaded_data['basedata'].copy()
+            working_data['df_basedata'] = working_data['basedata'].copy()
 
-        if 'c' not in self.loaded_data or 'delta_c' not in self.loaded_data:
+        if 'c' not in working_data or 'delta_c' not in working_data:
             self.status_manager.update("Calculating c and delta_c constants...")
-            self._calculate_c_and_delta_c()
+            self._calculate_c_and_delta_c_for_data(working_data)
 
         try:
-            # Create laplace analyzer if it doesn't exist
-            if not hasattr(self, 'laplace_analyzer'):
-                # Check if processed correlations exist, otherwise use raw correlations
-                processed_corr = self.loaded_data.get('processed_correlations', None)
-                raw_corr = self.loaded_data.get('correlations', None) if processed_corr is None else None
+            # Always recreate laplace analyzer to ensure we use current (possibly filtered) data
+            # Check if processed correlations exist, otherwise use raw correlations
+            processed_corr = working_data.get('processed_correlations', None)
+            raw_corr = working_data.get('correlations', None) if processed_corr is None else None
 
-                self.laplace_analyzer = LaplaceAnalyzer(
-                    processed_correlations=processed_corr,
-                    df_basedata=self.loaded_data['df_basedata'],
-                    c=self.loaded_data['c'],
-                    delta_c=self.loaded_data['delta_c'],
-                    raw_correlations=raw_corr
+            self.laplace_analyzer = LaplaceAnalyzer(
+                processed_correlations=processed_corr,
+                df_basedata=working_data['df_basedata'],
+                c=working_data['c'],
+                delta_c=working_data['delta_c'],
+                raw_correlations=raw_corr
+            )
+
+            # Store processed correlations back for future use
+            if processed_corr is None and self.laplace_analyzer.processed_correlations is not None:
+                working_data['processed_correlations'] = self.laplace_analyzer.processed_correlations
+                print("[NNLS] Stored processed correlations")
+
+            # Inform user about data source
+            if data_source == "filtered":
+                num_datasets = len(working_data.get('correlations', {}))
+                QMessageBox.information(
+                    self,
+                    "Using Filtered Data",
+                    f"NNLS analysis will use the filtered dataset.\n\n"
+                    f"Number of datasets: {num_datasets}\n\n"
+                    f"💡 Tip: This respects your filtering choices from preprocessing."
                 )
-
-                # Store processed correlations back to loaded_data for future use
-                if processed_corr is None and self.laplace_analyzer.processed_correlations is not None:
-                    self.loaded_data['processed_correlations'] = self.laplace_analyzer.processed_correlations
-                    print("Stored processed correlations in loaded_data")
 
             # Show NNLS dialog
             dialog = NNLSDialog(self.laplace_analyzer, self)
