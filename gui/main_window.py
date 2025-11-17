@@ -983,6 +983,39 @@ print(f"Extracted correlations from {len(correlations_data)} files")
 
     # ========== Cumulant Analysis Helper Methods ==========
 
+    def _calculate_c_and_delta_c(self):
+        """
+        Calculate c and delta_c constants needed for Rh calculation
+        Stores results in self.loaded_data
+        """
+        from scipy.constants import k  # Boltzmann constant
+
+        df_basedata = self.loaded_data['df_basedata']
+
+        # Calculate mean and error for temperature and viscosity
+        mean_temperature = df_basedata['temperature [K]'].mean()
+        std_temperature = df_basedata['temperature [K]'].std()
+
+        mean_viscosity = df_basedata['viscosity [cp]'].mean()
+        std_viscosity = df_basedata['viscosity [cp]'].std()
+
+        # Calculate c [ c = kb*T/(6*pi*eta) ]
+        c = (k * mean_temperature) / (6 * np.pi * mean_viscosity * 1e-3)
+
+        # Calculate error in c
+        fractional_error_c = np.sqrt(
+            (std_temperature / mean_temperature)**2 +
+            (std_viscosity / mean_viscosity)**2
+        )
+        delta_c = fractional_error_c * c
+
+        # Store in loaded_data as Series to maintain compatibility
+        self.loaded_data['c'] = pd.Series([c])
+        self.loaded_data['delta_c'] = pd.Series([delta_c])
+
+        print(f"Calculated c = {c:.4e} +/- {delta_c:.4e}")
+        print(f"Relative error in c: {(delta_c/c):.4%}")
+
     def _add_basedata_calculation_to_pipeline(self):
         """
         Add basedata statistics and c/delta_c calculation to pipeline
@@ -1379,35 +1412,44 @@ print(method_c_results)
             )
             return
 
-        # Check if we have processed correlations
-        if 'processed_correlations' not in self.loaded_data:
-            QMessageBox.warning(
-                self,
-                "Missing Processed Data",
-                "Processed correlation data is missing.\n"
-                "This data is generated during preprocessing."
-            )
-            return
-
-        # Check for basedata and c/delta_c
-        if 'df_basedata' not in self.loaded_data or 'c' not in self.loaded_data:
+        # Check for basedata
+        if 'basedata' not in self.loaded_data:
             QMessageBox.warning(
                 self,
                 "Missing Basedata",
-                "Base data and/or constants (c, delta_c) are missing.\n"
-                "Please ensure preprocessing was completed successfully."
+                "Base data is missing.\n"
+                "Please ensure data loading was completed successfully."
             )
             return
+
+        # Prepare df_basedata and calculate c/delta_c if not already done
+        if 'df_basedata' not in self.loaded_data:
+            # Create df_basedata from basedata if needed
+            self.loaded_data['df_basedata'] = self.loaded_data['basedata'].copy()
+
+        if 'c' not in self.loaded_data or 'delta_c' not in self.loaded_data:
+            self.status_manager.update("Calculating c and delta_c constants...")
+            self._calculate_c_and_delta_c()
 
         try:
             # Create laplace analyzer if it doesn't exist
             if not hasattr(self, 'laplace_analyzer'):
+                # Check if processed correlations exist, otherwise use raw correlations
+                processed_corr = self.loaded_data.get('processed_correlations', None)
+                raw_corr = self.loaded_data.get('correlations', None) if processed_corr is None else None
+
                 self.laplace_analyzer = LaplaceAnalyzer(
-                    self.loaded_data['processed_correlations'],
-                    self.loaded_data['df_basedata'],
-                    self.loaded_data['c'],
-                    self.loaded_data['delta_c']
+                    processed_correlations=processed_corr,
+                    df_basedata=self.loaded_data['df_basedata'],
+                    c=self.loaded_data['c'],
+                    delta_c=self.loaded_data['delta_c'],
+                    raw_correlations=raw_corr
                 )
+
+                # Store processed correlations back to loaded_data for future use
+                if processed_corr is None and self.laplace_analyzer.processed_correlations is not None:
+                    self.loaded_data['processed_correlations'] = self.laplace_analyzer.processed_correlations
+                    print("Stored processed correlations in loaded_data")
 
             # Show NNLS dialog
             dialog = NNLSDialog(self.laplace_analyzer, self)

@@ -33,18 +33,27 @@ class LaplaceAnalyzer:
 
     def __init__(self, processed_correlations: Dict[str, pd.DataFrame],
                  df_basedata: pd.DataFrame,
-                 c: float, delta_c: float):
+                 c: float, delta_c: float,
+                 raw_correlations: Optional[Dict[str, pd.DataFrame]] = None):
         """
         Initialize the Laplace analyzer
 
         Args:
             processed_correlations: Dictionary of correlation data {filename: df}
                                    Each df must have 't (s)' and 'g(2)' columns
+                                   If None and raw_correlations provided, will process them
             df_basedata: Base data with experimental parameters
             c: Pre-calculated constant for Rh calculation (kB*T / 6*pi*eta)
             delta_c: Error in c
+            raw_correlations: Optional raw correlation data (will be processed if processed_correlations is None)
         """
-        self.processed_correlations = processed_correlations
+        # If processed correlations not provided, process raw correlations
+        if processed_correlations is None and raw_correlations is not None:
+            print("Processing raw correlation data...")
+            self.processed_correlations = self._process_raw_correlations(raw_correlations)
+        else:
+            self.processed_correlations = processed_correlations
+
         self.df_basedata = df_basedata
         self.c = c
         self.delta_c = delta_c
@@ -64,6 +73,30 @@ class LaplaceAnalyzer:
         # Parameters used
         self.nnls_params = None
         self.regularized_params = None
+
+    def _process_raw_correlations(self, raw_correlations: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
+        """
+        Process raw correlation data to format needed for NNLS/Regularized fits
+
+        Converts from ALV format (time [ms], correlation 1-4) to
+        processed format (t (s), g(2))
+
+        Args:
+            raw_correlations: Dictionary with raw correlation data
+
+        Returns:
+            Dictionary with processed correlation data {filename: df with 't (s)' and 'g(2)'}
+        """
+        from preprocessing import process_correlation_data
+
+        # Columns to drop (keep only time and mean correlation)
+        columns_to_drop = ['time [ms]', 'correlation 1', 'correlation 2',
+                          'correlation 3', 'correlation 4']
+
+        processed = process_correlation_data(raw_correlations, columns_to_drop)
+
+        print(f"Processed {len(processed)} correlation datasets")
+        return processed
 
     # ===== NNLS METHODS =====
 
