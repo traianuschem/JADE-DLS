@@ -381,9 +381,20 @@ class PostFitRefinementDialog(QDialog):
         return tab
 
     def create_method_c_tab(self):
-        """Create refinement tab for Method C"""
+        """Create refinement tab for Method C with interactive plot"""
         tab = QWidget()
         layout = QVBoxLayout()
+
+        # Add interactive Γ vs q² plot if we have Method C data
+        if hasattr(self.analyzer, 'method_c_data') and self.analyzer.method_c_data is not None:
+            self.plot_widget_c = InteractivePlotWidget(
+                self.analyzer.method_c_data,
+                'best_b',  # Gamma column for Method C (from non-linear fit)
+                'q^2',
+                'Method C',
+                self
+            )
+            layout.addWidget(self.plot_widget_c)
 
         # Q² range group
         q_range_group = QGroupBox("Q² Range for Diffusion Coefficient Fit")
@@ -523,7 +534,7 @@ class PostFitRefinementDialog(QDialog):
         Args:
             q_min: Minimum q² value
             q_max: Maximum q² value
-            method_name: Which method's plot was used ('Method A', 'Method B')
+            method_name: Which method's plot was used ('Method A', 'Method B', 'Method C')
         """
         if method_name == 'Method A':
             self.a_q_min.setValue(q_min)
@@ -531,6 +542,9 @@ class PostFitRefinementDialog(QDialog):
         elif method_name == 'Method B':
             self.b_q_min.setValue(q_min)
             self.b_q_max.setValue(q_max)
+        elif method_name == 'Method C':
+            self.c_q_min.setValue(q_min)
+            self.c_q_max.setValue(q_max)
 
     def apply_refinement(self):
         """Apply refinement and recalculate results"""
