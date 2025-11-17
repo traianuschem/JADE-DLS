@@ -192,6 +192,9 @@ class CumulantAnalyzer:
         cumulant_method_A_data = cumulant_method_A_data.reset_index(drop=True)
         cumulant_method_A_data.index = cumulant_method_A_data.index + 1
 
+        # Store unfiltered data for post-fit refinement
+        self.method_a_data = cumulant_method_A_data.copy()
+
         # Apply q-range filter if specified
         if q_range is not None:
             min_q, max_q = q_range
@@ -304,6 +307,9 @@ class CumulantAnalyzer:
         from cumulants import calculate_g2_B, analyze_diffusion_coefficient
         from gui.analysis.cumulant_plotting import plot_processed_correlations_no_show, create_summary_plot
 
+        # Store fit_limits for post-fit refinement
+        self.method_b_fit_limits = fit_limits
+
         print("\n" + "="*60)
         print("CUMULANT METHOD B - LINEAR FIT")
         print("="*60)
@@ -346,6 +352,9 @@ class CumulantAnalyzer:
         )
         cumulant_method_B_data = cumulant_method_B_data.reset_index(drop=True)
         cumulant_method_B_data.index = cumulant_method_B_data.index + 1
+
+        # Store unfiltered data for post-fit refinement
+        self.method_b_data = cumulant_method_B_data.copy()
 
         # Apply q-range filter if specified
         if q_range is not None:
@@ -530,6 +539,9 @@ class CumulantAnalyzer:
         )
         cumulant_method_C_data = cumulant_method_C_data.reset_index(drop=True)
         cumulant_method_C_data.index = cumulant_method_C_data.index + 1
+
+        # Store unfiltered data for post-fit refinement
+        self.method_c_data = cumulant_method_C_data.copy()
 
         # Store q_range for potential recomputation
         self.last_q_range = q_range
