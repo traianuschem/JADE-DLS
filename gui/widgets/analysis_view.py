@@ -230,7 +230,40 @@ class AnalysisView(QWidget):
         details_group.setLayout(details_layout)
         layout.addWidget(details_group)
 
-        # Post-filtering button section (initially hidden)
+        # Post-Fit Refinement button section (initially hidden)
+        self.refinement_widget = QWidget()
+        refinement_layout = QHBoxLayout()
+
+        # Global refinement button
+        self.refinement_btn = QPushButton("⚙️ Post-Fit Refinement")
+        self.refinement_btn.setToolTip(
+            "Adjust q² range and exclude fits after analysis\n"
+            "(Available after running cumulant analysis)"
+        )
+        self.refinement_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #2196F3;
+                color: white;
+                font-weight: bold;
+                padding: 8px 16px;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #1976D2;
+            }
+            QPushButton:disabled {
+                background-color: #BDBDBD;
+            }
+        """)
+        self.refinement_btn.clicked.connect(self._open_refinement_dialog)
+        refinement_layout.addWidget(self.refinement_btn)
+
+        refinement_layout.addStretch()
+        self.refinement_widget.setLayout(refinement_layout)
+        self.refinement_widget.hide()  # Initially hidden
+        layout.addWidget(self.refinement_widget)
+
+        # Post-filtering button section (initially hidden) - DEPRECATED, kept for backwards compatibility
         self.postfilter_widget = QWidget()
         postfilter_layout = QHBoxLayout()
         postfilter_layout.addWidget(QLabel("<b>Post-Filter:</b>"))
@@ -371,9 +404,13 @@ class AnalysisView(QWidget):
             regression_stats: Dictionary with regression statistics (all methods)
             analyzer: CumulantAnalyzer instance for recomputation (optional)
         """
-        # Store analyzer for Method C postfilter recomputation
-        if analyzer is not None and 'Method C' in method_name:
-            self.method_c_analyzer = analyzer
+        # Store analyzer for all methods (used by post-fit refinement)
+        if analyzer is not None:
+            self.cumulant_analyzer = analyzer
+
+            # Also keep Method C specific analyzer for backwards compatibility
+            if 'Method C' in method_name:
+                self.method_c_analyzer = analyzer
 
         # Update Results tab
         self._update_results_table(method_name, results_df, regression_stats)
@@ -388,7 +425,11 @@ class AnalysisView(QWidget):
             # Switch to Results tab
             self.tabs.setCurrentIndex(2)
 
-        # Add postfilter button for Methods B and C
+        # Show post-fit refinement button if analyzer is available
+        if hasattr(self, 'cumulant_analyzer') and self.cumulant_analyzer is not None:
+            self.refinement_widget.show()
+
+        # Add postfilter button for Methods B and C (deprecated, kept for backwards compatibility)
         if 'Method B' in method_name or 'Method C' in method_name:
             self._add_postfilter_button(method_name, results_df, plots_dict, fit_quality)
 
@@ -1507,3 +1548,199 @@ class AnalysisView(QWidget):
 
         except Exception as e:
             print(f"Could not reset plot style: {e}")
+
+    def _open_refinement_dialog(self):
+        """Open the post-fit refinement dialog"""
+        from PyQt5.QtWidgets import QMessageBox
+        from gui.dialogs import PostFitRefinementDialog
+
+        # Check if we have a cumulant analyzer stored
+        if not hasattr(self, 'cumulant_analyzer') or self.cumulant_analyzer is None:
+            QMessageBox.warning(
+                self,
+                "No Analysis Results",
+                "No cumulant analysis results available.\n"
+                "Please run a cumulant analysis first."
+            )
+            return
+
+        # Determine which methods have results
+        available_methods = []
+        if hasattr(self.cumulant_analyzer, 'method_a_results') and self.cumulant_analyzer.method_a_results is not None:
+            available_methods.append('A')
+        if hasattr(self.cumulant_analyzer, 'method_b_results') and self.cumulant_analyzer.method_b_results is not None:
+            available_methods.append('B')
+        if hasattr(self.cumulant_analyzer, 'method_c_results') and self.cumulant_analyzer.method_c_results is not None:
+            available_methods.append('C')
+
+        if not available_methods:
+            QMessageBox.warning(
+                self,
+                "No Results",
+                "No cumulant analysis results found.\n"
+                "Please run a cumulant analysis first."
+            )
+            return
+
+        # Open refinement dialog
+        dialog = PostFitRefinementDialog(self.cumulant_analyzer, available_methods, self)
+        if dialog.exec_() == dialog.Accepted:
+            # Get refinement parameters
+            params = dialog.get_refinement_params()
+
+            print("\n" + "="*60)
+            print("POST-FIT REFINEMENT")
+            print("="*60)
+
+            # Re-compute results for each method
+            results_updated = []
+
+            try:
+                # Method A
+                if 'A' in available_methods and params['q_ranges']['A'] is not None:
+                    print(f"\nRe-computing Method A with q² range: {params['q_ranges']['A']}")
+                    result_a = self.cumulant_analyzer.run_method_a(q_range=params['q_ranges']['A'])
+                    if result_a is not None:
+                        results_updated.append(('Method A', result_a))
+                        self._update_results_table('Method A', result_a)
+
+                # Method B
+                if 'B' in available_methods and params['q_ranges']['B'] is not None:
+                    print(f"\nRe-computing Method B with q² range: {params['q_ranges']['B']}")
+                    # Get original fit limits from analyzer
+                    if hasattr(self.cumulant_analyzer, 'method_b_fit_limits'):
+                        fit_limits = self.cumulant_analyzer.method_b_fit_limits
+                    else:
+                        fit_limits = (0.0, 0.0002)  # Default
+                    result_b = self.cumulant_analyzer.run_method_b(
+                        fit_limits=fit_limits,
+                        q_range=params['q_ranges']['B']
+                    )
+                    if result_b is not None:
+                        results_updated.append(('Method B', result_b))
+                        self._update_results_table('Method B', result_b)
+
+                # Method C
+                if 'C' in available_methods:
+                    q_range = params['q_ranges']['C']
+                    excluded_fits = params['excluded_fits_c']
+
+                    # Handle exclusions and q-range
+                    if q_range is not None or excluded_fits:
+                        print(f"\nRe-computing Method C:")
+                        if q_range:
+                            print(f"  q² range: {q_range}")
+                        if excluded_fits:
+                            print(f"  Excluded fits: {len(excluded_fits)}")
+
+                        # For Method C, we need to recompute with filtered data
+                        result_c = self._recompute_method_c(q_range, excluded_fits)
+                        if result_c is not None:
+                            results_updated.append(('Method C', result_c))
+                            self._update_results_table('Method C', result_c)
+
+                print("="*60 + "\n")
+
+                # Show summary
+                if results_updated:
+                    QMessageBox.information(
+                        self,
+                        "Refinement Complete",
+                        f"Successfully refined {len(results_updated)} method(s).\n"
+                        "Results have been updated."
+                    )
+                else:
+                    QMessageBox.information(
+                        self,
+                        "No Changes",
+                        "No refinement parameters were changed."
+                    )
+
+            except Exception as e:
+                QMessageBox.critical(
+                    self,
+                    "Refinement Failed",
+                    f"Failed to refine results:\n{str(e)}"
+                )
+                import traceback
+                traceback.print_exc()
+
+    def _recompute_method_c(self, q_range, excluded_fits):
+        """
+        Re-compute Method C with filtered data
+
+        Args:
+            q_range: Tuple (min_q, max_q) or None
+            excluded_fits: List of filenames to exclude
+
+        Returns:
+            DataFrame with updated results
+        """
+        import pandas as pd
+        import numpy as np
+        import statsmodels.api as sm
+
+        # Get the fit data
+        if not hasattr(self.cumulant_analyzer, 'method_c_data'):
+            print("[ERROR] No Method C data available")
+            return None
+
+        cumulant_method_C_data = self.cumulant_analyzer.method_c_data.copy()
+
+        # Exclude fits if specified
+        if excluded_fits:
+            mask = ~cumulant_method_C_data['filename'].isin(excluded_fits)
+            cumulant_method_C_data = cumulant_method_C_data[mask].reset_index(drop=True)
+            cumulant_method_C_data.index = cumulant_method_C_data.index + 1
+            print(f"  Excluded {len(excluded_fits)} fits, {len(cumulant_method_C_data)} remaining")
+
+        # Apply q-range filter if specified
+        if q_range is not None:
+            min_q, max_q = q_range
+            mask = (cumulant_method_C_data['q^2'] >= min_q) & (cumulant_method_C_data['q^2'] <= max_q)
+            cumulant_method_C_data = cumulant_method_C_data[mask].reset_index(drop=True)
+            cumulant_method_C_data.index = cumulant_method_C_data.index + 1
+            print(f"  Applied q² range filter: {len(cumulant_method_C_data)} points remaining")
+
+        if cumulant_method_C_data.empty:
+            print("[ERROR] No data remaining after filtering")
+            return None
+
+        # Re-compute diffusion coefficient
+        X = cumulant_method_C_data['q^2']
+        Y = cumulant_method_C_data['best_b']
+        X_with_const = sm.add_constant(X)
+        model = sm.OLS(Y, X_with_const).fit()
+
+        print(f"  New D: {model.params.iloc[1]:.4e} s⁻¹·nm²")
+        print(f"  New R²: {model.rsquared:.6f}")
+
+        # Calculate diffusion coefficient
+        C_diff = pd.DataFrame()
+        C_diff['D [m^2/s]'] = [model.params.iloc[1] * 10**(-18)]
+        C_diff['std err D [m^2/s]'] = [model.bse.iloc[1] * 10**(-18)]
+
+        # Calculate polydispersity
+        cumulant_method_C_data['polydispersity'] = (
+            cumulant_method_C_data['best_c'] / (cumulant_method_C_data['best_b'])**2
+        )
+        polydispersity_method_C = cumulant_method_C_data['polydispersity'].mean()
+
+        # Calculate results
+        c_value = self.cumulant_analyzer.c_value
+        delta_c = self.cumulant_analyzer.delta_c
+
+        method_c_results = pd.DataFrame()
+        method_c_results['Rh [nm]'] = [c_value * (1 / C_diff['D [m^2/s]'][0]) * 10**9]
+
+        fractional_error_Rh_C = np.sqrt(
+            (delta_c / c_value)**2 +
+            (C_diff['std err D [m^2/s]'][0] / C_diff['D [m^2/s]'][0])**2
+        )
+        method_c_results['Rh error [nm]'] = [fractional_error_Rh_C * method_c_results['Rh [nm]'][0]]
+        method_c_results['R_squared'] = [model.rsquared]
+        method_c_results['Fit'] = ['Rh from iterative non-linear cumulant fit (refined)']
+        method_c_results['Residuals'] = ['N/A']
+        method_c_results['PDI'] = [polydispersity_method_C]
+
+        return method_c_results
