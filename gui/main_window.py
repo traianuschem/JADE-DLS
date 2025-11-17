@@ -17,7 +17,10 @@ from gui.core.status_manager import StatusManager, ProgressDialog
 from gui.core.data_loader import DataLoader
 from gui.dialogs.filtering_dialogs import CountrateFilterDialog, CorrelationFilterDialog
 from gui.dialogs.cumulant_dialog import CumulantAnalysisDialog
+from gui.dialogs.nnls_dialog import NNLSDialog
+from gui.dialogs.nnls_results_dialog import NNLSResultsDialog
 from gui.analysis.cumulant_analyzer import CumulantAnalyzer
+from gui.analysis.laplace_analyzer import LaplaceAnalyzer
 
 
 class JADEDLSMainWindow(QMainWindow):
@@ -1364,3 +1367,191 @@ print(method_c_results)
         self.status_manager.complete_operation(
             f"Cumulant analysis complete - Results displayed in Analysis tabs"
         )
+
+    def run_nnls_analysis(self):
+        """Run NNLS (Non-Negative Least Squares) analysis"""
+        # Check if data is loaded
+        if not self.loaded_data or 'correlations' not in self.loaded_data:
+            QMessageBox.warning(
+                self,
+                "No Data",
+                "Please load and preprocess data first (File > Load Data)"
+            )
+            return
+
+        # Check if we have processed correlations
+        if 'processed_correlations' not in self.loaded_data:
+            QMessageBox.warning(
+                self,
+                "Missing Processed Data",
+                "Processed correlation data is missing.\n"
+                "This data is generated during preprocessing."
+            )
+            return
+
+        # Check for basedata and c/delta_c
+        if 'df_basedata' not in self.loaded_data or 'c' not in self.loaded_data:
+            QMessageBox.warning(
+                self,
+                "Missing Basedata",
+                "Base data and/or constants (c, delta_c) are missing.\n"
+                "Please ensure preprocessing was completed successfully."
+            )
+            return
+
+        try:
+            # Create laplace analyzer if it doesn't exist
+            if not hasattr(self, 'laplace_analyzer'):
+                self.laplace_analyzer = LaplaceAnalyzer(
+                    self.loaded_data['processed_correlations'],
+                    self.loaded_data['df_basedata'],
+                    self.loaded_data['c'],
+                    self.loaded_data['delta_c']
+                )
+
+            # Show NNLS dialog
+            dialog = NNLSDialog(self.laplace_analyzer, self)
+            if dialog.exec_() == dialog.Accepted:
+                params = dialog.get_parameters()
+
+                # Start analysis
+                self.status_manager.start_operation("Running NNLS analysis...")
+
+                try:
+                    # Run NNLS
+                    self.status_manager.update("Performing NNLS fits...")
+                    self.laplace_analyzer.run_nnls(
+                        params,
+                        use_multiprocessing=params.get('use_multiprocessing', False),
+                        show_plots=params.get('show_plots', True)
+                    )
+
+                    # Calculate diffusion coefficients
+                    self.status_manager.update("Calculating diffusion coefficients...")
+                    self.laplace_analyzer.calculate_nnls_diffusion_coefficients()
+
+                    # Add to pipeline
+                    self._add_nnls_step_to_pipeline(params)
+
+                    # Mark workflow step as complete
+                    self.workflow_panel.mark_step_complete('nnls')
+
+                    # Show results
+                    self.status_manager.complete_operation("NNLS analysis completed")
+                    self.show_nnls_results()
+
+                except Exception as e:
+                    self.status_manager.fail_operation(f"NNLS analysis failed: {str(e)}")
+                    QMessageBox.critical(
+                        self,
+                        "NNLS Analysis Failed",
+                        f"An error occurred during NNLS analysis:\n\n{str(e)}"
+                    )
+
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Setup Error",
+                f"Error setting up NNLS analyzer:\n\n{str(e)}"
+            )
+
+    def show_nnls_results(self):
+        """Show NNLS results dialog"""
+        if not hasattr(self, 'laplace_analyzer') or self.laplace_analyzer.nnls_final_results is None:
+            QMessageBox.warning(
+                self,
+                "No Results",
+                "No NNLS results available. Please run NNLS analysis first."
+            )
+            return
+
+        dialog = NNLSResultsDialog(self.laplace_analyzer, self)
+        dialog.exec_()
+
+    def run_regularized_analysis(self):
+        """Run regularized NNLS analysis"""
+        # Check if data is loaded
+        if not self.loaded_data or 'correlations' not in self.loaded_data:
+            QMessageBox.warning(
+                self,
+                "No Data",
+                "Please load and preprocess data first (File > Load Data)"
+            )
+            return
+
+        # TODO: Implement regularized fit dialog and analysis
+        QMessageBox.information(
+            self,
+            "Coming Soon",
+            "Regularized NNLS analysis will be implemented next.\n\n"
+            "This feature includes:\n"
+            "• Tikhonov-Phillips regularization\n"
+            "• Alpha parameter optimization\n"
+            "• Advanced peak statistics\n"
+            "• Distribution comparison plots"
+        )
+
+    def compare_results(self):
+        """Compare results from different methods"""
+        # TODO: Implement comparison view
+        QMessageBox.information(
+            self,
+            "Coming Soon",
+            "Results comparison feature will allow you to:\n\n"
+            "• Compare Cumulant A/B/C methods\n"
+            "• Compare NNLS vs Regularized fits\n"
+            "• View all Rh values side-by-side\n"
+            "• Export comprehensive comparison reports"
+        )
+
+    def _add_nnls_step_to_pipeline(self, params):
+        """Add NNLS analysis step to pipeline"""
+        # Create code for this step
+        code = f"""
+# NNLS Analysis
+# Parameters: prominence={params['prominence']}, distance={params['distance']}
+
+from regularized_optimized import nnls_all_optimized, calculate_decay_rates
+from cumulants import analyze_diffusion_coefficient
+import numpy as np
+
+# Run NNLS
+nnls_params = {{
+    'decay_times': np.logspace({np.log10(params['decay_times'][0]):.2f}, {np.log10(params['decay_times'][-1]):.2f}, {len(params['decay_times'])}),
+    'prominence': {params['prominence']},
+    'distance': {params['distance']}
+}}
+
+nnls_results = nnls_all_optimized(
+    processed_correlations,
+    nnls_params,
+    use_multiprocessing={params.get('use_multiprocessing', False)},
+    show_plots={params.get('show_plots', True)}
+)
+
+# Merge with basedata
+nnls_data = pd.merge(df_basedata, nnls_results, on='filename', how='outer')
+
+# Calculate decay rates
+tau_columns = [col for col in nnls_data.columns if col.startswith('tau_')]
+nnls_data = calculate_decay_rates(nnls_data, tau_columns)
+
+# Calculate diffusion coefficients
+gamma_columns = [col.replace('tau', 'gamma') for col in tau_columns]
+nnls_diff_results = analyze_diffusion_coefficient(
+    data_df=nnls_data,
+    q_squared_col='q^2',
+    gamma_cols=gamma_columns
+)
+"""
+
+        # Add step to pipeline
+        from gui.core.pipeline import AnalysisStep
+        step = AnalysisStep(
+            name="NNLS Analysis",
+            step_type='custom',
+            custom_code=code,
+            params=params
+        )
+        self.pipeline.steps.append(step)
+        self.pipeline.step_added.emit(step.to_dict())
