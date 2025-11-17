@@ -3,6 +3,9 @@ JADE-DLS Main GUI Window
 A transparent, user-friendly GUI for Dynamic Light Scattering analysis
 """
 
+import numpy as np
+import pandas as pd
+
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QSplitter, QMenuBar, QAction, QStatusBar,
                              QMessageBox, QFileDialog, QTabWidget, QProgressBar)
