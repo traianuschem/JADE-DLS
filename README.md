@@ -9,3 +9,10 @@ then calculated.
 In the current version .ASC-files from ALV Software are used.
 
 A more detailed description of the script will be uploaded in the future.
+
+
+To build in:
+Weitere mögliche Optimierungen (für später):
+Numba JIT: Kompiliert Python zu C (~2-3x schneller)
+CuPy GPU: Für sehr große Datensätze (~10-100x schneller)
+Cython: Kritische Funktionen in C schreiben (~5x schneller)
