@@ -1653,13 +1653,45 @@ class AnalysisView(QWidget):
             )
             return
 
-        method_name = "NNLS" if has_nnls else "Regularized NNLS"
-        results_df = self.laplace_analyzer.nnls_results if has_nnls else self.laplace_analyzer.regularized_results
+        # If both methods have results, ask user which one to refine
+        refine_nnls = has_nnls  # Default to NNLS if available
+        if has_nnls and has_regularized:
+            from PyQt5.QtWidgets import QComboBox
+            choice_dialog = QDialog(self)
+            choice_dialog.setWindowTitle("Select Method to Refine")
+            choice_layout = QVBoxLayout()
+
+            choice_layout.addWidget(QLabel("Both NNLS and Regularized NNLS results are available.\nWhich method would you like to refine?"))
+
+            method_combo = QComboBox()
+            method_combo.addItem("NNLS")
+            method_combo.addItem("Regularized NNLS")
+            choice_layout.addWidget(method_combo)
+
+            button_layout = QHBoxLayout()
+            ok_btn = QPushButton("OK")
+            ok_btn.clicked.connect(choice_dialog.accept)
+            cancel_btn = QPushButton("Cancel")
+            cancel_btn.clicked.connect(choice_dialog.reject)
+            button_layout.addWidget(cancel_btn)
+            button_layout.addWidget(ok_btn)
+            choice_layout.addLayout(button_layout)
+
+            choice_dialog.setLayout(choice_layout)
+
+            if choice_dialog.exec_() != QDialog.Accepted:
+                return
+
+            refine_nnls = (method_combo.currentText() == "NNLS")
+
+        # Set method name and data based on selection
+        method_name = "NNLS" if refine_nnls else "Regularized NNLS"
+        results_df = self.laplace_analyzer.nnls_results if refine_nnls else self.laplace_analyzer.regularized_results
 
         # Get current q² range
-        if hasattr(self.laplace_analyzer, 'nnls_data') and self.laplace_analyzer.nnls_data is not None:
+        if refine_nnls and hasattr(self.laplace_analyzer, 'nnls_data') and self.laplace_analyzer.nnls_data is not None:
             data_df = self.laplace_analyzer.nnls_data
-        elif hasattr(self.laplace_analyzer, 'regularized_data') and self.laplace_analyzer.regularized_data is not None:
+        elif not refine_nnls and hasattr(self.laplace_analyzer, 'regularized_data') and self.laplace_analyzer.regularized_data is not None:
             data_df = self.laplace_analyzer.regularized_data
         else:
             data_df = None
@@ -1801,13 +1833,13 @@ class AnalysisView(QWidget):
         try:
             # Remove outliers if specified
             if indices_to_remove:
-                if has_nnls:
+                if refine_nnls:
                     self.laplace_analyzer.remove_nnls_outliers(indices_to_remove)
                 else:
                     self.laplace_analyzer.remove_regularized_outliers(indices_to_remove)
 
             # Recalculate diffusion coefficients with new q² range
-            if has_nnls:
+            if refine_nnls:
                 self.laplace_analyzer.calculate_nnls_diffusion_coefficients(x_range=q_range)
                 self.laplace_analyzer._calculate_nnls_final_results()
 
