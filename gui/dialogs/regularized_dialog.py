@@ -258,12 +258,18 @@ class RegularizedDialog(QDialog):
         self.prominence_slider.setValue(50)  # 0.05
         self.prominence_slider.setTickPosition(QSlider.TicksBelow)
         self.prominence_slider.setTickInterval(50)
-        self.prominence_slider.valueChanged.connect(self.on_prominence_changed)
+        self.prominence_slider.valueChanged.connect(self.on_prominence_slider_changed)
         prom_slider_layout.addWidget(self.prominence_slider)
 
-        self.prominence_value_label = QLabel("0.050")
-        self.prominence_value_label.setStyleSheet("font-weight: bold; min-width: 60px;")
-        prom_slider_layout.addWidget(self.prominence_value_label)
+        # Manual input field
+        self.prominence_input = QDoubleSpinBox()
+        self.prominence_input.setDecimals(3)
+        self.prominence_input.setRange(0.001, 0.5)
+        self.prominence_input.setValue(0.05)
+        self.prominence_input.setSingleStep(0.001)
+        self.prominence_input.setMinimumWidth(80)
+        self.prominence_input.valueChanged.connect(self.on_prominence_input_changed)
+        prom_slider_layout.addWidget(self.prominence_input)
 
         prom_layout.addLayout(prom_slider_layout)
         prom_group.setLayout(prom_layout)
@@ -287,12 +293,17 @@ class RegularizedDialog(QDialog):
         self.distance_slider.setValue(1)
         self.distance_slider.setTickPosition(QSlider.TicksBelow)
         self.distance_slider.setTickInterval(5)
-        self.distance_slider.valueChanged.connect(self.on_distance_changed)
+        self.distance_slider.valueChanged.connect(self.on_distance_slider_changed)
         dist_slider_layout.addWidget(self.distance_slider)
 
-        self.distance_value_label = QLabel("1")
-        self.distance_value_label.setStyleSheet("font-weight: bold; min-width: 60px;")
-        dist_slider_layout.addWidget(self.distance_value_label)
+        # Manual input field
+        self.distance_input = QSpinBox()
+        self.distance_input.setRange(1, 50)
+        self.distance_input.setValue(1)
+        self.distance_input.setSingleStep(1)
+        self.distance_input.setMinimumWidth(80)
+        self.distance_input.valueChanged.connect(self.on_distance_input_changed)
+        dist_slider_layout.addWidget(self.distance_input)
 
         dist_layout.addLayout(dist_slider_layout)
         dist_group.setLayout(dist_layout)
@@ -437,15 +448,34 @@ class RegularizedDialog(QDialog):
         widget.setLayout(layout)
         return widget
 
-    def on_prominence_changed(self, value):
+    def on_prominence_slider_changed(self, value):
         """Handle prominence slider change"""
         prominence = value / 1000.0
-        self.prominence_value_label.setText(f"{prominence:.3f}")
+        self.prominence_input.blockSignals(True)
+        self.prominence_input.setValue(prominence)
+        self.prominence_input.blockSignals(False)
         self.params['prominence'] = prominence
 
-    def on_distance_changed(self, value):
+    def on_prominence_input_changed(self, value):
+        """Handle prominence manual input change"""
+        slider_value = int(value * 1000)
+        self.prominence_slider.blockSignals(True)
+        self.prominence_slider.setValue(slider_value)
+        self.prominence_slider.blockSignals(False)
+        self.params['prominence'] = value
+
+    def on_distance_slider_changed(self, value):
         """Handle distance slider change"""
-        self.distance_value_label.setText(str(value))
+        self.distance_input.blockSignals(True)
+        self.distance_input.setValue(value)
+        self.distance_input.blockSignals(False)
+        self.params['distance'] = value
+
+    def on_distance_input_changed(self, value):
+        """Handle distance manual input change"""
+        self.distance_slider.blockSignals(True)
+        self.distance_slider.setValue(value)
+        self.distance_slider.blockSignals(False)
         self.params['distance'] = value
 
     def apply_preset(self, preset_name):
@@ -615,9 +645,9 @@ class RegularizedDialog(QDialog):
         # Alpha
         self.params['alpha'] = self.alpha_spin.value()
 
-        # Peak detection (already updated by sliders)
-        self.params['prominence'] = self.prominence_slider.value() / 1000.0
-        self.params['distance'] = self.distance_slider.value()
+        # Peak detection - use values from input fields (they're synced with sliders)
+        self.params['prominence'] = self.prominence_input.value()
+        self.params['distance'] = self.distance_input.value()
 
         # Advanced options
         self.params['normalize'] = self.normalize_check.isChecked()

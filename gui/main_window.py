@@ -1521,9 +1521,9 @@ print(method_c_results)
                     # Mark workflow step as complete
                     self.workflow_panel.mark_step_complete('nnls')
 
-                    # Show results
+                    # Display results in analysis view
                     self.status_manager.complete_operation("NNLS analysis completed")
-                    self.show_nnls_results()
+                    self._display_nnls_results()
 
                 except Exception as e:
                     self.status_manager.fail_operation(f"NNLS analysis failed: {str(e)}")
@@ -1540,8 +1540,76 @@ print(method_c_results)
                 f"Error setting up NNLS analyzer:\n\n{str(e)}"
             )
 
+    def _display_nnls_results(self):
+        """
+        Display NNLS analysis results in Analysis View (analog to cumulant results)
+        """
+        if not hasattr(self, 'laplace_analyzer') or self.laplace_analyzer.nnls_final_results is None:
+            QMessageBox.warning(
+                self,
+                "No Results",
+                "No NNLS results available."
+            )
+            return
+
+        print("\n" + "="*60)
+        print("NNLS ANALYSIS RESULTS")
+        print("="*60)
+        print(self.laplace_analyzer.nnls_final_results.to_string())
+        print("="*60 + "\n")
+
+        # Clear previous results
+        self.analysis_view.clear_results()
+
+        # Prepare plots dictionary
+        plots_dict = {}
+
+        # Add individual fit plots
+        if hasattr(self.laplace_analyzer, 'nnls_plots'):
+            plots_dict.update(self.laplace_analyzer.nnls_plots)
+
+        # Add summary plot (Gamma vs q²)
+        if hasattr(self.laplace_analyzer, 'nnls_summary_plot'):
+            plots_dict['NNLS Diffusion Analysis'] = (self.laplace_analyzer.nnls_summary_plot, {})
+
+        # Create fit quality dict
+        fit_quality = {}
+        if hasattr(self.laplace_analyzer, 'nnls_plots'):
+            for filename, (fig, data) in self.laplace_analyzer.nnls_plots.items():
+                fit_quality[filename] = {
+                    'num_peaks': data.get('num_peaks', 0),
+                    'peaks': data.get('peaks', [])
+                }
+
+        # Get regression statistics
+        regression_stats = {}
+        if hasattr(self.laplace_analyzer, 'nnls_diff_results'):
+            # Store regression stats for each peak
+            regression_stats['regression_results'] = []
+            for i, row in self.laplace_analyzer.nnls_diff_results.iterrows():
+                regression_stats['regression_results'].append({
+                    'gamma_col': f'NNLS Peak {i+1}',
+                    'q^2_coef': row.get('q^2_coef', 0),
+                    'q^2_se': row.get('q^2_se', 0),
+                    'R_squared': row.get('R_squared', 0),
+                    'Normality': row.get('Normality', 'N/A')
+                })
+
+        # Display in analysis view
+        self.analysis_view.display_cumulant_results(
+            "NNLS Analysis",
+            self.laplace_analyzer.nnls_final_results,
+            plots_dict,
+            fit_quality,
+            switch_tab=False,
+            regression_stats=regression_stats if regression_stats.get('regression_results') else None
+        )
+
+        # Switch to Results tab to show the summary
+        self.analysis_view.show_results_tab()
+
     def show_nnls_results(self):
-        """Show NNLS results dialog"""
+        """Show NNLS results dialog (legacy support)"""
         if not hasattr(self, 'laplace_analyzer') or self.laplace_analyzer.nnls_final_results is None:
             QMessageBox.warning(
                 self,
@@ -1645,15 +1713,9 @@ print(method_c_results)
                     # Mark workflow step as complete
                     self.workflow_panel.mark_step_complete('regularized')
 
-                    # Show results
+                    # Display results in analysis view
                     self.status_manager.complete_operation("Regularized analysis completed")
-                    QMessageBox.information(
-                        self,
-                        "Analysis Complete",
-                        f"Regularized NNLS analysis completed successfully!\n\n"
-                        f"Results are stored in the analyzer.\n"
-                        f"Check the Analysis View for plots and data."
-                    )
+                    self._display_regularized_results()
 
                 except Exception as e:
                     self.status_manager.fail_operation(f"Regularized analysis failed: {str(e)}")
@@ -1673,6 +1735,71 @@ print(method_c_results)
             )
             import traceback
             traceback.print_exc()
+
+    def _display_regularized_results(self):
+        """
+        Display Regularized NNLS analysis results in Analysis View
+        """
+        if not hasattr(self, 'laplace_analyzer') or self.laplace_analyzer.regularized_final_results is None:
+            QMessageBox.warning(
+                self,
+                "No Results",
+                "No Regularized NNLS results available."
+            )
+            return
+
+        print("\n" + "="*60)
+        print("REGULARIZED NNLS ANALYSIS RESULTS")
+        print("="*60)
+        print(self.laplace_analyzer.regularized_final_results.to_string())
+        print("="*60 + "\n")
+
+        # Prepare plots dictionary
+        plots_dict = {}
+
+        # Add individual fit plots
+        if hasattr(self.laplace_analyzer, 'regularized_plots'):
+            plots_dict.update(self.laplace_analyzer.regularized_plots)
+
+        # Add summary plot (Gamma vs q²)
+        if hasattr(self.laplace_analyzer, 'regularized_summary_plot'):
+            plots_dict['Regularized Diffusion Analysis'] = (self.laplace_analyzer.regularized_summary_plot, {})
+
+        # Create fit quality dict
+        fit_quality = {}
+        if hasattr(self.laplace_analyzer, 'regularized_plots'):
+            for filename, (fig, data) in self.laplace_analyzer.regularized_plots.items():
+                fit_quality[filename] = {
+                    'num_peaks': data.get('num_peaks', 0),
+                    'peaks': data.get('peaks', [])
+                }
+
+        # Get regression statistics
+        regression_stats = {}
+        if hasattr(self.laplace_analyzer, 'regularized_diff_results'):
+            # Store regression stats for each peak
+            regression_stats['regression_results'] = []
+            for i, row in self.laplace_analyzer.regularized_diff_results.iterrows():
+                regression_stats['regression_results'].append({
+                    'gamma_col': f'Regularized Peak {i+1}',
+                    'q^2_coef': row.get('q^2_coef', 0),
+                    'q^2_se': row.get('q^2_se', 0),
+                    'R_squared': row.get('R_squared', 0),
+                    'Normality': row.get('Normality', 'N/A')
+                })
+
+        # Display in analysis view
+        self.analysis_view.display_cumulant_results(
+            "Regularized NNLS",
+            self.laplace_analyzer.regularized_final_results,
+            plots_dict,
+            fit_quality,
+            switch_tab=False,
+            regression_stats=regression_stats if regression_stats.get('regression_results') else None
+        )
+
+        # Switch to Results tab to show the summary
+        self.analysis_view.show_results_tab()
 
     def compare_results(self):
         """Compare results from different methods"""
