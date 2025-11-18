@@ -173,6 +173,9 @@ class LaplaceAnalyzer:
 
         # Use multiprocessing if requested and we have enough datasets
         if use_multiprocessing and total > 3:
+            fit_results = {}  # Initialize outside try block
+            multiprocessing_success = False
+
             try:
                 from joblib import Parallel, delayed
                 import multiprocessing as mp
@@ -180,9 +183,6 @@ class LaplaceAnalyzer:
                 n_jobs = mp.cpu_count()
                 print(f"[NNLS] Using parallel processing with {n_jobs} CPU cores (joblib backend)")
                 print("[NNLS] Phase 1: Parallel fitting...")
-
-                # Store fit results for later plot generation
-                fit_results = {}
 
                 # Prepare data for parallel processing
                 tasks = [(name, df, params, 1, None) for name, df in self.processed_correlations.items()]
@@ -201,6 +201,8 @@ class LaplaceAnalyzer:
                     fit_results[name] = (f_optimized, optimized_values, residuals_values, peaks)
                     print(f"[{idx+1}/{total}] Completed {name}")
 
+                multiprocessing_success = True
+
             except ImportError:
                 print("[NNLS] Warning: joblib not available, falling back to sequential processing")
                 use_multiprocessing = False
@@ -208,30 +210,32 @@ class LaplaceAnalyzer:
                 print(f"[NNLS] Warning: Parallel processing failed ({str(e)}), using sequential processing")
                 use_multiprocessing = False
 
-            print("[NNLS] Phase 2: Generating plots sequentially...")
-            # Generate plots sequentially (can't be done in parallel)
-            plot_number = 1
-            for name, df in self.processed_correlations.items():
-                if name in fit_results:
-                    f_optimized, optimized_values, residuals_values, peaks = fit_results[name]
+            # Only do Phase 2 if multiprocessing succeeded
+            if multiprocessing_success:
+                print("[NNLS] Phase 2: Generating plots sequentially...")
+                # Generate plots sequentially (can't be done in parallel)
+                plot_number = 1
+                for name, df in self.processed_correlations.items():
+                    if name in fit_results:
+                        f_optimized, optimized_values, residuals_values, peaks = fit_results[name]
 
-                    fig = self._create_nnls_plot(
-                        name, df, decay_times, f_optimized, optimized_values,
-                        residuals_values, peaks, params, plot_number
-                    )
+                        fig = self._create_nnls_plot(
+                            name, df, decay_times, f_optimized, optimized_values,
+                            residuals_values, peaks, params, plot_number
+                        )
 
-                    plots_dict[name] = (fig, {
-                        'f_optimized': f_optimized,
-                        'peaks': peaks,
-                        'num_peaks': len(peaks)
-                    })
+                        plots_dict[name] = (fig, {
+                            'f_optimized': f_optimized,
+                            'peaks': peaks,
+                            'num_peaks': len(peaks)
+                        })
 
-                    if show_plots:
-                        plt.show()
-                    else:
-                        plt.close(fig)
+                        if show_plots:
+                            plt.show()
+                        else:
+                            plt.close(fig)
 
-                    plot_number += 1
+                        plot_number += 1
 
         if not use_multiprocessing or total <= 3:
             # Sequential processing
@@ -552,6 +556,9 @@ class LaplaceAnalyzer:
 
         # Use multiprocessing if requested and we have enough datasets
         if use_multiprocessing and total > 3:
+            fit_results = {}  # Initialize outside try block
+            multiprocessing_success = False
+
             try:
                 from joblib import Parallel, delayed
                 import multiprocessing as mp
@@ -559,9 +566,6 @@ class LaplaceAnalyzer:
                 n_jobs = mp.cpu_count()
                 print(f"[Regularized] Using parallel processing with {n_jobs} CPU cores (joblib backend)")
                 print("[Regularized] Phase 1: Parallel fitting...")
-
-                # Store fit results for later plot generation
-                fit_results = {}
 
                 # Process in parallel using joblib (better Windows support than multiprocessing)
                 # Use 'loky' backend which is more robust for scipy/numpy operations
@@ -585,6 +589,8 @@ class LaplaceAnalyzer:
 
                     print(f"[{idx+1}/{total}] Completed {name} (Regularized)")
 
+                multiprocessing_success = True
+
             except ImportError:
                 print("[Regularized] Warning: joblib not available, falling back to sequential processing")
                 use_multiprocessing = False
@@ -592,30 +598,32 @@ class LaplaceAnalyzer:
                 print(f"[Regularized] Warning: Parallel processing failed ({str(e)}), using sequential processing")
                 use_multiprocessing = False
 
-            print("[Regularized] Phase 2: Generating plots sequentially...")
-            # Generate plots sequentially (can't be done in parallel)
-            plot_number = 1
-            for name, df in self.processed_correlations.items():
-                if name in fit_results:
-                    f_optimized, optimized_values, residuals_values, peaks = fit_results[name]
+            # Only do Phase 2 if multiprocessing succeeded
+            if multiprocessing_success:
+                print("[Regularized] Phase 2: Generating plots sequentially...")
+                # Generate plots sequentially (can't be done in parallel)
+                plot_number = 1
+                for name, df in self.processed_correlations.items():
+                    if name in fit_results:
+                        f_optimized, optimized_values, residuals_values, peaks = fit_results[name]
 
-                    fig = self._create_regularized_plot(
-                        name, df, decay_times, f_optimized, optimized_values,
-                        residuals_values, peaks, params, plot_number
-                    )
+                        fig = self._create_regularized_plot(
+                            name, df, decay_times, f_optimized, optimized_values,
+                            residuals_values, peaks, params, plot_number
+                        )
 
-                    plots_dict[name] = (fig, {
-                        'f_optimized': f_optimized,
-                        'peaks': peaks,
-                        'num_peaks': len(peaks)
-                    })
+                        plots_dict[name] = (fig, {
+                            'f_optimized': f_optimized,
+                            'peaks': peaks,
+                            'num_peaks': len(peaks)
+                        })
 
-                    if show_plots:
-                        plt.show()
-                    else:
-                        plt.close(fig)
+                        if show_plots:
+                            plt.show()
+                        else:
+                            plt.close(fig)
 
-                    plot_number += 1
+                        plot_number += 1
 
         if not use_multiprocessing or total <= 3:
             # Sequential processing
