@@ -1701,6 +1701,7 @@ print(method_c_results)
                     self.status_manager.update("Performing regularized fits...")
                     self.laplace_analyzer.run_regularized(
                         params,
+                        use_multiprocessing=params.get('use_multiprocessing', False),
                         show_plots=False  # Plots are displayed in Analysis View, not as separate windows
                     )
 

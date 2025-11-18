@@ -467,7 +467,8 @@ class LaplaceAnalyzer:
 
     # ===== REGULARIZED FIT METHODS =====
 
-    def run_regularized(self, params: dict, show_plots: bool = False) -> Tuple[pd.DataFrame, dict]:
+    def run_regularized(self, params: dict, use_multiprocessing: bool = False,
+                       show_plots: bool = False) -> Tuple[pd.DataFrame, dict]:
         """
         Run regularized NNLS analysis
 
@@ -480,6 +481,7 @@ class LaplaceAnalyzer:
                 - normalize: Whether to normalize distribution
                 - sparsity_penalty: L1 penalty factor
                 - enforce_unimodality: Force single peak
+            use_multiprocessing: Use parallel processing
             show_plots: Show plots during processing
 
         Returns:
@@ -494,11 +496,13 @@ class LaplaceAnalyzer:
         print(f"Alpha (regularization): {params.get('alpha', 1.0)}")
         print(f"Peak detection prominence: {params.get('prominence', 0.05)}")
         print(f"Peak detection distance: {params.get('distance', 1)}")
+        print(f"Multiprocessing: {'Enabled' if use_multiprocessing else 'Disabled'}")
         print("="*60)
 
         # Run regularized analysis and collect plots
         self.regularized_results, self.regularized_full_results, self.regularized_plots = self._run_regularized_with_plots(
             params,
+            use_multiprocessing=use_multiprocessing,
             show_plots=show_plots
         )
 
@@ -514,12 +518,14 @@ class LaplaceAnalyzer:
 
         return self.regularized_data, self.regularized_full_results
 
-    def _run_regularized_with_plots(self, params: dict, show_plots: bool = False) -> Tuple[pd.DataFrame, dict, Dict]:
+    def _run_regularized_with_plots(self, params: dict, use_multiprocessing: bool = False,
+                                     show_plots: bool = False) -> Tuple[pd.DataFrame, dict, Dict]:
         """
         Internal method to run regularized NNLS and collect plots
 
         Args:
             params: Regularized NNLS parameters
+            use_multiprocessing: Use parallel processing
             show_plots: Show plots during processing
 
         Returns:
@@ -544,50 +550,127 @@ class LaplaceAnalyzer:
             print("[Regularized] Matrix cache enabled - significant speedup expected")
 
         total = len(self.processed_correlations)
-        plot_number = 1
 
-        for idx, (name, df) in enumerate(self.processed_correlations.items(), 1):
-            print(f"[{idx}/{total}] Fitting {name} (Regularized)...")
+        # Check platform - multiprocessing works better on Linux/Mac than Windows
+        import platform
+        is_windows = platform.system() == 'Windows'
 
-            # Run regularized NNLS fit with optimized function
-            try:
-                results, f_optimized, optimized_values, residuals_values, peaks = regularized_nnls_optimized(
-                    df, name, params, plot_number, T_matrix=T_matrix
-                )
-                all_results.append(results)
+        # Use multiprocessing if requested and we have enough datasets
+        # Disable on Windows due to DLL loading issues with scipy in spawned processes
+        if use_multiprocessing and total > 3 and not is_windows:
+            import multiprocessing as mp
+            from concurrent.futures import ProcessPoolExecutor, as_completed
 
-                # Store distribution for later angle comparison
-                full_results[name] = {
-                    'decay_times': decay_times,
-                    'distribution': f_optimized,
-                    'peaks': peaks
-                }
+            print(f"[Regularized] Using multiprocessing with {mp.cpu_count()} CPU cores")
+            print("[Regularized] Phase 1: Parallel fitting...")
 
-                # Create plot (don't show it)
-                fig = self._create_regularized_plot(
-                    name, df, decay_times, f_optimized, optimized_values,
-                    residuals_values, peaks, params, plot_number
-                )
+            # Store fit results for later plot generation
+            fit_results = {}
 
-                # Store plot
-                plots_dict[name] = (fig, {
-                    'f_optimized': f_optimized,
-                    'peaks': peaks,
-                    'num_peaks': len(peaks)
-                })
+            with ProcessPoolExecutor(max_workers=mp.cpu_count()) as executor:
+                # Submit all jobs
+                futures = {}
+                for name, df in self.processed_correlations.items():
+                    # Note: Can't pass T_matrix to subprocess, so it will be recomputed
+                    # But each worker computes it once and reuses
+                    future = executor.submit(regularized_nnls_optimized, df, name, params, 1, None)
+                    futures[future] = name
 
-                if show_plots:
-                    plt.show()
-                else:
-                    plt.close(fig)
+                # Collect results as they complete
+                completed = 0
+                for future in as_completed(futures):
+                    name = futures[future]
+                    try:
+                        results, f_optimized, optimized_values, residuals_values, peaks = future.result()
+                        all_results.append(results)
+                        fit_results[name] = (f_optimized, optimized_values, residuals_values, peaks)
 
-            except Exception as e:
-                print(f"  Error processing {name}: {e}")
-                import traceback
-                traceback.print_exc()
-                continue
+                        # Store distribution for later angle comparison
+                        full_results[name] = {
+                            'decay_times': decay_times,
+                            'distribution': f_optimized,
+                            'peaks': peaks
+                        }
 
-            plot_number += 1
+                        completed += 1
+                        print(f"[{completed}/{total}] Completed {name} (Regularized)")
+                    except Exception as e:
+                        print(f"[ERROR] Failed to fit {name}: {str(e)}")
+
+            print("[Regularized] Phase 2: Generating plots sequentially...")
+            # Generate plots sequentially (can't be done in parallel)
+            plot_number = 1
+            for name, df in self.processed_correlations.items():
+                if name in fit_results:
+                    f_optimized, optimized_values, residuals_values, peaks = fit_results[name]
+
+                    fig = self._create_regularized_plot(
+                        name, df, decay_times, f_optimized, optimized_values,
+                        residuals_values, peaks, params, plot_number
+                    )
+
+                    plots_dict[name] = (fig, {
+                        'f_optimized': f_optimized,
+                        'peaks': peaks,
+                        'num_peaks': len(peaks)
+                    })
+
+                    if show_plots:
+                        plt.show()
+                    else:
+                        plt.close(fig)
+
+                    plot_number += 1
+        else:
+            # Sequential processing
+            if use_multiprocessing and is_windows:
+                print("[Regularized] Multiprocessing disabled on Windows (scipy DLL issues), using sequential processing")
+            elif use_multiprocessing:
+                print("[Regularized] Too few datasets for multiprocessing, using sequential processing")
+
+            plot_number = 1
+            for idx, (name, df) in enumerate(self.processed_correlations.items(), 1):
+                print(f"[{idx}/{total}] Fitting {name} (Regularized)...")
+
+                # Run regularized NNLS fit with optimized function
+                try:
+                    results, f_optimized, optimized_values, residuals_values, peaks = regularized_nnls_optimized(
+                        df, name, params, plot_number, T_matrix=T_matrix
+                    )
+                    all_results.append(results)
+
+                    # Store distribution for later angle comparison
+                    full_results[name] = {
+                        'decay_times': decay_times,
+                        'distribution': f_optimized,
+                        'peaks': peaks
+                    }
+
+                    # Create plot (don't show it)
+                    fig = self._create_regularized_plot(
+                        name, df, decay_times, f_optimized, optimized_values,
+                        residuals_values, peaks, params, plot_number
+                    )
+
+                    # Store plot
+                    plots_dict[name] = (fig, {
+                        'f_optimized': f_optimized,
+                        'peaks': peaks,
+                        'num_peaks': len(peaks)
+                    })
+
+                    if show_plots:
+                        plt.show()
+                    else:
+                        plt.close(fig)
+
+                except Exception as e:
+                    print(f"  Error processing {name}: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    continue
+
+                plot_number += 1
 
         regularized_df = pd.DataFrame(all_results)
         return regularized_df, full_results, plots_dict

@@ -215,6 +215,11 @@ class RegularizedDialog(QDialog):
         options_group = QGroupBox("Processing Options")
         options_layout = QVBoxLayout()
 
+        self.multiprocessing_check = QCheckBox("Use multiprocessing (faster for large datasets)")
+        self.multiprocessing_check.setChecked(False)
+        self.multiprocessing_check.setToolTip("Enable parallel processing for faster analysis (disabled on Windows)")
+        options_layout.addWidget(self.multiprocessing_check)
+
         self.show_plots_check = QCheckBox("Show individual plots during processing")
         self.show_plots_check.setChecked(True)
         options_layout.addWidget(self.show_plots_check)
@@ -655,6 +660,7 @@ class RegularizedDialog(QDialog):
         self.params['enforce_unimodality'] = self.unimodal_check.isChecked()
 
         # Processing options
+        self.params['use_multiprocessing'] = self.multiprocessing_check.isChecked()
         self.params['show_plots'] = self.show_plots_check.isChecked()
 
     def accept_parameters(self):
