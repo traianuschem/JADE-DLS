@@ -6,6 +6,7 @@ Handles inverse Laplace transform methods for DLS data
 import numpy as np
 import pandas as pd
 from typing import Dict, Optional, Tuple, List
+from matplotlib.figure import Figure
 from regularized_optimized import (
     nnls_all_optimized,
     nnls_preview_random,
@@ -160,7 +161,6 @@ class LaplaceAnalyzer:
             Tuple of (results DataFrame, plots dictionary)
         """
         import matplotlib.pyplot as plt
-        from matplotlib.figure import Figure
 
         all_results = []
         plots_dict = {}
@@ -225,7 +225,6 @@ class LaplaceAnalyzer:
             matplotlib Figure object
         """
         import matplotlib.pyplot as plt
-        from matplotlib.figure import Figure
 
         tau = df['t (s)'].to_numpy()
         D = df['g(2)'].to_numpy()
@@ -481,7 +480,6 @@ class LaplaceAnalyzer:
             Tuple of (results DataFrame, full_results dict, plots dictionary)
         """
         import matplotlib.pyplot as plt
-        from matplotlib.figure import Figure
         from regularized import nnls_reg_simple
 
         all_results = []
@@ -546,7 +544,6 @@ class LaplaceAnalyzer:
         Returns:
             matplotlib Figure object
         """
-        from matplotlib.figure import Figure
 
         tau = df['t (s)'].to_numpy()
         D = df['g(2)'].to_numpy()
