@@ -217,7 +217,7 @@ class RegularizedDialog(QDialog):
 
         self.multiprocessing_check = QCheckBox("Use multiprocessing (faster for large datasets)")
         self.multiprocessing_check.setChecked(False)
-        self.multiprocessing_check.setToolTip("Enable parallel processing for faster analysis (disabled on Windows)")
+        self.multiprocessing_check.setToolTip("Enable parallel processing for faster analysis (uses joblib for cross-platform support)")
         options_layout.addWidget(self.multiprocessing_check)
 
         self.show_plots_check = QCheckBox("Show individual plots during processing")

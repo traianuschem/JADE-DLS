@@ -171,43 +171,42 @@ class LaplaceAnalyzer:
 
         total = len(self.processed_correlations)
 
-        # Check platform - multiprocessing works better on Linux/Mac than Windows
-        import platform
-        is_windows = platform.system() == 'Windows'
-
         # Use multiprocessing if requested and we have enough datasets
-        # Disable on Windows due to DLL loading issues with scipy in spawned processes
-        if use_multiprocessing and total > 3 and not is_windows:
-            import multiprocessing as mp
-            from concurrent.futures import ProcessPoolExecutor, as_completed
+        if use_multiprocessing and total > 3:
+            try:
+                from joblib import Parallel, delayed
+                import multiprocessing as mp
 
-            print(f"[NNLS] Using multiprocessing with {mp.cpu_count()} CPU cores")
-            print("[NNLS] Phase 1: Parallel fitting...")
+                n_jobs = mp.cpu_count()
+                print(f"[NNLS] Using parallel processing with {n_jobs} CPU cores (joblib backend)")
+                print("[NNLS] Phase 1: Parallel fitting...")
 
-            # Store fit results for later plot generation
-            fit_results = {}
+                # Store fit results for later plot generation
+                fit_results = {}
 
-            with ProcessPoolExecutor(max_workers=mp.cpu_count()) as executor:
-                # Submit all jobs
-                futures = {}
-                for name, df in self.processed_correlations.items():
-                    # Note: Can't pass T_matrix to subprocess, so it will be recomputed
-                    # But each worker computes it once and reuses
-                    future = executor.submit(nnls_optimized, df, name, params, 1, None)
-                    futures[future] = name
+                # Prepare data for parallel processing
+                tasks = [(name, df, params, 1, None) for name, df in self.processed_correlations.items()]
 
-                # Collect results as they complete
-                completed = 0
-                for future in as_completed(futures):
-                    name = futures[future]
-                    try:
-                        results, f_optimized, optimized_values, residuals_values, peaks = future.result()
-                        all_results.append(results)
-                        fit_results[name] = (f_optimized, optimized_values, residuals_values, peaks)
-                        completed += 1
-                        print(f"[{completed}/{total}] Completed {name}")
-                    except Exception as e:
-                        print(f"[ERROR] Failed to fit {name}: {str(e)}")
+                # Process in parallel using joblib (better Windows support than multiprocessing)
+                # Use 'loky' backend which is more robust for scipy/numpy operations
+                results_list = Parallel(n_jobs=n_jobs, backend='loky', verbose=10)(
+                    delayed(nnls_optimized)(df, name, params, 1, None)
+                    for name, df in self.processed_correlations.items()
+                )
+
+                # Collect results
+                for idx, (name, df) in enumerate(self.processed_correlations.items()):
+                    results, f_optimized, optimized_values, residuals_values, peaks = results_list[idx]
+                    all_results.append(results)
+                    fit_results[name] = (f_optimized, optimized_values, residuals_values, peaks)
+                    print(f"[{idx+1}/{total}] Completed {name}")
+
+            except ImportError:
+                print("[NNLS] Warning: joblib not available, falling back to sequential processing")
+                use_multiprocessing = False
+            except Exception as e:
+                print(f"[NNLS] Warning: Parallel processing failed ({str(e)}), using sequential processing")
+                use_multiprocessing = False
 
             print("[NNLS] Phase 2: Generating plots sequentially...")
             # Generate plots sequentially (can't be done in parallel)
@@ -233,11 +232,10 @@ class LaplaceAnalyzer:
                         plt.close(fig)
 
                     plot_number += 1
-        else:
+
+        if not use_multiprocessing or total <= 3:
             # Sequential processing
-            if use_multiprocessing and is_windows:
-                print("[NNLS] Multiprocessing disabled on Windows (scipy DLL issues), using sequential processing")
-            elif use_multiprocessing:
+            if use_multiprocessing and total <= 3:
                 print("[NNLS] Too few datasets for multiprocessing, using sequential processing")
 
             plot_number = 1
@@ -383,7 +381,8 @@ class LaplaceAnalyzer:
             data_df=self.nnls_data,
             q_squared_col='q^2',
             gamma_cols=gamma_columns,
-            x_range=x_range
+            x_range=x_range,
+            show_plots=False  # Don't show plots - they're displayed in GUI
         )
 
         # Create summary plot (Gamma vs q²)
@@ -551,51 +550,47 @@ class LaplaceAnalyzer:
 
         total = len(self.processed_correlations)
 
-        # Check platform - multiprocessing works better on Linux/Mac than Windows
-        import platform
-        is_windows = platform.system() == 'Windows'
-
         # Use multiprocessing if requested and we have enough datasets
-        # Disable on Windows due to DLL loading issues with scipy in spawned processes
-        if use_multiprocessing and total > 3 and not is_windows:
-            import multiprocessing as mp
-            from concurrent.futures import ProcessPoolExecutor, as_completed
+        if use_multiprocessing and total > 3:
+            try:
+                from joblib import Parallel, delayed
+                import multiprocessing as mp
 
-            print(f"[Regularized] Using multiprocessing with {mp.cpu_count()} CPU cores")
-            print("[Regularized] Phase 1: Parallel fitting...")
+                n_jobs = mp.cpu_count()
+                print(f"[Regularized] Using parallel processing with {n_jobs} CPU cores (joblib backend)")
+                print("[Regularized] Phase 1: Parallel fitting...")
 
-            # Store fit results for later plot generation
-            fit_results = {}
+                # Store fit results for later plot generation
+                fit_results = {}
 
-            with ProcessPoolExecutor(max_workers=mp.cpu_count()) as executor:
-                # Submit all jobs
-                futures = {}
-                for name, df in self.processed_correlations.items():
-                    # Note: Can't pass T_matrix to subprocess, so it will be recomputed
-                    # But each worker computes it once and reuses
-                    future = executor.submit(regularized_nnls_optimized, df, name, params, 1, None)
-                    futures[future] = name
+                # Process in parallel using joblib (better Windows support than multiprocessing)
+                # Use 'loky' backend which is more robust for scipy/numpy operations
+                results_list = Parallel(n_jobs=n_jobs, backend='loky', verbose=10)(
+                    delayed(regularized_nnls_optimized)(df, name, params, 1, None)
+                    for name, df in self.processed_correlations.items()
+                )
 
-                # Collect results as they complete
-                completed = 0
-                for future in as_completed(futures):
-                    name = futures[future]
-                    try:
-                        results, f_optimized, optimized_values, residuals_values, peaks = future.result()
-                        all_results.append(results)
-                        fit_results[name] = (f_optimized, optimized_values, residuals_values, peaks)
+                # Collect results
+                for idx, (name, df) in enumerate(self.processed_correlations.items()):
+                    results, f_optimized, optimized_values, residuals_values, peaks = results_list[idx]
+                    all_results.append(results)
+                    fit_results[name] = (f_optimized, optimized_values, residuals_values, peaks)
 
-                        # Store distribution for later angle comparison
-                        full_results[name] = {
-                            'decay_times': decay_times,
-                            'distribution': f_optimized,
-                            'peaks': peaks
-                        }
+                    # Store distribution for later angle comparison
+                    full_results[name] = {
+                        'decay_times': decay_times,
+                        'distribution': f_optimized,
+                        'peaks': peaks
+                    }
 
-                        completed += 1
-                        print(f"[{completed}/{total}] Completed {name} (Regularized)")
-                    except Exception as e:
-                        print(f"[ERROR] Failed to fit {name}: {str(e)}")
+                    print(f"[{idx+1}/{total}] Completed {name} (Regularized)")
+
+            except ImportError:
+                print("[Regularized] Warning: joblib not available, falling back to sequential processing")
+                use_multiprocessing = False
+            except Exception as e:
+                print(f"[Regularized] Warning: Parallel processing failed ({str(e)}), using sequential processing")
+                use_multiprocessing = False
 
             print("[Regularized] Phase 2: Generating plots sequentially...")
             # Generate plots sequentially (can't be done in parallel)
@@ -621,11 +616,10 @@ class LaplaceAnalyzer:
                         plt.close(fig)
 
                     plot_number += 1
-        else:
+
+        if not use_multiprocessing or total <= 3:
             # Sequential processing
-            if use_multiprocessing and is_windows:
-                print("[Regularized] Multiprocessing disabled on Windows (scipy DLL issues), using sequential processing")
-            elif use_multiprocessing:
+            if use_multiprocessing and total <= 3:
                 print("[Regularized] Too few datasets for multiprocessing, using sequential processing")
 
             plot_number = 1
@@ -787,7 +781,8 @@ class LaplaceAnalyzer:
             data_df=self.regularized_data,
             q_squared_col='q^2',
             gamma_cols=gamma_columns,
-            x_range=x_range
+            x_range=x_range,
+            show_plots=False  # Don't show plots - they're displayed in GUI
         )
 
         # Create summary plot (Gamma vs q²)

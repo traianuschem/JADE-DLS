@@ -110,8 +110,14 @@ def nnls_optimized(df: pd.DataFrame, name: str, nnls_params: dict,
     optimized_values = (T @ f_optimized)**2
     residuals_values = optimized_values - D
 
+    # Calculate RMSE
+    rmse = np.sqrt(np.mean(residuals_values**2))
+
     # Find peaks in the tau distribution
     peaks, _ = find_peaks(f_optimized, prominence=prominence, distance=distance)
+
+    # Log fit details
+    print(f"    └─ NNLS residual norm: {rnorm:.4e}, RMSE: {rmse:.4e}, Peaks found: {len(peaks)}")
 
     # Get peak amplitudes/intensities
     peak_amplitudes = f_optimized[peaks]
@@ -323,8 +329,15 @@ def regularized_nnls_optimized(df: pd.DataFrame, name: str, params: dict,
     optimized_values = (T @ f_optimized)**2
     residuals_values = optimized_values - D
 
+    # Calculate RMSE
+    rmse = np.sqrt(np.mean(residuals_values**2))
+
     # Find peaks
     peaks, _ = find_peaks(f_optimized, prominence=prominence, distance=distance, width=0)
+
+    # Log convergence details
+    print(f"    └─ Fit: {result.status} (message: {result.message[:50]}...)")
+    print(f"    └─ Iterations: {result.nfev}, RMSE: {rmse:.4e}, Peaks found: {len(peaks)}")
 
     # Prepare results for this dataframe
     results = {'filename': name}
