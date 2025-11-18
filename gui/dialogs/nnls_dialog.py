@@ -452,7 +452,7 @@ class NNLSDialog(QDialog):
                 new_ax.set_title(ax.get_title())
                 new_ax.set_xscale(ax.get_xscale())
                 new_ax.set_yscale(ax.get_yscale())
-                new_ax.grid(ax.xaxis._gridOnMajor, which='both', alpha=0.3)
+                new_ax.grid(True, which='both', alpha=0.3)
                 if ax.get_legend():
                     new_ax.legend(fontsize=8)
 
