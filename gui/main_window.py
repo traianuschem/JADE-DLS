@@ -1558,8 +1558,9 @@ print(method_c_results)
         print(self.laplace_analyzer.nnls_final_results.to_string())
         print("="*60 + "\n")
 
-        # Clear previous results
-        self.analysis_view.clear_results()
+        # Don't clear previous results - append instead
+        # This allows combining Cumulant and Laplace results
+        # self.analysis_view.clear_results()  # Removed to allow appending results
 
         # Prepare plots dictionary
         plots_dict = {}

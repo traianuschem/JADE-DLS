@@ -1636,13 +1636,18 @@ class AnalysisView(QWidget):
         """
         Open refinement dialog for NNLS/Regularized NNLS
 
-        Allows removal of outlier peaks and recomputation of diffusion coefficients with q² range adjustment
+        Provides graphical refinement with:
+        - Interactive Γ vs q² plot for range selection
+        - Distribution plot inspection and exclusion
         """
-        from PyQt5.QtWidgets import QMessageBox, QInputDialog, QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QGroupBox
+        from PyQt5.QtWidgets import QMessageBox, QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox
+        from gui.dialogs.laplace_postfit_dialog import LaplacePostFitRefinementDialog
 
-        # Determine which type of NNLS results we have
-        has_nnls = hasattr(self.laplace_analyzer, 'nnls_results') and self.laplace_analyzer.nnls_results is not None
-        has_regularized = hasattr(self.laplace_analyzer, 'regularized_results') and self.laplace_analyzer.regularized_results is not None
+        # Determine which type of Laplace results we have
+        has_nnls = (hasattr(self.laplace_analyzer, 'nnls_final_results') and
+                    self.laplace_analyzer.nnls_final_results is not None)
+        has_regularized = (hasattr(self.laplace_analyzer, 'regularized_final_results') and
+                          self.laplace_analyzer.regularized_final_results is not None)
 
         if not has_nnls and not has_regularized:
             QMessageBox.warning(
@@ -1654,18 +1659,20 @@ class AnalysisView(QWidget):
             return
 
         # If both methods have results, ask user which one to refine
-        refine_nnls = has_nnls  # Default to NNLS if available
+        method_name = "NNLS"  # Default to NNLS if available
         if has_nnls and has_regularized:
-            from PyQt5.QtWidgets import QComboBox
             choice_dialog = QDialog(self)
             choice_dialog.setWindowTitle("Select Method to Refine")
             choice_layout = QVBoxLayout()
 
-            choice_layout.addWidget(QLabel("Both NNLS and Regularized NNLS results are available.\nWhich method would you like to refine?"))
+            choice_layout.addWidget(QLabel(
+                "Both NNLS and Regularized NNLS results are available.\n"
+                "Which method would you like to refine?"
+            ))
 
             method_combo = QComboBox()
             method_combo.addItem("NNLS")
-            method_combo.addItem("Regularized NNLS")
+            method_combo.addItem("Regularized")
             choice_layout.addWidget(method_combo)
 
             button_layout = QHBoxLayout()
@@ -1682,136 +1689,23 @@ class AnalysisView(QWidget):
             if choice_dialog.exec_() != QDialog.Accepted:
                 return
 
-            refine_nnls = (method_combo.currentText() == "NNLS")
+            method_name = method_combo.currentText()
+        elif has_regularized and not has_nnls:
+            method_name = "Regularized"
 
-        # Set method name and data based on selection
-        method_name = "NNLS" if refine_nnls else "Regularized NNLS"
-        results_df = self.laplace_analyzer.nnls_results if refine_nnls else self.laplace_analyzer.regularized_results
+        # Open the refinement dialog
+        dialog = LaplacePostFitRefinementDialog(self.laplace_analyzer, method_name, self)
 
-        # Get current q² range
-        if refine_nnls and hasattr(self.laplace_analyzer, 'nnls_data') and self.laplace_analyzer.nnls_data is not None:
-            data_df = self.laplace_analyzer.nnls_data
-        elif not refine_nnls and hasattr(self.laplace_analyzer, 'regularized_data') and self.laplace_analyzer.regularized_data is not None:
-            data_df = self.laplace_analyzer.regularized_data
-        else:
-            data_df = None
-
-        q_min, q_max = None, None
-        if data_df is not None and 'q^2' in data_df.columns:
-            q_min = data_df['q^2'].min()
-            q_max = data_df['q^2'].max()
-
-        # Create custom dialog
-        dialog = QDialog(self)
-        dialog.setWindowTitle(f"{method_name} Post-Fit Refinement")
-        dialog.setMinimumWidth(500)
-        layout = QVBoxLayout()
-
-        # Info label
-        info_label = QLabel(
-            f"<b>{method_name} Post-Fit Refinement</b><br><br>"
-            f"Total datasets: {len(results_df)}<br><br>"
-            "Refine your analysis by:"
-        )
-        info_label.setWordWrap(True)
-        layout.addWidget(info_label)
-
-        # Outlier removal group
-        outlier_group = QGroupBox("1. Remove Outlier Datasets")
-        outlier_layout = QVBoxLayout()
-        outlier_layout.addWidget(QLabel("Enter row indices to remove (comma-separated, e.g., 1,3,5):"))
-        outlier_input = QLineEdit()
-        outlier_input.setPlaceholderText("Leave empty to keep all")
-        outlier_layout.addWidget(outlier_input)
-        outlier_group.setLayout(outlier_layout)
-        layout.addWidget(outlier_group)
-
-        # Q² range group
-        q_group = QGroupBox("2. Adjust q² Range for Diffusion Coefficient Analysis")
-        q_layout = QVBoxLayout()
-
-        if q_min is not None and q_max is not None:
-            q_layout.addWidget(QLabel(f"Current full range: q² = {q_min:.4f} to {q_max:.4f} nm⁻²"))
-            q_layout.addWidget(QLabel("Enter new range (leave empty to use full range):"))
-
-            q_range_layout = QHBoxLayout()
-            q_range_layout.addWidget(QLabel("Min:"))
-            q_min_input = QLineEdit()
-            q_min_input.setPlaceholderText(f"{q_min:.4f}")
-            q_range_layout.addWidget(q_min_input)
-
-            q_range_layout.addWidget(QLabel("Max:"))
-            q_max_input = QLineEdit()
-            q_max_input.setPlaceholderText(f"{q_max:.4f}")
-            q_range_layout.addWidget(q_max_input)
-
-            q_layout.addLayout(q_range_layout)
-        else:
-            q_layout.addWidget(QLabel("Q² range adjustment not available (no data loaded)"))
-            q_min_input = None
-            q_max_input = None
-
-        q_group.setLayout(q_layout)
-        layout.addWidget(q_group)
-
-        # Buttons
-        button_layout = QHBoxLayout()
-        ok_btn = QPushButton("Apply")
-        ok_btn.setDefault(True)
-        cancel_btn = QPushButton("Cancel")
-
-        ok_btn.clicked.connect(dialog.accept)
-        cancel_btn.clicked.connect(dialog.reject)
-
-        button_layout.addStretch()
-        button_layout.addWidget(cancel_btn)
-        button_layout.addWidget(ok_btn)
-        layout.addLayout(button_layout)
-
-        dialog.setLayout(layout)
-
-        # Show dialog
         if dialog.exec_() != QDialog.Accepted:
             return
 
-        # Get user inputs
-        outlier_text = outlier_input.text().strip()
-
-        # Parse q² range
-        q_range = None
-        if q_min_input is not None and q_max_input is not None:
-            q_min_text = q_min_input.text().strip()
-            q_max_text = q_max_input.text().strip()
-
-            if q_min_text or q_max_text:
-                try:
-                    new_q_min = float(q_min_text) if q_min_text else q_min
-                    new_q_max = float(q_max_text) if q_max_text else q_max
-                    q_range = (new_q_min, new_q_max)
-                except ValueError:
-                    QMessageBox.warning(
-                        self,
-                        "Invalid Q² Range",
-                        "Please enter valid numbers for q² range."
-                    )
-                    return
+        # Get refinement parameters
+        params = dialog.get_refinement_params()
+        q_range = params['q_range']
+        excluded_files = params['excluded_files']
 
         # Check if any changes were made
-        indices_to_remove = []
-        if outlier_text:
-            try:
-                indices_str = outlier_text.split(',')
-                indices_to_remove = [int(idx.strip()) for idx in indices_str if idx.strip()]
-            except ValueError as e:
-                QMessageBox.warning(
-                    self,
-                    "Invalid Input",
-                    f"Invalid indices format: {str(e)}\n\n"
-                    "Please enter comma-separated numbers (e.g., 1,3,5)"
-                )
-                return
-
-        if not indices_to_remove and q_range is None:
+        if q_range is None and not excluded_files:
             QMessageBox.information(
                 self,
                 "No Changes",
@@ -1824,22 +1718,34 @@ class AnalysisView(QWidget):
         print(f"{method_name.upper()} POST-FIT REFINEMENT")
         print("="*60)
 
-        if indices_to_remove:
-            print(f"Removing {len(indices_to_remove)} outlier(s): {indices_to_remove}")
+        if excluded_files:
+            print(f"Excluding {len(excluded_files)} distribution(s): {excluded_files}")
 
         if q_range:
             print(f"Applying q² range: {q_range[0]:.4f} to {q_range[1]:.4f} nm⁻²")
 
         try:
-            # Remove outliers if specified
-            if indices_to_remove:
-                if refine_nnls:
-                    self.laplace_analyzer.remove_nnls_outliers(indices_to_remove)
-                else:
-                    self.laplace_analyzer.remove_regularized_outliers(indices_to_remove)
+            is_nnls = (method_name == "NNLS")
+
+            # Filter data by excluded files if specified
+            if excluded_files:
+                if is_nnls and hasattr(self.laplace_analyzer, 'nnls_data'):
+                    # Remove rows where filename is in excluded_files
+                    self.laplace_analyzer.nnls_data = self.laplace_analyzer.nnls_data[
+                        ~self.laplace_analyzer.nnls_data['filename'].isin(excluded_files)
+                    ].reset_index(drop=True)
+                    self.laplace_analyzer.nnls_data.index = self.laplace_analyzer.nnls_data.index + 1
+                    print(f"  Removed {len(excluded_files)} datasets, {len(self.laplace_analyzer.nnls_data)} remaining")
+
+                elif not is_nnls and hasattr(self.laplace_analyzer, 'regularized_data'):
+                    self.laplace_analyzer.regularized_data = self.laplace_analyzer.regularized_data[
+                        ~self.laplace_analyzer.regularized_data['filename'].isin(excluded_files)
+                    ].reset_index(drop=True)
+                    self.laplace_analyzer.regularized_data.index = self.laplace_analyzer.regularized_data.index + 1
+                    print(f"  Removed {len(excluded_files)} datasets, {len(self.laplace_analyzer.regularized_data)} remaining")
 
             # Recalculate diffusion coefficients with new q² range
-            if refine_nnls:
+            if is_nnls:
                 self.laplace_analyzer.calculate_nnls_diffusion_coefficients(x_range=q_range)
                 self.laplace_analyzer._calculate_nnls_final_results()
 
@@ -1868,8 +1774,8 @@ class AnalysisView(QWidget):
             print("="*60 + "\n")
 
             success_msg = f"Successfully refined {method_name} results.\n\n"
-            if indices_to_remove:
-                success_msg += f"Removed {len(indices_to_remove)} outlier(s).\n"
+            if excluded_files:
+                success_msg += f"Excluded {len(excluded_files)} distribution(s).\n"
             if q_range:
                 success_msg += f"Applied q² range: {q_range[0]:.4f} to {q_range[1]:.4f} nm⁻².\n"
             success_msg += "\nDiffusion coefficients have been recalculated."

@@ -184,13 +184,11 @@ class LaplaceAnalyzer:
                 print(f"[NNLS] Using parallel processing with {n_jobs} CPU cores (joblib backend)")
                 print("[NNLS] Phase 1: Parallel fitting...")
 
-                # Prepare data for parallel processing
-                tasks = [(name, df, params, 1, None) for name, df in self.processed_correlations.items()]
-
                 # Process in parallel using joblib (better Windows support than multiprocessing)
                 # Use 'loky' backend which is more robust for scipy/numpy operations
-                results_list = Parallel(n_jobs=n_jobs, backend='loky', verbose=10)(
-                    delayed(nnls_optimized)(df, name, params, 1, None)
+                # Pass T_matrix to each worker to avoid recomputation
+                results_list = Parallel(n_jobs=n_jobs, backend='loky', verbose=5)(
+                    delayed(nnls_optimized)(df, name, params, 1, T_matrix)
                     for name, df in self.processed_correlations.items()
                 )
 
@@ -569,8 +567,9 @@ class LaplaceAnalyzer:
 
                 # Process in parallel using joblib (better Windows support than multiprocessing)
                 # Use 'loky' backend which is more robust for scipy/numpy operations
-                results_list = Parallel(n_jobs=n_jobs, backend='loky', verbose=10)(
-                    delayed(regularized_nnls_optimized)(df, name, params, 1, None)
+                # Pass T_matrix to each worker to avoid recomputation
+                results_list = Parallel(n_jobs=n_jobs, backend='loky', verbose=5)(
+                    delayed(regularized_nnls_optimized)(df, name, params, 1, T_matrix)
                     for name, df in self.processed_correlations.items()
                 )
 
@@ -682,73 +681,56 @@ class LaplaceAnalyzer:
                                 residuals_values: np.ndarray, peaks: np.ndarray,
                                 params: dict, plot_number: int) -> Figure:
         """
-        Create Regularized NNLS result plot
+        Create Regularized NNLS result plot - shows only the distribution
+        (matching NNLS display style)
 
         Returns:
             matplotlib Figure object
         """
-
-        tau = df['t (s)'].to_numpy()
-        D = df['g(2)'].to_numpy()
+        import matplotlib.pyplot as plt
 
         peak_amplitudes = f_optimized[peaks]
         normalized_amplitudes_sum = peak_amplitudes / np.sum(peak_amplitudes) if len(peak_amplitudes) > 0 else np.array([])
 
-        fig = Figure(figsize=(18, 6))
-        axes = fig.subplots(1, 3)
-        ax1, ax2, ax3 = axes
+        # Create single plot focused on distribution (like NNLS)
+        fig = Figure(figsize=(10, 6))
+        ax = fig.add_subplot(111)
 
         alpha_val = params.get('alpha', 1.0)
-        fig.suptitle(f'[{plot_number}]: Regularized NNLS (α={alpha_val:.2f}) - {name}',
-                    fontsize=16, fontweight='bold')
+        fig.suptitle(f'Regularized NNLS Analysis (α={alpha_val:.2f}) - {name}', fontsize=14, fontweight='bold')
 
-        # First subplot: Data and optimized function
-        ax1.semilogx(tau, D, 'ro', label='Data (g²-1)', markersize=4)
-        ax1.semilogx(tau, optimized_values, 'g-', label='Regularized Fit', linewidth=2)
-        ax1.set_xlabel('Lag time [s]', fontsize=12)
-        ax1.set_ylabel('g(2)-1', fontsize=12)
-        ax1.set_title('Correlation Function Fit', fontsize=13)
-        ax1.legend()
-        ax1.grid(True, alpha=0.3)
-
-        # Second subplot: Tau distribution
-        ax2.semilogx(decay_times, f_optimized, 'bo-', label='Intensity Distribution', markersize=3)
-        ax2.set_xlabel('Decay Time τ [s]', fontsize=12)
-        ax2.set_ylabel('Intensity f(τ)', fontsize=12)
-        ax2.set_title(f'Decay Time Distribution ({len(peaks)} peaks)', fontsize=13)
-        ax2.legend()
-        ax2.grid(True, which="both", ls="--", alpha=0.3)
+        # Plot tau distribution
+        ax.semilogx(decay_times, f_optimized, 'b-', linewidth=2.5, label='Intensity Distribution')
+        ax.fill_between(decay_times, 0, f_optimized, alpha=0.3, color='blue')
+        ax.set_xlabel('Decay Time τ [s]', fontsize=12, fontweight='bold')
+        ax.set_ylabel('Intensity f(τ)', fontsize=12, fontweight='bold')
+        ax.set_title(f'Decay Time Distribution ({len(peaks)} peaks detected)', fontsize=12)
+        ax.grid(True, which="both", ls="--", alpha=0.3)
 
         # Mark peaks
         if len(peaks) > 0:
-            ax2.plot(decay_times[peaks], f_optimized[peaks], 'rx', markersize=10,
-                    label=f'Detected Peaks (n={len(peaks)})')
+            ax.plot(decay_times[peaks], f_optimized[peaks], 'r*', markersize=15,
+                    label=f'Detected Peaks', markeredgecolor='darkred', markeredgewidth=1.5)
 
-            # Annotate peaks
+            # Annotate peaks with percentage and tau value
             for i, peak_idx in enumerate(peaks):
                 percentage = normalized_amplitudes_sum[i] * 100
-                ax2.annotate(f'{percentage:.1f}%\nτ={decay_times[peak_idx]:.2e}s',
+                ax.annotate(f'{percentage:.1f}%\nτ={decay_times[peak_idx]:.2e}s',
                             xy=(decay_times[peak_idx], f_optimized[peak_idx]),
                             xytext=(10, 10), textcoords='offset points',
-                            fontsize=9, bbox=dict(boxstyle="round,pad=0.3",
-                                                 fc="yellow", alpha=0.7),
-                            arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=0'))
-            ax2.legend()
+                            fontsize=9, bbox=dict(boxstyle="round,pad=0.4",
+                                                 fc="yellow", ec="orange", alpha=0.8),
+                            arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=0.2',
+                                          lw=1.5, color='darkred'))
 
-        # Third subplot: Residuals
-        ax3.plot(tau, residuals_values, 'b-', alpha=0.7, linewidth=1.5)
-        ax3.set_xlabel('Lag time [s]', fontsize=12)
-        ax3.set_ylabel('Residual', fontsize=12)
-        ax3.set_title('Fit Residuals', fontsize=13)
-        ax3.axhline(0, color='r', linestyle='--', linewidth=2)
-        ax3.grid(True, alpha=0.3)
-
-        # Calculate RMSE
+        # Add quality metrics
         rmse = np.sqrt(np.mean(residuals_values**2))
-        ax3.text(0.02, 0.98, f'RMSE: {rmse:.4e}\nα={alpha_val:.2f}',
-                transform=ax3.transAxes, verticalalignment='top',
-                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+        ax.text(0.98, 0.98, f'RMSE: {rmse:.4e}\nα={alpha_val:.2f}',
+                transform=ax.transAxes, verticalalignment='top', horizontalalignment='right',
+                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.7, edgecolor='orange'),
+                fontsize=10)
 
+        ax.legend(loc='best', fontsize=10)
         fig.tight_layout()
         return fig
 
