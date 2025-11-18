@@ -1526,7 +1526,7 @@ print(method_c_results)
                     self._display_nnls_results()
 
                 except Exception as e:
-                    self.status_manager.fail_operation(f"NNLS analysis failed: {str(e)}")
+                    self.status_manager.error(f"NNLS analysis failed: {str(e)}")
                     QMessageBox.critical(
                         self,
                         "NNLS Analysis Failed",
@@ -1718,7 +1718,7 @@ print(method_c_results)
                     self._display_regularized_results()
 
                 except Exception as e:
-                    self.status_manager.fail_operation(f"Regularized analysis failed: {str(e)}")
+                    self.status_manager.error(f"Regularized analysis failed: {str(e)}")
                     QMessageBox.critical(
                         self,
                         "Regularized Analysis Failed",

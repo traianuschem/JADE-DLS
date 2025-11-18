@@ -431,10 +431,20 @@ class NNLSDialog(QDialog):
 
                 # Copy annotations
                 for text in ax.texts:
+                    # Properly copy bbox properties as a dictionary
+                    bbox_dict = None
+                    if text.get_bbox_patch():
+                        bbox_patch = text.get_bbox_patch()
+                        bbox_dict = dict(
+                            boxstyle='round,pad=0.3',
+                            facecolor=bbox_patch.get_facecolor(),
+                            alpha=bbox_patch.get_alpha() or 0.7
+                        )
+
                     new_ax.text(text.get_position()[0], text.get_position()[1],
                                text.get_text(),
                                fontsize=text.get_fontsize(),
-                               bbox=text.get_bbox_patch().get_boxstyle() if text.get_bbox_patch() else None)
+                               bbox=bbox_dict)
 
                 # Copy properties
                 new_ax.set_xlabel(ax.get_xlabel())
