@@ -178,10 +178,10 @@ class AlphaAnalysisDialog(QDialog):
         layout.addWidget(self.show_peaks_check)
 
         # Two-stage optimization option
-        self.two_stage_check = QCheckBox("Use two-stage optimization (faster & more accurate)")
+        self.two_stage_check = QCheckBox("Use two-stage optimization (more accurate)")
         self.two_stage_check.setChecked(True)
         self.two_stage_check.setToolTip(
-            "Stage 1: Coarse search with few alpha values (faster)\n"
+            "Stage 1: Coarse search with few alpha values\n"
             "Stage 2: Fine search around best alpha from Stage 1 (more accurate)"
         )
         layout.addWidget(self.two_stage_check)
