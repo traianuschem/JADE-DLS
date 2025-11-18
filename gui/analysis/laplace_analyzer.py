@@ -7,17 +7,9 @@ import numpy as np
 import pandas as pd
 from typing import Dict, Optional, Tuple, List
 from matplotlib.figure import Figure
-from regularized_optimized import (
-    nnls_all_optimized,
-    nnls_preview_random,
-    calculate_decay_rates
-)
-from regularized import (
-    nnls_reg_all,
-    plot_distributions,
-    tau_to_hydrodynamic_radius
-)
-from cumulants import analyze_diffusion_coefficient
+
+# Lazy imports to avoid Windows multiprocessing issues
+# These modules will be imported inside functions as needed
 
 
 class LaplaceAnalyzer:
@@ -179,8 +171,13 @@ class LaplaceAnalyzer:
 
         total = len(self.processed_correlations)
 
+        # Check platform - multiprocessing works better on Linux/Mac than Windows
+        import platform
+        is_windows = platform.system() == 'Windows'
+
         # Use multiprocessing if requested and we have enough datasets
-        if use_multiprocessing and total > 3:
+        # Disable on Windows due to DLL loading issues with scipy in spawned processes
+        if use_multiprocessing and total > 3 and not is_windows:
             import multiprocessing as mp
             from concurrent.futures import ProcessPoolExecutor, as_completed
 
@@ -238,7 +235,9 @@ class LaplaceAnalyzer:
                     plot_number += 1
         else:
             # Sequential processing
-            if use_multiprocessing:
+            if use_multiprocessing and is_windows:
+                print("[NNLS] Multiprocessing disabled on Windows (scipy DLL issues), using sequential processing")
+            elif use_multiprocessing:
                 print("[NNLS] Too few datasets for multiprocessing, using sequential processing")
 
             plot_number = 1
@@ -343,6 +342,7 @@ class LaplaceAnalyzer:
         Returns:
             Tuple of (matplotlib Figure, list of selected dataset names)
         """
+        from regularized_optimized import nnls_preview_random
         return nnls_preview_random(self.processed_correlations, params,
                                   num_datasets=num_datasets, seed=seed)
 
@@ -367,6 +367,10 @@ class LaplaceAnalyzer:
             tau_columns = [col for col in self.nnls_data.columns if col.startswith('tau_')]
 
         print(f"\n[NNLS] Calculating diffusion coefficients for {len(tau_columns)} peaks...")
+
+        # Lazy imports
+        from regularized_optimized import calculate_decay_rates
+        from cumulants import analyze_diffusion_coefficient
 
         # Calculate gamma from tau
         self.nnls_data = calculate_decay_rates(self.nnls_data, tau_columns)
@@ -684,6 +688,10 @@ class LaplaceAnalyzer:
             tau_columns = [col for col in self.regularized_data.columns if col.startswith('tau_')]
 
         print(f"\n[Regularized] Calculating diffusion coefficients for {len(tau_columns)} peaks...")
+
+        # Lazy imports
+        from regularized_optimized import calculate_decay_rates
+        from cumulants import analyze_diffusion_coefficient
 
         # Calculate gamma from tau
         self.regularized_data = calculate_decay_rates(self.regularized_data, tau_columns)
