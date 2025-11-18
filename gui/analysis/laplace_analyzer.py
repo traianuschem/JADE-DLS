@@ -161,12 +161,11 @@ class LaplaceAnalyzer:
             Tuple of (results DataFrame, plots dictionary)
         """
         import matplotlib.pyplot as plt
+        from regularized_optimized import nnls_optimized, create_exponential_matrix
 
         all_results = []
         plots_dict = {}
         decay_times = params['decay_times']
-        prominence = params.get('prominence', 0.05)
-        distance = params.get('distance', 1)
 
         # Pre-compute T matrix once if all datasets have same time points
         tau_arrays = [df['t (s)'].to_numpy() for df in self.processed_correlations.values()]
@@ -175,41 +174,102 @@ class LaplaceAnalyzer:
         T_matrix = None
         if all_same_tau:
             print("[NNLS] All datasets have identical time points - using cached matrix")
-            from regularized_optimized import create_exponential_matrix
             T_matrix = create_exponential_matrix(tau_arrays[0], decay_times)
+            print("[NNLS] Matrix cache enabled - significant speedup expected")
 
         total = len(self.processed_correlations)
-        plot_number = 1
 
-        for idx, (name, df) in enumerate(self.processed_correlations.items(), 1):
-            print(f"[{idx}/{total}] Fitting {name}...")
+        # Use multiprocessing if requested and we have enough datasets
+        if use_multiprocessing and total > 3:
+            import multiprocessing as mp
+            from concurrent.futures import ProcessPoolExecutor, as_completed
 
-            # Run NNLS fit
-            from regularized_optimized import nnls_optimized
-            results, f_optimized, optimized_values, residuals_values, peaks = nnls_optimized(
-                df, name, params, plot_number, T_matrix=T_matrix
-            )
-            all_results.append(results)
+            print(f"[NNLS] Using multiprocessing with {mp.cpu_count()} CPU cores")
+            print("[NNLS] Phase 1: Parallel fitting...")
 
-            # Create plot (don't show it)
-            fig = self._create_nnls_plot(
-                name, df, decay_times, f_optimized, optimized_values,
-                residuals_values, peaks, params, plot_number
-            )
+            # Store fit results for later plot generation
+            fit_results = {}
 
-            # Store plot
-            plots_dict[name] = (fig, {
-                'f_optimized': f_optimized,
-                'peaks': peaks,
-                'num_peaks': len(peaks)
-            })
+            with ProcessPoolExecutor(max_workers=mp.cpu_count()) as executor:
+                # Submit all jobs
+                futures = {}
+                for name, df in self.processed_correlations.items():
+                    # Note: Can't pass T_matrix to subprocess, so it will be recomputed
+                    # But each worker computes it once and reuses
+                    future = executor.submit(nnls_optimized, df, name, params, 1, None)
+                    futures[future] = name
 
-            if show_plots:
-                plt.show()
-            else:
-                plt.close(fig)
+                # Collect results as they complete
+                completed = 0
+                for future in as_completed(futures):
+                    name = futures[future]
+                    try:
+                        results, f_optimized, optimized_values, residuals_values, peaks = future.result()
+                        all_results.append(results)
+                        fit_results[name] = (f_optimized, optimized_values, residuals_values, peaks)
+                        completed += 1
+                        print(f"[{completed}/{total}] Completed {name}")
+                    except Exception as e:
+                        print(f"[ERROR] Failed to fit {name}: {str(e)}")
 
-            plot_number += 1
+            print("[NNLS] Phase 2: Generating plots sequentially...")
+            # Generate plots sequentially (can't be done in parallel)
+            plot_number = 1
+            for name, df in self.processed_correlations.items():
+                if name in fit_results:
+                    f_optimized, optimized_values, residuals_values, peaks = fit_results[name]
+
+                    fig = self._create_nnls_plot(
+                        name, df, decay_times, f_optimized, optimized_values,
+                        residuals_values, peaks, params, plot_number
+                    )
+
+                    plots_dict[name] = (fig, {
+                        'f_optimized': f_optimized,
+                        'peaks': peaks,
+                        'num_peaks': len(peaks)
+                    })
+
+                    if show_plots:
+                        plt.show()
+                    else:
+                        plt.close(fig)
+
+                    plot_number += 1
+        else:
+            # Sequential processing
+            if use_multiprocessing:
+                print("[NNLS] Too few datasets for multiprocessing, using sequential processing")
+
+            plot_number = 1
+            for idx, (name, df) in enumerate(self.processed_correlations.items(), 1):
+                print(f"[{idx}/{total}] Fitting {name}...")
+
+                # Run NNLS fit
+                results, f_optimized, optimized_values, residuals_values, peaks = nnls_optimized(
+                    df, name, params, plot_number, T_matrix=T_matrix
+                )
+                all_results.append(results)
+
+                # Create plot (don't show it)
+                fig = self._create_nnls_plot(
+                    name, df, decay_times, f_optimized, optimized_values,
+                    residuals_values, peaks, params, plot_number
+                )
+
+                # Store plot
+                plots_dict[name] = (fig, {
+                    'f_optimized': f_optimized,
+                    'peaks': peaks,
+                    'num_peaks': len(peaks)
+                })
+
+                if show_plots:
+                    plt.show()
+                else:
+                    plt.close(fig)
+
+                plot_number += 1
 
         nnls_df = pd.DataFrame(all_results)
         return nnls_df, plots_dict
@@ -480,12 +540,22 @@ class LaplaceAnalyzer:
             Tuple of (results DataFrame, full_results dict, plots dictionary)
         """
         import matplotlib.pyplot as plt
-        from regularized import nnls_reg_simple
+        from regularized_optimized import regularized_nnls_optimized, create_exponential_matrix
 
         all_results = []
         plots_dict = {}
         full_results = {}
         decay_times = params['decay_times']
+
+        # Pre-compute T matrix once if all datasets have same time points
+        tau_arrays = [df['t (s)'].to_numpy() for df in self.processed_correlations.values()]
+        all_same_tau = all(np.array_equal(tau_arrays[0], tau) for tau in tau_arrays[1:])
+
+        T_matrix = None
+        if all_same_tau:
+            print("[Regularized] All datasets have identical time points - using cached matrix")
+            T_matrix = create_exponential_matrix(tau_arrays[0], decay_times)
+            print("[Regularized] Matrix cache enabled - significant speedup expected")
 
         total = len(self.processed_correlations)
         plot_number = 1
@@ -493,10 +563,10 @@ class LaplaceAnalyzer:
         for idx, (name, df) in enumerate(self.processed_correlations.items(), 1):
             print(f"[{idx}/{total}] Fitting {name} (Regularized)...")
 
-            # Run regularized NNLS fit
+            # Run regularized NNLS fit with optimized function
             try:
-                results, f_optimized, optimized_values, residuals_values, peaks = nnls_reg_simple(
-                    df, name, params, plot_number
+                results, f_optimized, optimized_values, residuals_values, peaks = regularized_nnls_optimized(
+                    df, name, params, plot_number, T_matrix=T_matrix
                 )
                 all_results.append(results)
 
@@ -527,6 +597,8 @@ class LaplaceAnalyzer:
 
             except Exception as e:
                 print(f"  Error processing {name}: {e}")
+                import traceback
+                traceback.print_exc()
                 continue
 
             plot_number += 1

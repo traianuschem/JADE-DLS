@@ -97,20 +97,14 @@ def nnls_optimized(df: pd.DataFrame, name: str, nnls_params: dict,
     else:
         T = T_matrix
 
-    # Define the residual function
-    def residuals(f, T, D):
-        return (T @ f)**2 - D
+    # Use scipy's optimized NNLS solver (much faster than least_squares)
+    # Problem: minimize ||T @ f - sqrt(D)||^2 subject to f >= 0
+    # Since g(2) = (correlation)^2, we need sqrt(D) for the linear problem
+    D_sqrt = np.sqrt(np.abs(D))  # Take sqrt for linear NNLS formulation
 
-    # Initial guess for f
-    f0 = np.ones(T.shape[1])
-
-    # Perform the non-negative least squares optimization
-    bounds = (0, np.inf)
-    result = least_squares(residuals, f0, args=(T, D), bounds=bounds,
-                          method='trf', ftol=1e-8, xtol=1e-8)
-
-    # Get the optimized f
-    f_optimized = result.x
+    # Solve NNLS problem: min ||T @ f - D_sqrt||^2 with f >= 0
+    from scipy.optimize import nnls as scipy_nnls
+    f_optimized, rnorm = scipy_nnls(T, D_sqrt)
 
     # Calculate the optimized function values
     optimized_values = (T @ f_optimized)**2
@@ -263,6 +257,84 @@ def _plot_nnls_results(name: str, df: pd.DataFrame, decay_times: np.ndarray,
 
 
 # ===== CALCULATION HELPERS =====
+def regularized_nnls_optimized(df: pd.DataFrame, name: str, params: dict,
+                               plot_number: int = 1, T_matrix: Optional[np.ndarray] = None) -> Tuple:
+    """
+    Optimized Regularized NNLS (Tikhonov) with pre-computed matrix support
+
+    Args:
+        df: DataFrame with 't (s)' and 'g(2)' columns
+        name: Dataset name
+        params: Parameters dict with 'decay_times', 'alpha', 'prominence', 'distance'
+        plot_number: Plot number for visualization
+        T_matrix: Pre-computed exponential matrix (optional, for performance)
+
+    Returns:
+        Tuple of (results dict, f_optimized, optimized_values, residuals_values, peaks)
+    """
+    decay_times = params['decay_times']
+    prominence = params.get('prominence', 0.01)
+    distance = params.get('distance', 1)
+    alpha = params.get('alpha', 0.01)
+
+    # Create the vectors
+    tau = df['t (s)'].to_numpy()
+    D = df['g(2)'].to_numpy()
+
+    # Use pre-computed matrix if provided, otherwise compute
+    if T_matrix is None:
+        T = create_exponential_matrix(tau, decay_times)
+    else:
+        T = T_matrix
+
+    # Get cached Tikhonov regularization matrix
+    n = len(decay_times)
+    D2 = create_tikhonov_matrix_cached(n)
+
+    # Define the regularized objective function
+    def residuals_regularized(f, T, D, D2, alpha):
+        # g(2)(τ)-1 = (∑_i A_i * exp(-τ/τ_i))^2
+        model_output = (T @ f)**2
+
+        # data fidelity residuals
+        fit_residuals = model_output - D
+
+        # smoothness penalty
+        smoothness_penalty = alpha * (D2 @ f)
+        return np.concatenate([fit_residuals, smoothness_penalty])
+
+    # Initial guess (uniform distribution)
+    f0 = np.ones(T.shape[1])
+
+    # Perform non-negative least squares with regularization
+    bounds = (0, np.inf)
+    result = least_squares(
+        lambda f: residuals_regularized(f, T, D, D2, alpha),
+        f0,
+        bounds=bounds,
+        method='trf',
+        ftol=1e-8,
+        xtol=1e-8,
+        max_nfev=500  # Limit iterations for performance
+    )
+    f_optimized = result.x
+
+    # Calculate the optimized function
+    optimized_values = (T @ f_optimized)**2
+    residuals_values = optimized_values - D
+
+    # Find peaks
+    peaks, _ = find_peaks(f_optimized, prominence=prominence, distance=distance, width=0)
+
+    # Prepare results for this dataframe
+    results = {'filename': name}
+    for i, peak_index in enumerate(peaks):
+        results[f'tau_{i+1}'] = decay_times[peak_index]
+        results[f'intensity_{i+1}'] = f_optimized[peak_index]
+
+    return results, f_optimized, optimized_values, residuals_values, peaks
+
+
 def calculate_decay_rates(df: pd.DataFrame, tau_columns: List[str]) -> pd.DataFrame:
     """
     Calculate decay rates (gamma) from decay times (tau)
