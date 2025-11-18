@@ -214,18 +214,32 @@ class AlphaAnalysisDialog(QDialog):
             print(f"[Alpha Analysis] Selected {len(selected_keys)} datasets: {selected_keys}")
 
             # Run regularized fits for all combinations
-            from regularized import nnls_reg_simple
+            from regularized_optimized import regularized_nnls_optimized, create_exponential_matrix
 
             # Create decay times (shared across all)
             decay_times = np.logspace(-8, 1, 200)
 
+            # Pre-compute T matrices for each dataset (major speedup!)
+            print("[Alpha Analysis] Pre-computing T matrices...")
+            T_matrices = {}
+            for key in selected_keys:
+                df = self.laplace_analyzer.processed_correlations[key]
+                tau = df['t (s)'].to_numpy()
+                T_matrices[key] = create_exponential_matrix(tau, decay_times)
+            print("[Alpha Analysis] T matrices cached")
+
+            # Use optimized regularized function with pre-computed matrices
             results = {}
+            total_fits = len(selected_keys) * len(alphas)
+            completed = 0
+
             for key in selected_keys:
                 df = self.laplace_analyzer.processed_correlations[key]
                 results[key] = {}
+                T_matrix = T_matrices[key]  # Use pre-computed matrix
 
                 for alpha in alphas:
-                    # Create parameters dict for nnls_reg_simple
+                    # Create parameters dict for regularized_nnls_optimized
                     params = {
                         'decay_times': decay_times,
                         'prominence': 0.05,
@@ -233,9 +247,11 @@ class AlphaAnalysisDialog(QDialog):
                         'alpha': alpha
                     }
 
-                    # Run regularized fit
+                    # Run optimized regularized fit with cached T matrix
                     try:
-                        _, f_optimized, _, _, peaks = nnls_reg_simple(df, key, params)
+                        _, f_optimized, _, _, peaks = regularized_nnls_optimized(
+                            df, key, params, plot_number=1, T_matrix=T_matrix
+                        )
                         results[key][alpha] = {
                             'distribution': f_optimized,
                             'num_peaks': len(peaks),
@@ -243,13 +259,15 @@ class AlphaAnalysisDialog(QDialog):
                         }
                     except Exception as e:
                         print(f"[Alpha Analysis] Error for {key}, alpha={alpha}: {e}")
-                        import traceback
-                        traceback.print_exc()
                         results[key][alpha] = {
                             'distribution': np.zeros_like(decay_times),
                             'num_peaks': 0,
                             'peak_indices': np.array([])
                         }
+
+                    completed += 1
+                    if completed % 5 == 0:
+                        print(f"[Alpha Analysis] Progress: {completed}/{total_fits} fits completed")
 
             # Analyze results and find recommendation
             self.recommended_alpha = self._analyze_results(results, alphas, selected_keys)
