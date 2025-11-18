@@ -3,6 +3,9 @@ JADE-DLS Main GUI Window
 A transparent, user-friendly GUI for Dynamic Light Scattering analysis
 """
 
+import numpy as np
+import pandas as pd
+
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QSplitter, QMenuBar, QAction, QStatusBar,
                              QMessageBox, QFileDialog, QTabWidget, QProgressBar)
@@ -19,6 +22,7 @@ from gui.dialogs.filtering_dialogs import CountrateFilterDialog, CorrelationFilt
 from gui.dialogs.cumulant_dialog import CumulantAnalysisDialog
 from gui.dialogs.nnls_dialog import NNLSDialog
 from gui.dialogs.nnls_results_dialog import NNLSResultsDialog
+from gui.dialogs.regularized_dialog import RegularizedDialog
 from gui.analysis.cumulant_analyzer import CumulantAnalyzer
 from gui.analysis.laplace_analyzer import LaplaceAnalyzer
 
@@ -480,10 +484,6 @@ class JADEDLSMainWindow(QMainWindow):
     def run_nnls_analysis(self):
         """Run NNLS analysis"""
         self.workflow_panel.activate_step('nnls')
-
-    def run_regularized_analysis(self):
-        """Run regularized analysis"""
-        self.workflow_panel.activate_step('regularized')
 
     def compare_results(self):
         """Compare all analysis results"""
@@ -1554,27 +1554,125 @@ print(method_c_results)
         dialog.exec_()
 
     def run_regularized_analysis(self):
-        """Run regularized NNLS analysis"""
-        # Check if data is loaded
-        if not self.loaded_data or 'correlations' not in self.loaded_data:
+        """Run Regularized NNLS analysis with Tikhonov-Phillips regularization"""
+        # Use filtered data from pipeline if available
+        if hasattr(self.pipeline, 'data') and self.pipeline.data and 'correlations' in self.pipeline.data:
+            working_data = self.pipeline.data
+            data_source = "filtered"
+            print(f"[Regularized] Using filtered data from pipeline ({len(working_data.get('correlations', {}))} datasets)")
+        elif self.loaded_data and 'correlations' in self.loaded_data:
+            working_data = self.loaded_data
+            data_source = "original"
+            print(f"[Regularized] Using original loaded data ({len(working_data.get('correlations', {}))} datasets)")
+        else:
             QMessageBox.warning(
                 self,
                 "No Data",
-                "Please load and preprocess data first (File > Load Data)"
+                "Please load data first (File > Load Data)"
             )
             return
 
-        # TODO: Implement regularized fit dialog and analysis
-        QMessageBox.information(
-            self,
-            "Coming Soon",
-            "Regularized NNLS analysis will be implemented next.\n\n"
-            "This feature includes:\n"
-            "• Tikhonov-Phillips regularization\n"
-            "• Alpha parameter optimization\n"
-            "• Advanced peak statistics\n"
-            "• Distribution comparison plots"
-        )
+        # Check for basedata
+        if 'basedata' not in working_data:
+            QMessageBox.warning(
+                self,
+                "Missing Basedata",
+                "Base data is missing.\n"
+                "Please ensure data loading was completed successfully."
+            )
+            return
+
+        # Prepare df_basedata and calculate c/delta_c if needed
+        if 'df_basedata' not in working_data:
+            working_data['df_basedata'] = working_data['basedata'].copy()
+
+        if 'c' not in working_data or 'delta_c' not in working_data:
+            self.status_manager.update("Calculating c and delta_c constants...")
+            self._calculate_c_and_delta_c_for_data(working_data)
+
+        try:
+            # Always recreate laplace analyzer to use current data
+            processed_corr = working_data.get('processed_correlations', None)
+            raw_corr = working_data.get('correlations', None) if processed_corr is None else None
+
+            self.laplace_analyzer = LaplaceAnalyzer(
+                processed_correlations=processed_corr,
+                df_basedata=working_data['df_basedata'],
+                c=working_data['c'],
+                delta_c=working_data['delta_c'],
+                raw_correlations=raw_corr
+            )
+
+            # Store processed correlations back for future use
+            if processed_corr is None and self.laplace_analyzer.processed_correlations is not None:
+                working_data['processed_correlations'] = self.laplace_analyzer.processed_correlations
+                print("[Regularized] Stored processed correlations")
+
+            # Inform user about data source
+            if data_source == "filtered":
+                num_datasets = len(working_data.get('correlations', {}))
+                QMessageBox.information(
+                    self,
+                    "Using Filtered Data",
+                    f"Regularized analysis will use the filtered dataset.\n\n"
+                    f"Number of datasets: {num_datasets}\n\n"
+                    f"💡 Tip: This respects your filtering choices from preprocessing."
+                )
+
+            # Show Regularized dialog
+            dialog = RegularizedDialog(self.laplace_analyzer, self)
+            if dialog.exec_() == dialog.Accepted:
+                params = dialog.get_parameters()
+
+                # Start analysis
+                self.status_manager.start_operation("Running Regularized NNLS analysis...")
+
+                try:
+                    # Run Regularized fit
+                    self.status_manager.update("Performing regularized fits...")
+                    self.laplace_analyzer.run_regularized(
+                        params,
+                        show_plots=params.get('show_plots', True)
+                    )
+
+                    # Calculate diffusion coefficients
+                    self.status_manager.update("Calculating diffusion coefficients...")
+                    self.laplace_analyzer.calculate_regularized_diffusion_coefficients()
+
+                    # Add to pipeline
+                    self._add_regularized_step_to_pipeline(params)
+
+                    # Mark workflow step as complete
+                    self.workflow_panel.mark_step_complete('regularized')
+
+                    # Show results
+                    self.status_manager.complete_operation("Regularized analysis completed")
+                    QMessageBox.information(
+                        self,
+                        "Analysis Complete",
+                        f"Regularized NNLS analysis completed successfully!\n\n"
+                        f"Results are stored in the analyzer.\n"
+                        f"Check the Analysis View for plots and data."
+                    )
+
+                except Exception as e:
+                    self.status_manager.fail_operation(f"Regularized analysis failed: {str(e)}")
+                    QMessageBox.critical(
+                        self,
+                        "Regularized Analysis Failed",
+                        f"An error occurred during regularized analysis:\n\n{str(e)}"
+                    )
+                    import traceback
+                    traceback.print_exc()
+
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Setup Error",
+                f"Error setting up Laplace analyzer:\n\n{str(e)}"
+            )
+            import traceback
+            traceback.print_exc()
 
     def compare_results(self):
         """Compare results from different methods"""
@@ -1634,6 +1732,60 @@ nnls_diff_results = analyze_diffusion_coefficient(
         from gui.core.pipeline import AnalysisStep
         step = AnalysisStep(
             name="NNLS Analysis",
+            step_type='custom',
+            custom_code=code,
+            params=params
+        )
+        self.pipeline.steps.append(step)
+        self.pipeline.step_added.emit(step.to_dict())
+
+    def _add_regularized_step_to_pipeline(self, params):
+        """Add Regularized NNLS analysis step to pipeline"""
+        # Create code for this step
+        code = f"""
+# Regularized NNLS Analysis with Tikhonov-Phillips Regularization
+# Parameters: alpha={params['alpha']}, prominence={params['prominence']}, distance={params['distance']}
+
+from regularized import nnls_reg_all, calculate_decay_rates
+from cumulants import analyze_diffusion_coefficient
+import numpy as np
+
+# Run Regularized NNLS
+reg_params = {{
+    'decay_times': np.logspace({np.log10(params['decay_times'][0]):.2f}, {np.log10(params['decay_times'][-1]):.2f}, {len(params['decay_times'])}),
+    'alpha': {params['alpha']},
+    'prominence': {params['prominence']},
+    'distance': {params['distance']},
+    'normalize': {params.get('normalize', True)},
+    'sparsity_penalty': {params.get('sparsity_penalty', 0.0)},
+    'enforce_unimodality': {params.get('enforce_unimodality', False)}
+}}
+
+regularized_results, full_results = nnls_reg_all(
+    processed_correlations,
+    reg_params
+)
+
+# Merge with basedata
+regularized_data = pd.merge(df_basedata, regularized_results, on='filename', how='outer')
+
+# Calculate decay rates
+tau_columns = [col for col in regularized_data.columns if col.startswith('tau_')]
+regularized_data = calculate_decay_rates(regularized_data, tau_columns)
+
+# Calculate diffusion coefficients
+gamma_columns = [col.replace('tau', 'gamma') for col in tau_columns]
+regularized_diff_results = analyze_diffusion_coefficient(
+    data_df=regularized_data,
+    q_squared_col='q^2',
+    gamma_cols=gamma_columns
+)
+"""
+
+        # Add step to pipeline
+        from gui.core.pipeline import AnalysisStep
+        step = AnalysisStep(
+            name="Regularized NNLS Analysis",
             step_type='custom',
             custom_code=code,
             params=params
