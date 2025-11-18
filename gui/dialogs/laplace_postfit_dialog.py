@@ -197,8 +197,15 @@ class DistributionInspectorWidget(QWidget):
         self.checkboxes = {}
         filenames = sorted(self.plots_dict.keys())
 
+        # Debug: Print available plots
+        print(f"[DistributionInspector] Available plots: {len(filenames)}")
+        for fn in filenames:
+            print(f"  - {fn}")
+
         for filename in filenames:
-            if filename.endswith('Summary') or filename.endswith('Analysis'):
+            # Skip summary/diffusion analysis plots but keep individual distribution plots
+            if 'Summary' in filename or 'Diffusion Analysis' in filename or 'Analysis' in filename:
+                print(f"[DistributionInspector] Skipping summary plot: {filename}")
                 continue  # Skip summary plots
 
             # Create checkbox
@@ -208,6 +215,8 @@ class DistributionInspectorWidget(QWidget):
 
             # Create a small preview (optional - can be added later)
             scroll_layout.addWidget(checkbox)
+
+        print(f"[DistributionInspector] Created {len(self.checkboxes)} checkboxes")
 
         scroll_layout.addStretch()
         scroll_widget.setLayout(scroll_layout)
