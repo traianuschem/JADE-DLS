@@ -177,17 +177,40 @@ class AlphaAnalysisDialog(QDialog):
         self.show_peaks_check.setChecked(True)
         layout.addWidget(self.show_peaks_check)
 
+        # Two-stage optimization option
+        self.two_stage_check = QCheckBox("Use two-stage optimization (faster & more accurate)")
+        self.two_stage_check.setChecked(True)
+        self.two_stage_check.setToolTip(
+            "Stage 1: Coarse search with few alpha values (faster)\n"
+            "Stage 2: Fine search around best alpha from Stage 1 (more accurate)"
+        )
+        layout.addWidget(self.two_stage_check)
+
+        # Stage 2 parameters (only used if two-stage is enabled)
+        stage2_layout = QHBoxLayout()
+        stage2_layout.addWidget(QLabel("Stage 2 refinement:"))
+        self.stage2_num_spin = QSpinBox()
+        self.stage2_num_spin.setRange(5, 20)
+        self.stage2_num_spin.setValue(10)
+        self.stage2_num_spin.setToolTip("Number of alpha values in refinement stage")
+        stage2_layout.addWidget(self.stage2_num_spin)
+        stage2_layout.addWidget(QLabel("values"))
+        stage2_layout.addStretch()
+        layout.addLayout(stage2_layout)
+
         group.setLayout(layout)
         return group
 
     def run_analysis(self):
-        """Run alpha parameter analysis"""
+        """Run alpha parameter analysis with optional two-stage optimization"""
         try:
             # Get parameters
             self.alpha_min = self.alpha_min_spin.value()
             self.alpha_max = self.alpha_max_spin.value()
             self.num_alphas = self.num_alphas_spin.value()
             self.num_datasets = self.num_datasets_spin.value()
+            use_two_stage = self.two_stage_check.isChecked()
+            stage2_num = self.stage2_num_spin.value()
 
             if self.alpha_min >= self.alpha_max:
                 QMessageBox.warning(self, "Invalid Range",
@@ -198,12 +221,19 @@ class AlphaAnalysisDialog(QDialog):
             self.run_btn.setEnabled(False)
             self.run_btn.setText("⏳ Running analysis...")
 
-            # Create alpha values (logarithmic spacing)
-            alphas = np.logspace(np.log10(self.alpha_min),
-                                np.log10(self.alpha_max),
-                                self.num_alphas)
+            # ===== STAGE 1: Coarse search =====
+            if use_two_stage:
+                print(f"[Alpha Analysis] Two-stage optimization enabled")
+                print(f"[Alpha Analysis] Stage 1: Coarse search with {self.num_alphas} alpha values")
+            else:
+                print(f"[Alpha Analysis] Single-stage optimization with {self.num_alphas} alpha values")
 
-            print(f"[Alpha Analysis] Testing {len(alphas)} alpha values: {alphas}")
+            # Create alpha values for Stage 1 (logarithmic spacing)
+            alphas_stage1 = np.logspace(np.log10(self.alpha_min),
+                                        np.log10(self.alpha_max),
+                                        self.num_alphas)
+
+            print(f"[Alpha Analysis] Testing {len(alphas_stage1)} alpha values: {alphas_stage1}")
 
             # Get random datasets
             import random
@@ -228,55 +258,60 @@ class AlphaAnalysisDialog(QDialog):
                 T_matrices[key] = create_exponential_matrix(tau, decay_times)
             print("[Alpha Analysis] T matrices cached")
 
-            # Use optimized regularized function with pre-computed matrices
-            results = {}
-            total_fits = len(selected_keys) * len(alphas)
-            completed = 0
+            # Stage 1: Coarse search
+            results_stage1 = self._run_alpha_fits(alphas_stage1, selected_keys, T_matrices,
+                                                   decay_times, stage_name="Stage 1")
 
-            for key in selected_keys:
-                df = self.laplace_analyzer.processed_correlations[key]
-                results[key] = {}
-                T_matrix = T_matrices[key]  # Use pre-computed matrix
+            # Analyze Stage 1 results
+            best_alpha_stage1 = self._analyze_results(results_stage1, alphas_stage1, selected_keys)
+            print(f"[Alpha Analysis] Stage 1 best alpha: {best_alpha_stage1:.4f}")
 
-                for alpha in alphas:
-                    # Create parameters dict for regularized_nnls_optimized
-                    params = {
-                        'decay_times': decay_times,
-                        'prominence': 0.05,
-                        'distance': 1,
-                        'alpha': alpha
-                    }
+            # ===== STAGE 2: Fine search (if enabled) =====
+            if use_two_stage:
+                self.run_btn.setText("⏳ Running Stage 2...")
 
-                    # Run optimized regularized fit with cached T matrix
-                    try:
-                        _, f_optimized, _, _, peaks = regularized_nnls_optimized(
-                            df, key, params, plot_number=1, T_matrix=T_matrix
-                        )
-                        results[key][alpha] = {
-                            'distribution': f_optimized,
-                            'num_peaks': len(peaks),
-                            'peak_indices': peaks
-                        }
-                    except Exception as e:
-                        print(f"[Alpha Analysis] Error for {key}, alpha={alpha}: {e}")
-                        results[key][alpha] = {
-                            'distribution': np.zeros_like(decay_times),
-                            'num_peaks': 0,
-                            'peak_indices': np.array([])
-                        }
+                # Define refined search range around best alpha from Stage 1
+                # Use +/- 0.5 log units (about 3x range on each side)
+                log_center = np.log10(best_alpha_stage1)
+                log_range = 0.5  # Half a decade on each side
+                alpha_min_stage2 = max(10**(log_center - log_range), self.alpha_min)
+                alpha_max_stage2 = min(10**(log_center + log_range), self.alpha_max)
 
-                    completed += 1
-                    if completed % 5 == 0:
-                        print(f"[Alpha Analysis] Progress: {completed}/{total_fits} fits completed")
+                print(f"[Alpha Analysis] Stage 2: Fine search with {stage2_num} values")
+                print(f"[Alpha Analysis] Stage 2 range: {alpha_min_stage2:.4f} - {alpha_max_stage2:.4f}")
 
-            # Analyze results and find recommendation
-            self.recommended_alpha = self._analyze_results(results, alphas, selected_keys)
+                alphas_stage2 = np.logspace(np.log10(alpha_min_stage2),
+                                            np.log10(alpha_max_stage2),
+                                            stage2_num)
+
+                results_stage2 = self._run_alpha_fits(alphas_stage2, selected_keys, T_matrices,
+                                                       decay_times, stage_name="Stage 2")
+
+                # Combine results from both stages for visualization
+                alphas_combined = np.concatenate([alphas_stage1, alphas_stage2])
+                results_combined = {}
+                for key in selected_keys:
+                    results_combined[key] = {**results_stage1[key], **results_stage2[key]}
+
+                # Analyze combined results for final recommendation
+                self.recommended_alpha = self._analyze_results(results_combined, alphas_combined, selected_keys)
+
+                # Use combined results for plotting
+                alphas_final = alphas_combined
+                results_final = results_combined
+
+                print(f"[Alpha Analysis] Final recommended alpha: {self.recommended_alpha:.4f}")
+            else:
+                # Single-stage: use Stage 1 results
+                alphas_final = alphas_stage1
+                results_final = results_stage1
+                self.recommended_alpha = best_alpha_stage1
 
             # Create 3D visualization
-            self._create_3d_plot(results, alphas, selected_keys, decay_times)
+            self._create_3d_plot(results_final, alphas_final, selected_keys, decay_times)
 
             # Show recommendation
-            self._show_recommendation(results, alphas, selected_keys)
+            self._show_recommendation(results_final, alphas_final, selected_keys)
 
             # Enable accept button
             self.use_recommended_btn.setEnabled(True)
@@ -293,6 +328,64 @@ class AlphaAnalysisDialog(QDialog):
 
             self.run_btn.setEnabled(True)
             self.run_btn.setText("🔬 Run Alpha Analysis")
+
+    def _run_alpha_fits(self, alphas, selected_keys, T_matrices, decay_times, stage_name=""):
+        """
+        Run regularized NNLS fits for given alpha values
+
+        Args:
+            alphas: Array of alpha values to test
+            selected_keys: List of dataset keys
+            T_matrices: Pre-computed T matrices for each dataset
+            decay_times: Decay time grid
+            stage_name: Name of the stage (for logging)
+
+        Returns:
+            Dictionary with results for each dataset and alpha
+        """
+        from regularized_optimized import regularized_nnls_optimized
+
+        results = {}
+        total_fits = len(selected_keys) * len(alphas)
+        completed = 0
+
+        for key in selected_keys:
+            df = self.laplace_analyzer.processed_correlations[key]
+            results[key] = {}
+            T_matrix = T_matrices[key]  # Use pre-computed matrix
+
+            for alpha in alphas:
+                # Create parameters dict for regularized_nnls_optimized
+                params = {
+                    'decay_times': decay_times,
+                    'prominence': 0.05,
+                    'distance': 1,
+                    'alpha': alpha
+                }
+
+                # Run optimized regularized fit with cached T matrix
+                try:
+                    _, f_optimized, _, _, peaks = regularized_nnls_optimized(
+                        df, key, params, plot_number=1, T_matrix=T_matrix
+                    )
+                    results[key][alpha] = {
+                        'distribution': f_optimized,
+                        'num_peaks': len(peaks),
+                        'peak_indices': peaks
+                    }
+                except Exception as e:
+                    print(f"[Alpha Analysis] {stage_name} Error for {key}, alpha={alpha}: {e}")
+                    results[key][alpha] = {
+                        'distribution': np.zeros_like(decay_times),
+                        'num_peaks': 0,
+                        'peak_indices': np.array([])
+                    }
+
+                completed += 1
+                if completed % 5 == 0 or completed == total_fits:
+                    print(f"[Alpha Analysis] {stage_name} Progress: {completed}/{total_fits} fits completed")
+
+        return results
 
     def _analyze_results(self, results, alphas, selected_keys):
         """

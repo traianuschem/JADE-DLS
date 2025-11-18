@@ -225,7 +225,7 @@ def calculate_g2_B(dataframes_dict):
 
 
 #plot Gamma vs. q^2
-def analyze_diffusion_coefficient(data_df, q_squared_col, gamma_cols, method_names=None, gamma_unit='1/s', x_range=None):
+def analyze_diffusion_coefficient(data_df, q_squared_col, gamma_cols, method_names=None, gamma_unit='1/s', x_range=None, show_plots=True):
     #validate inputs
     if not isinstance(gamma_cols, list):
         gamma_cols = [gamma_cols]
@@ -368,7 +368,10 @@ def analyze_diffusion_coefficient(data_df, q_squared_col, gamma_cols, method_nam
         
         plt.legend()
         plt.grid(True)
-        plt.show()
+        if show_plots:
+            plt.show()
+        else:
+            plt.close()
     
     #create dataframe with results
     if not all_results:
