@@ -34,8 +34,8 @@ def plot_processed_correlations_no_show(dataframes_dict, fit_function, fit_x_lim
             x_fit = x_data[(x_data >= fit_x_limits[0]) & (x_data <= fit_x_limits[1])]
             y_fit = y_data[(x_data >= fit_x_limits[0]) & (x_data <= fit_x_limits[1])]
 
-            # Perform the fit
-            popt, pcov = curve_fit(fit_function, x_fit, y_fit, method='lm', maxfev=50000)
+            # Perform the fit (optimized: reduced maxfev from 50000 to 5000)
+            popt, pcov = curve_fit(fit_function, x_fit, y_fit, method='lm', maxfev=5000)
 
             # Calculate parameter errors
             perr = np.sqrt(np.diag(pcov))
@@ -117,9 +117,14 @@ def plot_processed_correlations_no_show(dataframes_dict, fit_function, fit_x_lim
 
 def plot_processed_correlations_iterative_no_show(dataframes_dict, fit_function, fit_limits,
                                                    initial_parameters, method='lm',
-                                                   max_iterations=10, tolerance=1e-4):
+                                                   max_iterations=5, tolerance=1e-4):
     """
-    Iterative non-linear fit without showing plots (matches original notebook implementation)
+    Optimized iterative non-linear fit without showing plots
+
+    Performance improvements:
+    - Reduced default max_iterations from 10 to 5 (usually converges earlier)
+    - Reduced maxfev from 50000 to 5000 (sufficient for most cases)
+    - Added progress logging
 
     Args:
         dataframes_dict: Dictionary of dataframes with 't (s)' and 'g(2)' columns
@@ -127,7 +132,7 @@ def plot_processed_correlations_iterative_no_show(dataframes_dict, fit_function,
         fit_limits: Tuple of (min, max) time limits
         initial_parameters: Initial parameter guesses (dict or list)
         method: Optimization method ('lm', 'trf', 'dogbox')
-        max_iterations: Maximum number of iterations (default: 10)
+        max_iterations: Maximum number of iterations (default: 5, optimized from 10)
         tolerance: Convergence tolerance for R-squared (default: 1e-4)
 
     Returns:
@@ -136,8 +141,10 @@ def plot_processed_correlations_iterative_no_show(dataframes_dict, fit_function,
     all_fit_results = []
     plots_dict = {}
     plot_number = 1
+    total = len(dataframes_dict)
 
-    for name, df in dataframes_dict.items():
+    for idx, (name, df) in enumerate(dataframes_dict.items(), 1):
+        print(f"[Method C: {idx}/{total}] Fitting {name}...")
         try:
             fit_result = {'filename': name}
 
@@ -179,16 +186,16 @@ def plot_processed_correlations_iterative_no_show(dataframes_dict, fit_function,
             # Iterative fitting loop (key difference from simple fit!)
             for i in range(max_iterations):
                 try:
-                    # Perform fit with current guess
+                    # Perform fit with current guess (optimized: maxfev reduced from 50000 to 5000)
                     if method == 'lm':
                         popt, pcov = curve_fit(fit_function, x_fit, y_fit,
-                                              p0=current_guess, maxfev=50000)
+                                              p0=current_guess, maxfev=5000)
                     else:
                         # For 'trf' and 'dogbox', use wide bounds
                         bounds = ([-np.inf] * len(current_guess), [np.inf] * len(current_guess))
                         popt, pcov = curve_fit(fit_function, x_fit, y_fit,
                                               p0=current_guess, method=method,
-                                              bounds=bounds, maxfev=50000)
+                                              bounds=bounds, maxfev=5000)
 
                     # Generate fit curve
                     y_fit_values = fit_function(x_data, *popt)
@@ -232,11 +239,11 @@ def plot_processed_correlations_iterative_no_show(dataframes_dict, fit_function,
                     if i > 0:
                         delta_r_squared = abs(all_r_squared[i] - all_r_squared[i-1])
                         if delta_r_squared < tolerance:
-                            print(f"Converged after {i+1} iterations for {name}.")
+                            print(f"  Converged after {i+1} iterations.")
                             break
 
                 except RuntimeError as e:
-                    print(f"Fit error in iteration {i+1} for DataFrame '{name}': {e}")
+                    print(f"  Fit error in iteration {i+1}: {e}")
                     break
 
             # Find the best iteration (using R-squared)

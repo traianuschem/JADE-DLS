@@ -7,17 +7,9 @@ import numpy as np
 import pandas as pd
 from typing import Dict, Optional, Tuple, List
 from matplotlib.figure import Figure
-from regularized_optimized import (
-    nnls_all_optimized,
-    nnls_preview_random,
-    calculate_decay_rates
-)
-from regularized import (
-    nnls_reg_all,
-    plot_distributions,
-    tau_to_hydrodynamic_radius
-)
-from cumulants import analyze_diffusion_coefficient
+
+# Lazy imports to avoid Windows multiprocessing issues
+# These modules will be imported inside functions as needed
 
 
 class LaplaceAnalyzer:
@@ -179,8 +171,13 @@ class LaplaceAnalyzer:
 
         total = len(self.processed_correlations)
 
+        # Check platform - multiprocessing works better on Linux/Mac than Windows
+        import platform
+        is_windows = platform.system() == 'Windows'
+
         # Use multiprocessing if requested and we have enough datasets
-        if use_multiprocessing and total > 3:
+        # Disable on Windows due to DLL loading issues with scipy in spawned processes
+        if use_multiprocessing and total > 3 and not is_windows:
             import multiprocessing as mp
             from concurrent.futures import ProcessPoolExecutor, as_completed
 
@@ -238,7 +235,9 @@ class LaplaceAnalyzer:
                     plot_number += 1
         else:
             # Sequential processing
-            if use_multiprocessing:
+            if use_multiprocessing and is_windows:
+                print("[NNLS] Multiprocessing disabled on Windows (scipy DLL issues), using sequential processing")
+            elif use_multiprocessing:
                 print("[NNLS] Too few datasets for multiprocessing, using sequential processing")
 
             plot_number = 1
@@ -279,72 +278,54 @@ class LaplaceAnalyzer:
                          residuals_values: np.ndarray, peaks: np.ndarray,
                          nnls_params: dict, plot_number: int) -> Figure:
         """
-        Create NNLS result plot without showing it
+        Create NNLS result plot - shows only the distribution
 
         Returns:
             matplotlib Figure object
         """
         import matplotlib.pyplot as plt
 
-        tau = df['t (s)'].to_numpy()
-        D = df['g(2)'].to_numpy()
-
         peak_amplitudes = f_optimized[peaks]
         normalized_amplitudes_sum = peak_amplitudes / np.sum(peak_amplitudes) if len(peak_amplitudes) > 0 else np.array([])
 
-        fig = Figure(figsize=(18, 6))
-        axes = fig.subplots(1, 3)
-        ax1, ax2, ax3 = axes
+        # Create single plot focused on distribution
+        fig = Figure(figsize=(10, 6))
+        ax = fig.add_subplot(111)
 
-        fig.suptitle(f'[{plot_number}]: NNLS Analysis - {name}', fontsize=16, fontweight='bold')
+        fig.suptitle(f'NNLS Analysis - {name}', fontsize=14, fontweight='bold')
 
-        # First subplot: Data and optimized function
-        ax1.semilogx(tau, D, 'ro', label='Data (g²-1)', markersize=4)
-        ax1.semilogx(tau, optimized_values, 'g-', label='NNLS Fit', linewidth=2)
-        ax1.set_xlabel('Lag time [s]', fontsize=12)
-        ax1.set_ylabel('g(2)-1', fontsize=12)
-        ax1.set_title('Correlation Function Fit', fontsize=13)
-        ax1.legend()
-        ax1.grid(True, alpha=0.3)
-
-        # Second subplot: Tau distribution
-        ax2.semilogx(decay_times, f_optimized, 'bo-', label='Intensity Distribution', markersize=3)
-        ax2.set_xlabel('Decay Time τ [s]', fontsize=12)
-        ax2.set_ylabel('Intensity f(τ)', fontsize=12)
-        ax2.set_title(f'Decay Time Distribution ({len(peaks)} peaks)', fontsize=13)
-        ax2.legend()
-        ax2.grid(True, which="both", ls="--", alpha=0.3)
+        # Plot tau distribution
+        ax.semilogx(decay_times, f_optimized, 'b-', linewidth=2.5, label='Intensity Distribution')
+        ax.fill_between(decay_times, 0, f_optimized, alpha=0.3, color='blue')
+        ax.set_xlabel('Decay Time τ [s]', fontsize=12, fontweight='bold')
+        ax.set_ylabel('Intensity f(τ)', fontsize=12, fontweight='bold')
+        ax.set_title(f'Decay Time Distribution ({len(peaks)} peaks detected)', fontsize=12)
+        ax.grid(True, which="both", ls="--", alpha=0.3)
 
         # Mark peaks
         if len(peaks) > 0:
-            ax2.plot(decay_times[peaks], f_optimized[peaks], 'rx', markersize=10,
-                    label=f'Detected Peaks (n={len(peaks)})')
+            ax.plot(decay_times[peaks], f_optimized[peaks], 'r*', markersize=15,
+                    label=f'Detected Peaks', markeredgecolor='darkred', markeredgewidth=1.5)
 
-            # Annotate peaks
+            # Annotate peaks with percentage and tau value
             for i, peak_idx in enumerate(peaks):
                 percentage = normalized_amplitudes_sum[i] * 100
-                ax2.annotate(f'{percentage:.1f}%\nτ={decay_times[peak_idx]:.2e}s',
+                ax.annotate(f'{percentage:.1f}%\nτ={decay_times[peak_idx]:.2e}s',
                             xy=(decay_times[peak_idx], f_optimized[peak_idx]),
                             xytext=(10, 10), textcoords='offset points',
-                            fontsize=9, bbox=dict(boxstyle="round,pad=0.3",
-                                                 fc="yellow", alpha=0.7),
-                            arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=0'))
-            ax2.legend()
+                            fontsize=9, bbox=dict(boxstyle="round,pad=0.4",
+                                                 fc="yellow", ec="orange", alpha=0.8),
+                            arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=0.2',
+                                          lw=1.5, color='darkred'))
 
-        # Third subplot: Residuals
-        ax3.plot(tau, residuals_values, 'b-', alpha=0.7, linewidth=1.5)
-        ax3.set_xlabel('Lag time [s]', fontsize=12)
-        ax3.set_ylabel('Residual', fontsize=12)
-        ax3.set_title('Fit Residuals', fontsize=13)
-        ax3.axhline(0, color='r', linestyle='--', linewidth=2)
-        ax3.grid(True, alpha=0.3)
-
-        # Calculate RMSE for residuals
+        # Add quality metrics
         rmse = np.sqrt(np.mean(residuals_values**2))
-        ax3.text(0.02, 0.98, f'RMSE: {rmse:.4e}',
-                transform=ax3.transAxes, verticalalignment='top',
-                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+        ax.text(0.98, 0.98, f'RMSE: {rmse:.4e}',
+                transform=ax.transAxes, verticalalignment='top', horizontalalignment='right',
+                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.7, edgecolor='orange'),
+                fontsize=10)
 
+        ax.legend(loc='best', fontsize=10)
         fig.tight_layout()
         return fig
 
@@ -361,6 +342,7 @@ class LaplaceAnalyzer:
         Returns:
             Tuple of (matplotlib Figure, list of selected dataset names)
         """
+        from regularized_optimized import nnls_preview_random
         return nnls_preview_random(self.processed_correlations, params,
                                   num_datasets=num_datasets, seed=seed)
 
@@ -385,6 +367,10 @@ class LaplaceAnalyzer:
             tau_columns = [col for col in self.nnls_data.columns if col.startswith('tau_')]
 
         print(f"\n[NNLS] Calculating diffusion coefficients for {len(tau_columns)} peaks...")
+
+        # Lazy imports
+        from regularized_optimized import calculate_decay_rates
+        from cumulants import analyze_diffusion_coefficient
 
         # Calculate gamma from tau
         self.nnls_data = calculate_decay_rates(self.nnls_data, tau_columns)
@@ -702,6 +688,10 @@ class LaplaceAnalyzer:
             tau_columns = [col for col in self.regularized_data.columns if col.startswith('tau_')]
 
         print(f"\n[Regularized] Calculating diffusion coefficients for {len(tau_columns)} peaks...")
+
+        # Lazy imports
+        from regularized_optimized import calculate_decay_rates
+        from cumulants import analyze_diffusion_coefficient
 
         # Calculate gamma from tau
         self.regularized_data = calculate_decay_rates(self.regularized_data, tau_columns)

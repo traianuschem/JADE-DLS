@@ -393,11 +393,15 @@ class AnalysisView(QWidget):
         """
         # Store analyzer for all methods (used by post-fit refinement)
         if analyzer is not None:
-            self.cumulant_analyzer = analyzer
+            # Determine analyzer type and store appropriately
+            if 'NNLS' in method_name or 'Regularized' in method_name:
+                self.laplace_analyzer = analyzer
+            else:
+                self.cumulant_analyzer = analyzer
 
-            # Also keep Method C specific analyzer for backwards compatibility
-            if 'Method C' in method_name:
-                self.method_c_analyzer = analyzer
+                # Also keep Method C specific analyzer for backwards compatibility
+                if 'Method C' in method_name:
+                    self.method_c_analyzer = analyzer
 
         # Update Results tab
         self._update_results_table(method_name, results_df, regression_stats)
@@ -412,8 +416,9 @@ class AnalysisView(QWidget):
             # Switch to Results tab
             self.tabs.setCurrentIndex(2)
 
-        # Show post-fit refinement button if analyzer is available
-        if hasattr(self, 'cumulant_analyzer') and self.cumulant_analyzer is not None:
+        # Show post-fit refinement button if any analyzer is available
+        if (hasattr(self, 'cumulant_analyzer') and self.cumulant_analyzer is not None) or \
+           (hasattr(self, 'laplace_analyzer') and self.laplace_analyzer is not None):
             self.refinement_widget.show()
 
     def show_results_tab(self):
@@ -1405,10 +1410,28 @@ class AnalysisView(QWidget):
     def _open_refinement_dialog(self):
         """Open the post-fit refinement dialog"""
         from PyQt5.QtWidgets import QMessageBox
-        from gui.dialogs import PostFitRefinementDialog
+        from gui.dialogs import PostFitRefinementDialog, PostFilterDialog
 
-        # Check if we have a cumulant analyzer stored
-        if not hasattr(self, 'cumulant_analyzer') or self.cumulant_analyzer is None:
+        # Check which type of analyzer we have
+        has_cumulant = hasattr(self, 'cumulant_analyzer') and self.cumulant_analyzer is not None
+        has_laplace = hasattr(self, 'laplace_analyzer') and self.laplace_analyzer is not None
+
+        if not has_cumulant and not has_laplace:
+            QMessageBox.warning(
+                self,
+                "No Analysis Results",
+                "No analysis results available.\n"
+                "Please run an analysis first."
+            )
+            return
+
+        # Handle NNLS/Regularized refinement
+        if has_laplace and not has_cumulant:
+            self._open_laplace_refinement()
+            return
+
+        # Handle Cumulant refinement (original code)
+        if not has_cumulant:
             QMessageBox.warning(
                 self,
                 "No Analysis Results",
@@ -1597,3 +1620,111 @@ class AnalysisView(QWidget):
         method_c_results['PDI'] = [polydispersity_method_C]
 
         return method_c_results
+
+    def _open_laplace_refinement(self):
+        """
+        Open refinement dialog for NNLS/Regularized NNLS
+
+        Allows removal of outlier peaks and recomputation of diffusion coefficients
+        """
+        from PyQt5.QtWidgets import QMessageBox, QInputDialog
+
+        # Determine which type of NNLS results we have
+        has_nnls = hasattr(self.laplace_analyzer, 'nnls_results') and self.laplace_analyzer.nnls_results is not None
+        has_regularized = hasattr(self.laplace_analyzer, 'regularized_results') and self.laplace_analyzer.regularized_results is not None
+
+        if not has_nnls and not has_regularized:
+            QMessageBox.warning(
+                self,
+                "No Results",
+                "No NNLS or Regularized NNLS results available.\n"
+                "Please run an analysis first."
+            )
+            return
+
+        # Ask user which peaks to exclude (by index)
+        method_name = "NNLS" if has_nnls else "Regularized NNLS"
+        results_df = self.laplace_analyzer.nnls_results if has_nnls else self.laplace_analyzer.regularized_results
+
+        # Show current results summary
+        summary = f"Current {method_name} Results:\n\n"
+        summary += f"Total datasets: {len(results_df)}\n\n"
+        summary += "Enter the row indices (from Results table) of bad fits to REMOVE.\n"
+        summary += "Separate multiple indices with commas (e.g., 1,3,5)\n"
+        summary += "Leave empty to cancel."
+
+        text, ok = QInputDialog.getText(
+            self,
+            f"{method_name} Post-Fit Refinement",
+            summary,
+            text=""
+        )
+
+        if not ok or not text.strip():
+            return
+
+        # Parse indices
+        try:
+            indices_str = text.strip().split(',')
+            indices_to_remove = [int(idx.strip()) for idx in indices_str if idx.strip()]
+
+            if not indices_to_remove:
+                return
+
+            print("\n" + "="*60)
+            print(f"{method_name.upper()} POST-FIT REFINEMENT")
+            print("="*60)
+            print(f"Removing {len(indices_to_remove)} outlier(s): {indices_to_remove}")
+
+            # Remove outliers and recompute
+            if has_nnls:
+                self.laplace_analyzer.remove_nnls_outliers(indices_to_remove)
+                self.laplace_analyzer._calculate_nnls_final_results()
+
+                # Update display
+                from gui.main_window import JADEDLSMainWindow
+                parent = self.parent()
+                while parent and not isinstance(parent, JADEDLSMainWindow):
+                    parent = parent.parent()
+
+                if parent:
+                    parent._display_nnls_results()
+
+            else:  # Regularized
+                self.laplace_analyzer.remove_regularized_outliers(indices_to_remove)
+                self.laplace_analyzer._calculate_regularized_final_results()
+
+                # Update display
+                from gui.main_window import JADEDLSMainWindow
+                parent = self.parent()
+                while parent and not isinstance(parent, JADEDLSMainWindow):
+                    parent = parent.parent()
+
+                if parent:
+                    parent._display_regularized_results()
+
+            print("="*60 + "\n")
+
+            QMessageBox.information(
+                self,
+                "Refinement Complete",
+                f"Successfully refined {method_name} results.\n"
+                f"Removed {len(indices_to_remove)} outlier(s).\n"
+                "Diffusion coefficients have been recalculated."
+            )
+
+        except ValueError as e:
+            QMessageBox.warning(
+                self,
+                "Invalid Input",
+                f"Invalid indices format: {str(e)}\n\n"
+                "Please enter comma-separated numbers (e.g., 1,3,5)"
+            )
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Refinement Failed",
+                f"Failed to refine results:\n{str(e)}"
+            )
+            import traceback
+            traceback.print_exc()

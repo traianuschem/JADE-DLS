@@ -1602,7 +1602,8 @@ print(method_c_results)
             plots_dict,
             fit_quality,
             switch_tab=False,
-            regression_stats=regression_stats if regression_stats.get('regression_results') else None
+            regression_stats=regression_stats if regression_stats.get('regression_results') else None,
+            analyzer=self.laplace_analyzer  # Pass analyzer for post-fit refinement
         )
 
         # Switch to Results tab to show the summary
@@ -1795,7 +1796,8 @@ print(method_c_results)
             plots_dict,
             fit_quality,
             switch_tab=False,
-            regression_stats=regression_stats if regression_stats.get('regression_results') else None
+            regression_stats=regression_stats if regression_stats.get('regression_results') else None,
+            analyzer=self.laplace_analyzer  # Pass analyzer for post-fit refinement
         )
 
         # Switch to Results tab to show the summary
