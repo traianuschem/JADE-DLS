@@ -871,14 +871,25 @@ class AnalysisView(QWidget):
                     for collection in source_ax.collections:
                         offsets = collection.get_offsets()
                         if len(offsets) > 0:
+                            # Get sizes and ensure they match offsets length
+                            sizes = collection.get_sizes()
+                            if len(sizes) == 1:
+                                sizes = sizes[0]  # Use scalar if only one size
+                            elif len(sizes) != len(offsets):
+                                sizes = 20  # Default size if mismatch
+
+                            # Get marker path safely
+                            paths = collection.get_paths()
+                            marker = paths[0] if paths and len(paths) > 0 else 'o'
+
                             ax.scatter(offsets[:, 0], offsets[:, 1],
                                      label=collection.get_label(),
                                      c=collection.get_facecolors(),
-                                     s=collection.get_sizes(),
+                                     s=sizes,
                                      alpha=collection.get_alpha(),
                                      edgecolors=collection.get_edgecolors(),
                                      linewidths=collection.get_linewidths(),
-                                     marker=collection.get_paths()[0] if collection.get_paths() else 'o')
+                                     marker=marker)
 
                     # Copy lines (fit lines, etc.)
                     for line in source_ax.get_lines():

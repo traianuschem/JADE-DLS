@@ -1503,12 +1503,12 @@ print(method_c_results)
                 self.status_manager.start_operation("Running NNLS analysis...")
 
                 try:
-                    # Run NNLS
+                    # Run NNLS (show_plots=False to avoid extra windows, plots shown in GUI)
                     self.status_manager.update("Performing NNLS fits...")
                     self.laplace_analyzer.run_nnls(
                         params,
                         use_multiprocessing=params.get('use_multiprocessing', False),
-                        show_plots=params.get('show_plots', True)
+                        show_plots=False  # Plots are displayed in Analysis View, not as separate windows
                     )
 
                     # Calculate diffusion coefficients
@@ -1697,11 +1697,12 @@ print(method_c_results)
                 self.status_manager.start_operation("Running Regularized NNLS analysis...")
 
                 try:
-                    # Run Regularized fit
+                    # Run Regularized fit (show_plots=False to avoid extra windows, plots shown in GUI)
                     self.status_manager.update("Performing regularized fits...")
                     self.laplace_analyzer.run_regularized(
                         params,
-                        show_plots=params.get('show_plots', True)
+                        use_multiprocessing=params.get('use_multiprocessing', False),
+                        show_plots=False  # Plots are displayed in Analysis View, not as separate windows
                     )
 
                     # Calculate diffusion coefficients
