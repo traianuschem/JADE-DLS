@@ -372,7 +372,7 @@ def calculate_decay_rates(df: pd.DataFrame, tau_columns: List[str]) -> pd.DataFr
 def nnls_preview_random(dataframes_dict: Dict[str, pd.DataFrame],
                         nnls_params: dict,
                         num_datasets: int = 5,
-                        seed: Optional[int] = None) -> Tuple[plt.Figure, List[str]]:
+                        seed: Optional[int] = None) -> Tuple[plt.Figure, List[str], List[dict]]:
     """
     Create preview plots for random datasets to tune find_peaks parameters
 
@@ -383,7 +383,7 @@ def nnls_preview_random(dataframes_dict: Dict[str, pd.DataFrame],
         seed: Random seed for reproducibility
 
     Returns:
-        Figure and list of selected dataset names
+        Tuple of (Figure, list of selected dataset names, list of results dicts)
     """
     if seed is not None:
         random.seed(seed)
@@ -417,6 +417,9 @@ def nnls_preview_random(dataframes_dict: Dict[str, pd.DataFrame],
     if all_same_tau:
         T_matrix = create_exponential_matrix(tau_arrays[0], decay_times)
 
+    # Collect results for clustering analysis
+    all_results = []
+
     # Process each dataset
     for idx, key in enumerate(chosen_keys):
         df = dataframes_dict[key]
@@ -425,6 +428,9 @@ def nnls_preview_random(dataframes_dict: Dict[str, pd.DataFrame],
         results, f_optimized, optimized_values, residuals_values, peaks = nnls_optimized(
             df, key, nnls_params, plot_number=idx+1, T_matrix=T_matrix
         )
+
+        # Store results for clustering
+        all_results.append(results)
 
         # Plot tau distribution with peaks
         ax = axes[idx]
@@ -461,7 +467,7 @@ def nnls_preview_random(dataframes_dict: Dict[str, pd.DataFrame],
                 fontsize=14, fontweight='bold')
     plt.tight_layout()
 
-    return fig, chosen_keys
+    return fig, chosen_keys, all_results
 
 
 # ===== RE-EXPORT ORIGINAL FUNCTIONS FOR BACKWARD COMPATIBILITY =====

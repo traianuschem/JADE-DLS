@@ -522,12 +522,16 @@ class CumulantAnalyzer:
             )
 
         # Run fitting (without showing plots)
+        use_multiprocessing = params.get('use_multiprocessing', False)
+        print(f"[Method C] Multiprocessing: {'Enabled' if use_multiprocessing else 'Disabled'}")
+
         self.method_c_fit, self.method_c_plots = plot_processed_correlations_iterative_no_show(
             self.processed_correlations,
             chosen_fit_function,
             params['fit_limits'],
             initial_parameters,
-            method=params['optimizer']
+            method=params['optimizer'],
+            use_multiprocessing=use_multiprocessing
         )
 
         # Merge with basedata

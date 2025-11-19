@@ -11,13 +11,14 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
                              QLabel, QDoubleSpinBox, QFormLayout, QTabWidget,
                              QWidget, QGroupBox, QMessageBox, QSizePolicy,
                              QListWidget, QListWidgetItem, QCheckBox, QScrollArea,
-                             QSplitter)
+                             QSplitter, QSpinBox)
 from PyQt5.QtCore import Qt
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.patches import Rectangle
 import numpy as np
+import pandas as pd
 
 
 class InteractivePlotWidget(QWidget):
@@ -307,8 +308,12 @@ class DistributionInspectorWidget(QWidget):
         # Clear current figure
         self.current_figure.clear()
 
-        # Get the stored figure
-        stored_fig = self.plots_dict[filename]
+        # Get the stored figure (plots_dict contains tuples: (fig, data))
+        plot_entry = self.plots_dict[filename]
+        if isinstance(plot_entry, tuple):
+            stored_fig, _ = plot_entry  # Unpack tuple
+        else:
+            stored_fig = plot_entry  # Handle case where it's just a figure
 
         # Copy axes from stored figure to current figure
         if hasattr(stored_fig, 'axes') and len(stored_fig.axes) > 0:

@@ -9,6 +9,7 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox,
                              QWidget, QMessageBox, QSizePolicy, QComboBox)
 from PyQt5.QtCore import Qt, pyqtSignal
 import numpy as np
+import pandas as pd
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
@@ -41,7 +42,9 @@ class RegularizedDialog(QDialog):
             'normalize': True,
             'sparsity_penalty': 0.0,
             'enforce_unimodality': False,
-            'num_preview': 5
+            'num_preview': 5,
+            'eps_factor': 0.3,  # Clustering parameter for automatic mode detection
+            'use_clustering': True  # Enable automatic peak clustering
         }
 
         # Storage for preview
@@ -314,6 +317,55 @@ class RegularizedDialog(QDialog):
         dist_group.setLayout(dist_layout)
         layout.addWidget(dist_group)
 
+        # Clustering Parameters
+        cluster_group = QGroupBox("Automatic Mode Clustering")
+        cluster_layout = QVBoxLayout()
+
+        cluster_info = QLabel("Clustering groups similar peaks across different angles into modes.\n"
+                             "Lower eps_factor = stricter clustering (more modes)\n"
+                             "Higher eps_factor = looser clustering (fewer modes)")
+        cluster_info.setWordWrap(True)
+        cluster_info.setStyleSheet("color: #666; font-style: italic;")
+        cluster_layout.addWidget(cluster_info)
+
+        # Enable clustering checkbox
+        self.clustering_enabled_check = QCheckBox("Enable automatic peak clustering")
+        self.clustering_enabled_check.setChecked(True)
+        self.clustering_enabled_check.setToolTip("Groups peaks with similar diffusion coefficients across angles")
+        cluster_layout.addWidget(self.clustering_enabled_check)
+
+        # eps_factor slider
+        eps_slider_layout = QHBoxLayout()
+        eps_slider_layout.addWidget(QLabel("eps_factor:"))
+
+        self.eps_factor_slider = QSlider(Qt.Horizontal)
+        self.eps_factor_slider.setRange(5, 100)  # 0.05 to 1.0 (scaled by 100)
+        self.eps_factor_slider.setValue(30)  # 0.3
+        self.eps_factor_slider.setTickPosition(QSlider.TicksBelow)
+        self.eps_factor_slider.setTickInterval(10)
+        self.eps_factor_slider.valueChanged.connect(self.on_eps_factor_slider_changed)
+        eps_slider_layout.addWidget(self.eps_factor_slider)
+
+        # Manual input field
+        self.eps_factor_input = QDoubleSpinBox()
+        self.eps_factor_input.setDecimals(2)
+        self.eps_factor_input.setRange(0.05, 1.0)
+        self.eps_factor_input.setValue(0.3)
+        self.eps_factor_input.setSingleStep(0.05)
+        self.eps_factor_input.setMinimumWidth(80)
+        self.eps_factor_input.valueChanged.connect(self.on_eps_factor_input_changed)
+        eps_slider_layout.addWidget(self.eps_factor_input)
+
+        cluster_layout.addLayout(eps_slider_layout)
+
+        # Mode detection info label
+        self.detected_modes_label = QLabel("Detected modes: N/A (run preview to see)")
+        self.detected_modes_label.setStyleSheet("font-weight: bold; color: #2196F3; padding: 5px;")
+        cluster_layout.addWidget(self.detected_modes_label)
+
+        cluster_group.setLayout(cluster_layout)
+        layout.addWidget(cluster_group)
+
         # Quick presets
         preset_group = QGroupBox("Quick Presets")
         preset_layout = QHBoxLayout()
@@ -483,6 +535,22 @@ class RegularizedDialog(QDialog):
         self.distance_slider.blockSignals(False)
         self.params['distance'] = value
 
+    def on_eps_factor_slider_changed(self, value):
+        """Handle eps_factor slider change"""
+        eps_factor = value / 100.0
+        self.eps_factor_input.blockSignals(True)
+        self.eps_factor_input.setValue(eps_factor)
+        self.eps_factor_input.blockSignals(False)
+        self.params['eps_factor'] = eps_factor
+
+    def on_eps_factor_input_changed(self, value):
+        """Handle eps_factor manual input change"""
+        slider_value = int(value * 100)
+        self.eps_factor_slider.blockSignals(True)
+        self.eps_factor_slider.setValue(slider_value)
+        self.eps_factor_slider.blockSignals(False)
+        self.params['eps_factor'] = value
+
     def apply_preset(self, preset_name):
         """Apply parameter preset"""
         presets = {
@@ -585,6 +653,9 @@ class RegularizedDialog(QDialog):
         cols = min(3, num_datasets)
         rows = (num_datasets + cols - 1) // cols
 
+        # Collect results for clustering analysis
+        all_results = []
+
         self.canvas.figure.clear()
 
         # Process each dataset
@@ -593,7 +664,10 @@ class RegularizedDialog(QDialog):
 
             # Run regularized fit
             try:
-                _, f_optimized, _, _, peaks = nnls_reg_simple(df, key, params)
+                results, f_optimized, _, _, peaks = nnls_reg_simple(df, key, params)
+
+                # Store results for clustering
+                all_results.append(results)
             except Exception as e:
                 print(f"Error processing {key}: {e}")
                 continue
@@ -627,10 +701,20 @@ class RegularizedDialog(QDialog):
             ax.grid(True, which='both', alpha=0.3)
             ax.legend(fontsize=8)
 
+        # Store results for later use
+        self.preview_results = all_results
+
+        # Perform mock clustering to estimate mode count
+        self._estimate_mode_count_from_preview(all_results, selected_keys)
+
+        # Create log-plot showing Γ vs q² for preview peaks
+        gamma_q2_fig = self._create_gamma_q2_logplot(all_results, selected_keys)
+
         self.canvas.figure.suptitle(
             f'Regularized NNLS Preview - Alpha: {params["alpha"]:.4f}, '
-            f'Prominence: {params["prominence"]:.3f}, Distance: {params["distance"]}',
-            fontsize=14, fontweight='bold'
+            f'Prominence: {params["prominence"]:.3f}, Distance: {params["distance"]}, '
+            f'eps_factor: {self.params["eps_factor"]:.2f}',
+            fontsize=12, fontweight='bold'
         )
         self.canvas.figure.tight_layout()
         self.canvas.draw()
@@ -638,6 +722,221 @@ class RegularizedDialog(QDialog):
     def update_preview(self):
         """Update preview with current parameter values"""
         self.generate_preview()
+
+    def _estimate_mode_count_from_preview(self, preview_results, selected_datasets):
+        """
+        Estimate the number of modes from preview results using clustering
+
+        Args:
+            preview_results: List of result dicts from Regularized preview
+            selected_datasets: List of dataset names used in preview
+        """
+        try:
+            # Check if clustering is enabled
+            if not self.params.get('use_clustering', True):
+                self.detected_modes_label.setText("Detected modes: N/A (clustering disabled)")
+                self.detected_modes_label.setStyleSheet("font-weight: bold; color: gray; padding: 5px;")
+                return
+
+            # Create a DataFrame from preview results
+            preview_df = pd.DataFrame(preview_results)
+
+            # Get q² values from basedata for the selected datasets
+            basedata = self.laplace_analyzer.df_basedata
+
+            # Match filenames to get q² values
+            q_squared_values = []
+            for filename in selected_datasets:
+                # Find matching row in basedata
+                matching_rows = basedata[basedata['filename'] == filename]
+                if len(matching_rows) > 0:
+                    q_squared_values.append(matching_rows.iloc[0]['q^2'])
+                else:
+                    print(f"[Preview Clustering] Warning: {filename} not found in basedata")
+                    q_squared_values.append(None)
+
+            # Add q² column to preview_df
+            preview_df['q^2'] = q_squared_values
+
+            # Remove rows with missing q² values
+            preview_df = preview_df.dropna(subset=['q^2'])
+
+            if len(preview_df) < 2:
+                self.detected_modes_label.setText("Detected modes: N/A (insufficient data)")
+                self.detected_modes_label.setStyleSheet("font-weight: bold; color: orange; padding: 5px;")
+                return
+
+            # Perform mock clustering
+            from peak_clustering import cluster_peaks_across_datasets
+
+            eps_factor = self.params.get('eps_factor', 0.3)
+
+            clustered_df, cluster_info = cluster_peaks_across_datasets(
+                preview_df,
+                tau_prefix='tau_',
+                method='dbscan',
+                eps_factor=eps_factor,
+                min_samples=max(2, int(0.2 * len(preview_df)))
+            )
+
+            # Count modes
+            n_modes = len(cluster_info)
+
+            # Update label
+            mode_text = f"Detected modes: {n_modes} mode{'s' if n_modes != 1 else ''}"
+            self.detected_modes_label.setText(mode_text)
+
+            # Color based on mode count
+            if n_modes == 0:
+                color = "#f44336"  # Red - no modes
+            elif n_modes == 1:
+                color = "#4CAF50"  # Green - monodisperse
+            elif n_modes <= 3:
+                color = "#2196F3"  # Blue - few modes
+            else:
+                color = "#FF9800"  # Orange - many modes
+
+            self.detected_modes_label.setStyleSheet(f"font-weight: bold; color: {color}; padding: 5px;")
+
+            print(f"[Preview Clustering] Estimated {n_modes} modes with eps_factor={eps_factor:.2f}")
+
+        except Exception as e:
+            print(f"[Preview Clustering] Error estimating mode count: {e}")
+            import traceback
+            traceback.print_exc()
+            self.detected_modes_label.setText(f"Detected modes: Error ({str(e)[:30]}...)")
+            self.detected_modes_label.setStyleSheet("font-weight: bold; color: red; padding: 5px;")
+
+    def _create_gamma_q2_logplot(self, preview_results, selected_datasets):
+        """
+        Create a log-plot showing Γ vs q² for all preview peaks
+
+        This helps visualize the clustering behavior and identify if modes
+        are being correctly grouped across different scattering angles.
+
+        Args:
+            preview_results: List of result dicts from Regularized preview
+            selected_datasets: List of dataset names used in preview
+
+        Returns:
+            matplotlib Figure or None if error
+        """
+        try:
+            # Create a DataFrame from preview results
+            preview_df = pd.DataFrame(preview_results)
+
+            # Get q² values from basedata
+            basedata = self.laplace_analyzer.df_basedata
+
+            q_squared_values = []
+            for filename in selected_datasets:
+                matching_rows = basedata[basedata['filename'] == filename]
+                if len(matching_rows) > 0:
+                    q_squared_values.append(matching_rows.iloc[0]['q^2'])
+                else:
+                    q_squared_values.append(None)
+
+            preview_df['q^2'] = q_squared_values
+            preview_df = preview_df.dropna(subset=['q^2'])
+
+            if len(preview_df) < 1:
+                return None
+
+            # Find all tau columns
+            tau_cols = [col for col in preview_df.columns if col.startswith('tau_')]
+            if len(tau_cols) == 0:
+                return None
+
+            # Calculate Γ values from tau values
+            # Γ = 1/τ
+            from regularized_optimized import calculate_decay_rates
+            preview_df = calculate_decay_rates(preview_df, tau_cols)
+
+            # Get gamma columns
+            gamma_cols = [col.replace('tau', 'gamma') for col in tau_cols]
+
+            # Create figure
+            fig = Figure(figsize=(10, 6))
+            ax = fig.add_subplot(111)
+
+            # Plot each peak as a separate series
+            colors = plt.cm.tab10(np.linspace(0, 1, len(gamma_cols)))
+
+            for i, (gamma_col, tau_col) in enumerate(zip(gamma_cols, tau_cols)):
+                if gamma_col not in preview_df.columns:
+                    continue
+
+                # Extract valid data points
+                valid_mask = preview_df[gamma_col].notna()
+                q2_values = preview_df.loc[valid_mask, 'q^2'].values
+                gamma_values = preview_df.loc[valid_mask, gamma_col].values
+
+                if len(q2_values) == 0:
+                    continue
+
+                # Plot in log-log scale
+                ax.loglog(q2_values, gamma_values, 'o', color=colors[i],
+                         markersize=8, alpha=0.7, label=f'Peak {i+1}',
+                         markeredgecolor='black', markeredgewidth=0.5)
+
+                # Try to fit a line if we have enough points
+                if len(q2_values) >= 2:
+                    # Linear fit in log-space: log(Γ) = log(D) + log(q²)
+                    # So Γ = D × q²
+                    log_q2 = np.log10(q2_values)
+                    log_gamma = np.log10(gamma_values)
+
+                    # Simple linear fit
+                    coeffs = np.polyfit(log_q2, log_gamma, 1)
+                    slope = coeffs[0]
+                    intercept = coeffs[1]
+
+                    # Plot fit line
+                    q2_fit = np.logspace(np.log10(q2_values.min()), np.log10(q2_values.max()), 50)
+                    gamma_fit = 10**(slope * np.log10(q2_fit) + intercept)
+
+                    ax.loglog(q2_fit, gamma_fit, '--', color=colors[i],
+                             alpha=0.5, linewidth=1.5)
+
+                    # Calculate D from slope
+                    # If slope ≈ 1, then D ≈ 10^intercept
+                    D_estimate = 10**intercept if abs(slope - 1.0) < 0.2 else None
+
+                    if D_estimate is not None:
+                        # Add label with D estimate
+                        mid_idx = len(q2_fit) // 2
+                        ax.text(q2_fit[mid_idx], gamma_fit[mid_idx],
+                               f'D≈{D_estimate:.2e}',
+                               fontsize=8, color=colors[i],
+                               bbox=dict(boxstyle='round,pad=0.3',
+                                       facecolor='white', alpha=0.7))
+
+            ax.set_xlabel(r'q² [nm$^{-2}$]', fontsize=12, fontweight='bold')
+            ax.set_ylabel(r'$\Gamma$ [1/s]', fontsize=12, fontweight='bold')
+            ax.set_title('Relaxation Rate vs Scattering Vector (Log-Log Plot)\n'
+                        'Helps visualize mode clustering across angles',
+                        fontsize=12, fontweight='bold')
+            ax.grid(True, which='both', alpha=0.3, linestyle='--')
+            ax.legend(loc='best', fontsize=9)
+
+            # Add reference line for Γ ∝ q² (slope = 1)
+            q2_range = ax.get_xlim()
+            gamma_ref = np.array(q2_range)
+            ax.loglog(q2_range, gamma_ref * np.median(gamma_ref) / np.median(q2_range),
+                     'k:', linewidth=1, alpha=0.3, label='Γ ∝ q² (reference)')
+
+            fig.tight_layout()
+
+            # Store figure for later display
+            self.gamma_q2_figure = fig
+
+            return fig
+
+        except Exception as e:
+            print(f"[Gamma-q² Plot] Error creating log-plot: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
 
     def update_params_from_inputs(self):
         """Update parameters dictionary from input widgets"""
@@ -658,6 +957,10 @@ class RegularizedDialog(QDialog):
         self.params['normalize'] = self.normalize_check.isChecked()
         self.params['sparsity_penalty'] = self.sparsity_spin.value()
         self.params['enforce_unimodality'] = self.unimodal_check.isChecked()
+
+        # Clustering parameters
+        self.params['use_clustering'] = self.clustering_enabled_check.isChecked()
+        self.params['eps_factor'] = self.eps_factor_input.value()
 
         # Processing options
         self.params['use_multiprocessing'] = self.multiprocessing_check.isChecked()
