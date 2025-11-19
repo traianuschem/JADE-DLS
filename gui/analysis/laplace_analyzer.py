@@ -201,12 +201,17 @@ class LaplaceAnalyzer:
 
                 multiprocessing_success = True
 
-            except ImportError:
-                print("[NNLS] Warning: joblib not available, falling back to sequential processing")
+            except ImportError as e:
+                print(f"[NNLS] Warning: joblib not available ({e})")
+                print("[NNLS] Install required packages: pip install joblib scikit-learn")
+                print("[NNLS] Falling back to sequential processing")
                 use_multiprocessing = False
             except Exception as e:
-                print(f"[NNLS] Warning: Parallel processing failed ({str(e)}), using sequential processing")
+                print(f"[NNLS] Warning: Parallel processing failed: {type(e).__name__}: {str(e)}")
+                print("[NNLS] Falling back to sequential processing")
                 use_multiprocessing = False
+                import traceback
+                traceback.print_exc()
 
             # Only do Phase 2 if multiprocessing succeeded
             if multiprocessing_success:
@@ -628,12 +633,17 @@ class LaplaceAnalyzer:
 
                 multiprocessing_success = True
 
-            except ImportError:
-                print("[Regularized] Warning: joblib not available, falling back to sequential processing")
+            except ImportError as e:
+                print(f"[Regularized] Warning: joblib not available ({e})")
+                print("[Regularized] Install required packages: pip install joblib scikit-learn")
+                print("[Regularized] Falling back to sequential processing")
                 use_multiprocessing = False
             except Exception as e:
-                print(f"[Regularized] Warning: Parallel processing failed ({str(e)}), using sequential processing")
+                print(f"[Regularized] Warning: Parallel processing failed: {type(e).__name__}: {str(e)}")
+                print("[Regularized] Falling back to sequential processing")
                 use_multiprocessing = False
+                import traceback
+                traceback.print_exc()
 
             # Only do Phase 2 if multiprocessing succeeded
             if multiprocessing_success:
