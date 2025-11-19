@@ -37,7 +37,9 @@ class NNLSDialog(QDialog):
             'decay_times': np.logspace(-8, 1, 200),
             'prominence': 0.05,
             'distance': 1,
-            'num_preview': 5
+            'num_preview': 5,
+            'eps_factor': 0.3,  # Clustering parameter for automatic mode detection
+            'use_clustering': True  # Enable automatic peak clustering
         }
 
         # Storage for preview
@@ -255,6 +257,55 @@ class NNLSDialog(QDialog):
         dist_group.setLayout(dist_layout)
         layout.addWidget(dist_group)
 
+        # Clustering Parameters
+        cluster_group = QGroupBox("Automatic Mode Clustering")
+        cluster_layout = QVBoxLayout()
+
+        cluster_info = QLabel("Clustering groups similar peaks across different angles into modes.\n"
+                             "Lower eps_factor = stricter clustering (more modes)\n"
+                             "Higher eps_factor = looser clustering (fewer modes)")
+        cluster_info.setWordWrap(True)
+        cluster_info.setStyleSheet("color: #666; font-style: italic;")
+        cluster_layout.addWidget(cluster_info)
+
+        # Enable clustering checkbox
+        self.clustering_enabled_check = QCheckBox("Enable automatic peak clustering")
+        self.clustering_enabled_check.setChecked(True)
+        self.clustering_enabled_check.setToolTip("Groups peaks with similar diffusion coefficients across angles")
+        cluster_layout.addWidget(self.clustering_enabled_check)
+
+        # eps_factor slider
+        eps_slider_layout = QHBoxLayout()
+        eps_slider_layout.addWidget(QLabel("eps_factor:"))
+
+        self.eps_factor_slider = QSlider(Qt.Horizontal)
+        self.eps_factor_slider.setRange(5, 100)  # 0.05 to 1.0 (scaled by 100)
+        self.eps_factor_slider.setValue(30)  # 0.3
+        self.eps_factor_slider.setTickPosition(QSlider.TicksBelow)
+        self.eps_factor_slider.setTickInterval(10)
+        self.eps_factor_slider.valueChanged.connect(self.on_eps_factor_slider_changed)
+        eps_slider_layout.addWidget(self.eps_factor_slider)
+
+        # Manual input field
+        self.eps_factor_input = QDoubleSpinBox()
+        self.eps_factor_input.setDecimals(2)
+        self.eps_factor_input.setRange(0.05, 1.0)
+        self.eps_factor_input.setValue(0.3)
+        self.eps_factor_input.setSingleStep(0.05)
+        self.eps_factor_input.setMinimumWidth(80)
+        self.eps_factor_input.valueChanged.connect(self.on_eps_factor_input_changed)
+        eps_slider_layout.addWidget(self.eps_factor_input)
+
+        cluster_layout.addLayout(eps_slider_layout)
+
+        # Mode detection info label
+        self.detected_modes_label = QLabel("Detected modes: N/A (run preview to see)")
+        self.detected_modes_label.setStyleSheet("font-weight: bold; color: #2196F3; padding: 5px;")
+        cluster_layout.addWidget(self.detected_modes_label)
+
+        cluster_group.setLayout(cluster_layout)
+        layout.addWidget(cluster_group)
+
         # Quick presets
         preset_group = QGroupBox("Quick Presets")
         preset_layout = QHBoxLayout()
@@ -367,6 +418,22 @@ class NNLSDialog(QDialog):
         self.distance_slider.setValue(value)
         self.distance_slider.blockSignals(False)
         self.params['distance'] = value
+
+    def on_eps_factor_slider_changed(self, value):
+        """Handle eps_factor slider change"""
+        eps_factor = value / 100.0
+        self.eps_factor_input.blockSignals(True)
+        self.eps_factor_input.setValue(eps_factor)
+        self.eps_factor_input.blockSignals(False)
+        self.params['eps_factor'] = eps_factor
+
+    def on_eps_factor_input_changed(self, value):
+        """Handle eps_factor manual input change"""
+        slider_value = int(value * 100)
+        self.eps_factor_slider.blockSignals(True)
+        self.eps_factor_slider.setValue(slider_value)
+        self.eps_factor_slider.blockSignals(False)
+        self.params['eps_factor'] = value
 
     def apply_preset(self, preset_name):
         """Apply parameter preset"""
@@ -496,6 +563,10 @@ class NNLSDialog(QDialog):
         # Peak detection - use values from input fields (they're synced with sliders)
         self.params['prominence'] = self.prominence_input.value()
         self.params['distance'] = self.distance_input.value()
+
+        # Clustering parameters
+        self.params['use_clustering'] = self.clustering_enabled_check.isChecked()
+        self.params['eps_factor'] = self.eps_factor_input.value()
 
         # Processing options
         self.params['use_multiprocessing'] = self.multiprocessing_check.isChecked()
