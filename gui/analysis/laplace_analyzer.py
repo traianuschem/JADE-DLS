@@ -475,6 +475,11 @@ class LaplaceAnalyzer:
 
         temp_results = []
         for i in range(len(self.nnls_diff_results)):
+            # Skip if values are NaN
+            if pd.isna(self.nnls_diff_results['q^2_coef'][i]):
+                print(f"[NNLS] Skipping peak {i+1} - invalid diffusion coefficient")
+                continue
+
             # Convert D from nm²/s to m²/s
             D_m2s = self.nnls_diff_results['q^2_coef'][i] * 1e-18
             D_err_m2s = self.nnls_diff_results['q^2_se'][i] * 1e-18
@@ -500,7 +505,15 @@ class LaplaceAnalyzer:
             })
             temp_results.append(result)
 
-        self.nnls_final_results = pd.concat(temp_results, ignore_index=True)
+        # Check if we have valid results
+        if len(temp_results) == 0:
+            print("[NNLS] Warning: No valid results to finalize. Creating empty DataFrame.")
+            self.nnls_final_results = pd.DataFrame(columns=[
+                'Rh [nm]', 'Rh error [nm]', 'D [m^2/s]', 'D error [m^2/s]',
+                'R_squared', 'Fit', 'Residuals'
+            ])
+        else:
+            self.nnls_final_results = pd.concat(temp_results, ignore_index=True)
 
     def remove_nnls_outliers(self, indices_to_remove: List[int]):
         """
@@ -915,6 +928,11 @@ class LaplaceAnalyzer:
 
         temp_results = []
         for i in range(len(self.regularized_diff_results)):
+            # Skip if values are NaN
+            if pd.isna(self.regularized_diff_results['q^2_coef'][i]):
+                print(f"[Regularized] Skipping peak {i+1} - invalid diffusion coefficient")
+                continue
+
             # Convert D from nm²/s to m²/s
             D_m2s = self.regularized_diff_results['q^2_coef'][i] * 1e-18
             D_err_m2s = self.regularized_diff_results['q^2_se'][i] * 1e-18
@@ -941,7 +959,15 @@ class LaplaceAnalyzer:
             })
             temp_results.append(result)
 
-        self.regularized_final_results = pd.concat(temp_results, ignore_index=True)
+        # Check if we have valid results
+        if len(temp_results) == 0:
+            print("[Regularized] Warning: No valid results to finalize. Creating empty DataFrame.")
+            self.regularized_final_results = pd.DataFrame(columns=[
+                'Rh [nm]', 'Rh error [nm]', 'D [m^2/s]', 'D error [m^2/s]',
+                'R_squared', 'Fit', 'Residuals', 'Alpha'
+            ])
+        else:
+            self.regularized_final_results = pd.concat(temp_results, ignore_index=True)
 
     def plot_angle_comparison(self, angles: Optional[List[float]] = None,
                              measurement_mode: str = 'average',

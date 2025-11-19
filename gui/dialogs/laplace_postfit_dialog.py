@@ -184,8 +184,8 @@ class DistributionInspectorWidget(QWidget):
         # Info
         info_label = QLabel(
             f"<b>Select distributions to exclude</b><br>"
-            f"Check the boxes next to distributions you want to exclude from the final analysis.<br>"
-            f"Click on a distribution to view its plot on the right."
+            f"Use arrow keys or mouse to navigate. Check the boxes to exclude distributions from analysis.<br>"
+            f"Press Space to toggle exclusion for the selected distribution."
         )
         info_label.setWordWrap(True)
         layout.addWidget(info_label)
@@ -193,24 +193,20 @@ class DistributionInspectorWidget(QWidget):
         # Create horizontal split: List on left, Plot on right
         splitter = QSplitter(Qt.Horizontal)
 
-        # Left side: Checkbox list
+        # Left side: List with checkboxes
         left_widget = QWidget()
         left_layout = QVBoxLayout()
 
-        # Create scroll area for distribution list
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll_widget = QWidget()
-        scroll_layout = QVBoxLayout()
+        # Create QListWidget for distribution list (better keyboard navigation)
+        self.list_widget = QListWidget()
+        self.list_widget.setSelectionMode(QListWidget.SingleSelection)
 
-        # Create checkbox for each distribution
-        self.checkboxes = {}
+        # Filter and add items
         filenames = sorted(self.plots_dict.keys())
+        self.valid_filenames = []
 
         # Debug: Print available plots
         print(f"[DistributionInspector] Available plots: {len(filenames)}")
-        for fn in filenames:
-            print(f"  - {fn}")
 
         for filename in filenames:
             # Skip summary/diffusion analysis plots but keep individual distribution plots
@@ -218,19 +214,21 @@ class DistributionInspectorWidget(QWidget):
                 print(f"[DistributionInspector] Skipping summary plot: {filename}")
                 continue  # Skip summary plots
 
-            # Create checkbox
-            checkbox = QCheckBox(filename)
-            checkbox.setChecked(False)
-            checkbox.clicked.connect(lambda checked, fn=filename: self._show_plot(fn))
-            self.checkboxes[filename] = checkbox
-            scroll_layout.addWidget(checkbox)
+            self.valid_filenames.append(filename)
 
-        print(f"[DistributionInspector] Created {len(self.checkboxes)} checkboxes")
+            # Create list item with checkbox
+            item = QListWidgetItem(filename)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Unchecked)
+            self.list_widget.addItem(item)
 
-        scroll_layout.addStretch()
-        scroll_widget.setLayout(scroll_layout)
-        scroll.setWidget(scroll_widget)
-        left_layout.addWidget(scroll)
+        print(f"[DistributionInspector] Created {len(self.valid_filenames)} items")
+
+        # Connect selection changed signal
+        self.list_widget.currentItemChanged.connect(self._on_selection_changed)
+        self.list_widget.itemChanged.connect(self._update_count)
+
+        left_layout.addWidget(self.list_widget)
 
         # Selection controls
         control_layout = QHBoxLayout()
@@ -283,21 +281,29 @@ class DistributionInspectorWidget(QWidget):
 
         layout.addWidget(splitter)
 
-        # Connect signals
-        for checkbox in self.checkboxes.values():
-            checkbox.stateChanged.connect(self._update_count)
+        # Select first item by default
+        if self.list_widget.count() > 0:
+            self.list_widget.setCurrentRow(0)
 
         self.setLayout(layout)
 
+    def _on_selection_changed(self, current, previous):
+        """Handle selection change in list widget"""
+        if current is not None:
+            filename = current.text()
+            self._show_plot(filename)
+
     def _select_all(self):
         """Select all distributions for exclusion"""
-        for checkbox in self.checkboxes.values():
-            checkbox.setChecked(True)
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            item.setCheckState(Qt.Checked)
 
     def _deselect_all(self):
         """Deselect all distributions"""
-        for checkbox in self.checkboxes.values():
-            checkbox.setChecked(False)
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            item.setCheckState(Qt.Unchecked)
 
     def _show_plot(self, filename):
         """Display the plot for the selected distribution"""
@@ -385,15 +391,23 @@ class DistributionInspectorWidget(QWidget):
 
         print(f"[DistributionInspector] Displayed plot: {filename}")
 
-    def _update_count(self):
+    def _update_count(self, item=None):
         """Update the count of excluded distributions"""
-        count = sum(1 for cb in self.checkboxes.values() if cb.isChecked())
+        count = 0
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            if item.checkState() == Qt.Checked:
+                count += 1
         self.count_label.setText(f"{count} distribution(s) selected for exclusion")
 
     def get_excluded_files(self):
         """Get list of files to exclude"""
-        return [filename for filename, checkbox in self.checkboxes.items()
-                if checkbox.isChecked()]
+        excluded = []
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            if item.checkState() == Qt.Checked:
+                excluded.append(item.text())
+        return excluded
 
 
 class LaplacePostFitRefinementDialog(QDialog):
