@@ -1803,7 +1803,7 @@ class AnalysisView(QWidget):
                     parent = parent.parent()
 
                 if parent:
-                    parent._display_nnls_results(replace_existing=True)
+                    parent._display_nnls_results(replace_existing=False)
 
             else:  # Regularized
                 self.laplace_analyzer.calculate_regularized_diffusion_coefficients(x_range=q_range)
@@ -1816,7 +1816,7 @@ class AnalysisView(QWidget):
                     parent = parent.parent()
 
                 if parent:
-                    parent._display_regularized_results(replace_existing=True)
+                    parent._display_regularized_results(replace_existing=False)
 
             print("="*60 + "\n")
 
