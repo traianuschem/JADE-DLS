@@ -297,6 +297,18 @@ class CumulantAnalysisDialog(QDialog):
         init_params_group.setLayout(init_layout)
         layout.addRow(init_params_group)
 
+        # Processing Options
+        processing_group = QGroupBox("Processing Options")
+        processing_layout = QVBoxLayout()
+
+        self.c_multiprocessing_check = QCheckBox("Use multiprocessing (faster for large datasets)")
+        self.c_multiprocessing_check.setChecked(False)
+        self.c_multiprocessing_check.setToolTip("Enable parallel processing for faster analysis (uses joblib for cross-platform support)")
+        processing_layout.addWidget(self.c_multiprocessing_check)
+
+        processing_group.setLayout(processing_layout)
+        layout.addRow(processing_group)
+
         # Info
         info_label = QLabel(
             "<i>Note: Initial parameters are only used if adaptive guesses are disabled.<br>"
@@ -378,6 +390,7 @@ class CumulantAnalysisDialog(QDialog):
                 'adaptive_initial_guesses': self.c_adaptive.isChecked(),
                 'adaptation_strategy': strategy_map[self.c_strategy.currentIndex()],
                 'optimizer': optimizer_map[self.c_optimizer.currentIndex()],
+                'use_multiprocessing': self.c_multiprocessing_check.isChecked(),
                 'initial_parameters': [
                     self.c_init_a.value(),
                     self.c_init_b.value(),
