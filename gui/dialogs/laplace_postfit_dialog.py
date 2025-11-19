@@ -352,6 +352,17 @@ class DistributionInspectorWidget(QWidget):
 
                 # Copy text annotations
                 for text in ax_src.texts:
+                    # Properly handle bbox patch
+                    bbox_dict = None
+                    if text.get_bbox_patch():
+                        bbox_patch = text.get_bbox_patch()
+                        bbox_dict = dict(
+                            boxstyle='round,pad=0.3',
+                            facecolor=bbox_patch.get_facecolor(),
+                            edgecolor=bbox_patch.get_edgecolor(),
+                            alpha=bbox_patch.get_alpha() or 0.7
+                        )
+
                     ax_dest.text(text.get_position()[0], text.get_position()[1],
                                text.get_text(),
                                transform=ax_dest.transData if text.get_transform() == ax_src.transData else ax_dest.transAxes,
@@ -359,7 +370,7 @@ class DistributionInspectorWidget(QWidget):
                                color=text.get_color(),
                                ha=text.get_ha(),
                                va=text.get_va(),
-                               bbox=text.get_bbox_patch().get_boxstyle() if text.get_bbox_patch() else None)
+                               bbox=bbox_dict)
 
         else:
             # Fallback: show message

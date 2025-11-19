@@ -493,8 +493,10 @@ class RegularizedDialog(QDialog):
         layout.addWidget(self.preview_info_label)
 
         # Matplotlib canvas with larger figure size for better visibility
-        self.canvas = FigureCanvas(Figure(figsize=(16, 12)))
+        # Use much larger size to ensure plots are clearly visible
+        self.canvas = FigureCanvas(Figure(figsize=(18, 20)))
         self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.canvas.setMinimumSize(800, 1000)
 
         # Navigation toolbar
         self.toolbar = NavigationToolbar(self.canvas, self)
@@ -650,12 +652,13 @@ class RegularizedDialog(QDialog):
     def _create_regularized_preview(self, selected_keys, params):
         """Create preview plots using regularized fit"""
         from regularized import nnls_reg_simple
+        from matplotlib.gridspec import GridSpec
 
         decay_times = params['decay_times']
 
-        # Calculate grid size
+        # Calculate grid size - use 2 columns for better visibility
         num_datasets = len(selected_keys)
-        cols = min(3, num_datasets)
+        cols = min(2, num_datasets)
         rows = (num_datasets + cols - 1) // cols
 
         # Collect results for clustering analysis
@@ -663,7 +666,12 @@ class RegularizedDialog(QDialog):
 
         self.canvas.figure.clear()
 
+        # Create GridSpec with better spacing
+        gs = GridSpec(rows, cols, hspace=0.5, wspace=0.35,
+                     figure=self.canvas.figure)
+
         # Process each dataset
+        plot_idx = 0
         for idx, key in enumerate(selected_keys):
             df = self.laplace_analyzer.processed_correlations[key]
 
@@ -677,8 +685,11 @@ class RegularizedDialog(QDialog):
                 print(f"Error processing {key}: {e}")
                 continue
 
-            # Create subplot
-            ax = self.canvas.figure.add_subplot(rows, cols, idx + 1)
+            # Create subplot with GridSpec
+            row = plot_idx // cols
+            col = plot_idx % cols
+            ax = self.canvas.figure.add_subplot(gs[row, col])
+            plot_idx += 1
 
             # Plot distribution
             ax.semilogx(decay_times, f_optimized, 'b-', linewidth=2, label='Distribution')
@@ -698,13 +709,15 @@ class RegularizedDialog(QDialog):
                     ax.annotate(f'τ={decay_times[peak_idx]:.2e}',
                                xy=(decay_times[peak_idx], f_optimized[peak_idx]),
                                xytext=(10, 10), textcoords='offset points',
-                               fontsize=8, bbox=dict(boxstyle="round", fc=color, alpha=0.3))
+                               fontsize=9, bbox=dict(boxstyle="round", fc=color, alpha=0.3))
 
-            ax.set_xlabel('Decay Time [s]')
-            ax.set_ylabel('Intensity')
-            ax.set_title(f'{key}\n{len(peaks)} peaks found')
+            # Set labels with larger font sizes
+            ax.set_xlabel('Decay Time [s]', fontsize=11)
+            ax.set_ylabel('Intensity', fontsize=11)
+            ax.set_title(f'{key}\n{len(peaks)} peaks found', fontsize=12, fontweight='bold')
             ax.grid(True, which='both', alpha=0.3)
-            ax.legend(fontsize=8)
+            ax.tick_params(axis='both', which='major', labelsize=10)
+            ax.legend(fontsize=9)
 
         # Store results for later use
         self.preview_results = all_results

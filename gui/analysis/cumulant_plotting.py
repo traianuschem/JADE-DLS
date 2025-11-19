@@ -7,8 +7,9 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import scipy.stats as stats
-from scipy.optimize import curve_fit
+from scipy.optimize import curve_fit, OptimizeWarning
 import inspect
+import warnings
 
 
 def plot_processed_correlations_no_show(dataframes_dict, fit_function, fit_x_limits):
@@ -179,15 +180,17 @@ def _fit_single_dataset_method_c(name, df, fit_function, fit_limits, initial_par
         # Iterative fitting loop
         for i in range(max_iterations):
             try:
-                # Perform fit
-                if method == 'lm':
-                    popt, pcov = curve_fit(fit_function, x_fit, y_fit,
-                                          p0=current_guess, maxfev=5000)
-                else:
-                    bounds = ([-np.inf] * len(current_guess), [np.inf] * len(current_guess))
-                    popt, pcov = curve_fit(fit_function, x_fit, y_fit,
-                                          p0=current_guess, method=method,
-                                          bounds=bounds, maxfev=5000)
+                # Perform fit - suppress OptimizeWarning about covariance
+                with warnings.catch_warnings():
+                    warnings.filterwarnings('ignore', category=OptimizeWarning)
+                    if method == 'lm':
+                        popt, pcov = curve_fit(fit_function, x_fit, y_fit,
+                                              p0=current_guess, maxfev=5000)
+                    else:
+                        bounds = ([-np.inf] * len(current_guess), [np.inf] * len(current_guess))
+                        popt, pcov = curve_fit(fit_function, x_fit, y_fit,
+                                              p0=current_guess, method=method,
+                                              bounds=bounds, maxfev=5000)
 
                 # Generate fit curve
                 y_fit_values = fit_function(x_data, *popt)

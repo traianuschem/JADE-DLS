@@ -378,8 +378,10 @@ class NNLSDialog(QDialog):
         layout.addWidget(self.preview_info_label)
 
         # Matplotlib canvas with larger figure size for better visibility
-        self.canvas = FigureCanvas(Figure(figsize=(16, 12)))
+        # Use much larger size to ensure plots are clearly visible
+        self.canvas = FigureCanvas(Figure(figsize=(18, 20)))
         self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.canvas.setMinimumSize(800, 1000)
 
         # Navigation toolbar
         self.toolbar = NavigationToolbar(self.canvas, self)
@@ -501,19 +503,18 @@ class NNLSDialog(QDialog):
                 from matplotlib.gridspec import GridSpec
 
                 # Create layout: top section for preview plots, bottom for gamma-q² plot
-                gs = GridSpec(2, 1, height_ratios=[2, 1], hspace=0.3,
+                # Give more space to preview plots (height ratio 3:1 instead of 2:1)
+                gs = GridSpec(2, 1, height_ratios=[3, 1], hspace=0.4,
                              figure=self.canvas.figure)
-
-                # Top section: copy preview plots
-                gs_top = gs[0].subgridspec(1, 1)
-                top_section = self.canvas.figure.add_subplot(gs_top[0])
 
                 # We'll create a nested grid for the preview plots
                 num_preview_plots = len(fig.get_axes())
-                cols = min(3, num_preview_plots)
+                # Use 2 columns instead of 3 for more space per plot
+                cols = min(2, num_preview_plots)
                 rows = (num_preview_plots + cols - 1) // cols
 
-                gs_preview = gs[0].subgridspec(rows, cols)
+                # Add more spacing between preview subplots
+                gs_preview = gs[0].subgridspec(rows, cols, hspace=0.5, wspace=0.35)
 
                 for i, ax in enumerate(fig.get_axes()):
                     row = i // cols
@@ -546,15 +547,17 @@ class NNLSDialog(QDialog):
                                    fontsize=text.get_fontsize(),
                                    bbox=bbox_dict)
 
-                    # Copy properties
-                    new_ax.set_xlabel(ax.get_xlabel(), fontsize=9)
-                    new_ax.set_ylabel(ax.get_ylabel(), fontsize=9)
-                    new_ax.set_title(ax.get_title(), fontsize=10)
+                    # Copy properties with larger font sizes for better readability
+                    new_ax.set_xlabel(ax.get_xlabel(), fontsize=11)
+                    new_ax.set_ylabel(ax.get_ylabel(), fontsize=11)
+                    new_ax.set_title(ax.get_title(), fontsize=12, fontweight='bold')
                     new_ax.set_xscale(ax.get_xscale())
                     new_ax.set_yscale(ax.get_yscale())
                     new_ax.grid(True, which='both', alpha=0.3)
+                    # Increase tick label sizes
+                    new_ax.tick_params(axis='both', which='major', labelsize=10)
                     if ax.get_legend():
-                        new_ax.legend(fontsize=7)
+                        new_ax.legend(fontsize=9)
 
                 # Bottom section: copy gamma-q² plot
                 gamma_ax = gamma_q2_fig.get_axes()[0]
@@ -597,10 +600,22 @@ class NNLSDialog(QDialog):
                     new_gamma_ax.legend(fontsize=8)
 
             else:
-                # No gamma-q² plot, just copy preview plots normally
+                # No gamma-q² plot, use GridSpec for better layout
+                from matplotlib.gridspec import GridSpec
+
+                num_preview_plots = len(fig.get_axes())
+                # Use 2 columns for more space per plot
+                cols = min(2, num_preview_plots)
+                rows = (num_preview_plots + cols - 1) // cols
+
+                # Create GridSpec with good spacing
+                gs = GridSpec(rows, cols, hspace=0.5, wspace=0.35,
+                             figure=self.canvas.figure)
+
                 for i, ax in enumerate(fig.get_axes()):
-                    pos = ax.get_position()
-                    new_ax = self.canvas.figure.add_axes(pos)
+                    row = i // cols
+                    col = i % cols
+                    new_ax = self.canvas.figure.add_subplot(gs[row, col])
 
                     # Copy all artists
                     for line in ax.get_lines():
@@ -628,15 +643,16 @@ class NNLSDialog(QDialog):
                                    fontsize=text.get_fontsize(),
                                    bbox=bbox_dict)
 
-                    # Copy properties
-                    new_ax.set_xlabel(ax.get_xlabel())
-                    new_ax.set_ylabel(ax.get_ylabel())
-                    new_ax.set_title(ax.get_title())
+                    # Copy properties with larger font sizes
+                    new_ax.set_xlabel(ax.get_xlabel(), fontsize=11)
+                    new_ax.set_ylabel(ax.get_ylabel(), fontsize=11)
+                    new_ax.set_title(ax.get_title(), fontsize=12, fontweight='bold')
                     new_ax.set_xscale(ax.get_xscale())
                     new_ax.set_yscale(ax.get_yscale())
                     new_ax.grid(True, which='both', alpha=0.3)
+                    new_ax.tick_params(axis='both', which='major', labelsize=10)
                     if ax.get_legend():
-                        new_ax.legend(fontsize=8)
+                        new_ax.legend(fontsize=9)
 
             # Add overall title
             self.canvas.figure.suptitle(
