@@ -335,7 +335,7 @@ class LaplaceAnalyzer:
         return fig
 
     def preview_nnls_parameters(self, params: dict, num_datasets: int = 5,
-                               seed: Optional[int] = None) -> Tuple[any, List[str]]:
+                               seed: Optional[int] = None) -> Tuple[any, List[str], List[dict]]:
         """
         Preview NNLS results on random datasets for parameter tuning
 
@@ -345,7 +345,7 @@ class LaplaceAnalyzer:
             seed: Random seed for reproducibility
 
         Returns:
-            Tuple of (matplotlib Figure, list of selected dataset names)
+            Tuple of (matplotlib Figure, list of selected dataset names, list of results dicts)
         """
         from regularized_optimized import nnls_preview_random
         return nnls_preview_random(self.processed_correlations, params,
