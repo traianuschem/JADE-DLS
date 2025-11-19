@@ -1,0 +1,26 @@
+# JADE-DLS Requirements
+# Core scientific computing
+numpy>=1.22.0
+scipy>=1.8.0
+pandas>=1.5.0
+
+# Machine learning (for peak clustering and robust regression)
+scikit-learn>=1.0.0
+
+# Parallel processing
+joblib>=1.2.0
+
+# Statistical analysis
+statsmodels>=0.13.0
+
+# Plotting
+matplotlib>=3.5.0
+
+# GUI (PyQt5)
+PyQt5>=5.15.0
+
+# Excel export support
+openpyxl>=3.0.0
+
+# Optional: Better performance for Excel
+xlsxwriter>=3.0.0
