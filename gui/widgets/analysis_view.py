@@ -1419,59 +1419,128 @@ class AnalysisView(QWidget):
             print(f"Could not reset plot style: {e}")
 
     def _open_refinement_dialog(self):
-        """Open the post-fit refinement dialog"""
-        from PyQt5.QtWidgets import QMessageBox
-        from gui.dialogs import PostFitRefinementDialog, PostFilterDialog
+        """Open the post-fit refinement dialog with method selection"""
+        from PyQt5.QtWidgets import (QMessageBox, QDialog, QVBoxLayout, QHBoxLayout,
+                                    QLabel, QPushButton, QComboBox, QGroupBox)
+        from gui.dialogs import PostFitRefinementDialog
 
-        # Check which type of analyzer we have
-        has_cumulant = hasattr(self, 'cumulant_analyzer') and self.cumulant_analyzer is not None
-        has_laplace = hasattr(self, 'laplace_analyzer') and self.laplace_analyzer is not None
-
-        if not has_cumulant and not has_laplace:
-            QMessageBox.warning(
-                self,
-                "No Analysis Results",
-                "No analysis results available.\n"
-                "Please run an analysis first."
-            )
-            return
-
-        # Handle NNLS/Regularized refinement
-        if has_laplace and not has_cumulant:
-            self._open_laplace_refinement()
-            return
-
-        # Handle Cumulant refinement (original code)
-        if not has_cumulant:
-            QMessageBox.warning(
-                self,
-                "No Analysis Results",
-                "No cumulant analysis results available.\n"
-                "Please run a cumulant analysis first."
-            )
-            return
-
-        # Determine which methods have results
+        # Collect all available analysis methods
         available_methods = []
-        if hasattr(self.cumulant_analyzer, 'method_a_results') and self.cumulant_analyzer.method_a_results is not None:
-            available_methods.append('A')
-        if hasattr(self.cumulant_analyzer, 'method_b_results') and self.cumulant_analyzer.method_b_results is not None:
-            available_methods.append('B')
-        if hasattr(self.cumulant_analyzer, 'method_c_results') and self.cumulant_analyzer.method_c_results is not None:
-            available_methods.append('C')
+
+        # Check for Cumulant methods
+        if hasattr(self, 'cumulant_analyzer') and self.cumulant_analyzer is not None:
+            if hasattr(self.cumulant_analyzer, 'method_a_results') and self.cumulant_analyzer.method_a_results is not None:
+                available_methods.append(('Cumulant Method A', 'cumulant_a'))
+            if hasattr(self.cumulant_analyzer, 'method_b_results') and self.cumulant_analyzer.method_b_results is not None:
+                available_methods.append(('Cumulant Method B', 'cumulant_b'))
+            if hasattr(self.cumulant_analyzer, 'method_c_results') and self.cumulant_analyzer.method_c_results is not None:
+                available_methods.append(('Cumulant Method C', 'cumulant_c'))
+
+        # Check for Laplace methods
+        if hasattr(self, 'laplace_analyzer') and self.laplace_analyzer is not None:
+            if hasattr(self.laplace_analyzer, 'nnls_final_results') and self.laplace_analyzer.nnls_final_results is not None:
+                available_methods.append(('NNLS', 'nnls'))
+            if hasattr(self.laplace_analyzer, 'regularized_final_results') and self.laplace_analyzer.regularized_final_results is not None:
+                available_methods.append(('Regularized NNLS', 'regularized'))
 
         if not available_methods:
             QMessageBox.warning(
                 self,
-                "No Results",
-                "No cumulant analysis results found.\n"
-                "Please run a cumulant analysis first."
+                "No Analysis Results",
+                "No analysis results available for refinement.\n"
+                "Please run an analysis first."
             )
             return
 
-        # Open refinement dialog
-        dialog = PostFitRefinementDialog(self.cumulant_analyzer, available_methods, self)
-        if dialog.exec_() == dialog.Accepted:
+        # If only one method available, open directly
+        if len(available_methods) == 1:
+            method_name, method_type = available_methods[0]
+            self._open_refinement_for_method(method_type)
+            return
+
+        # Create selection dialog
+        selection_dialog = QDialog(self)
+        selection_dialog.setWindowTitle("Select Method to Refine")
+        selection_dialog.setMinimumWidth(400)
+        layout = QVBoxLayout()
+
+        # Title
+        title = QLabel("<b>Post-Fit Refinement</b>")
+        title.setStyleSheet("font-size: 12pt;")
+        layout.addWidget(title)
+
+        # Description
+        desc = QLabel(
+            "Multiple analysis methods have results available.\n"
+            "Select which method you want to refine:"
+        )
+        desc.setWordWrap(True)
+        layout.addWidget(desc)
+
+        # Method selection
+        method_group = QGroupBox("Available Methods")
+        method_layout = QVBoxLayout()
+
+        method_combo = QComboBox()
+        for display_name, method_type in available_methods:
+            method_combo.addItem(display_name, method_type)
+        method_layout.addWidget(method_combo)
+
+        method_group.setLayout(method_layout)
+        layout.addWidget(method_group)
+
+        # Buttons
+        button_layout = QHBoxLayout()
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(selection_dialog.reject)
+        button_layout.addWidget(cancel_btn)
+
+        ok_btn = QPushButton("Open Refinement")
+        ok_btn.setDefault(True)
+        ok_btn.clicked.connect(selection_dialog.accept)
+        ok_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                font-weight: bold;
+                padding: 6px 16px;
+            }
+            QPushButton:hover {
+                background-color: #45a049;
+            }
+        """)
+        button_layout.addWidget(ok_btn)
+
+        layout.addLayout(button_layout)
+        selection_dialog.setLayout(layout)
+
+        # Show dialog and get selection
+        if selection_dialog.exec_() != QDialog.Accepted:
+            return
+
+        selected_method = method_combo.currentData()
+        self._open_refinement_for_method(selected_method)
+
+    def _open_refinement_for_method(self, method_type):
+        """
+        Open refinement dialog for specific method
+
+        Args:
+            method_type: 'cumulant_a', 'cumulant_b', 'cumulant_c', 'nnls', or 'regularized'
+        """
+        from PyQt5.QtWidgets import QMessageBox
+        from gui.dialogs import PostFitRefinementDialog
+
+        if method_type in ['cumulant_a', 'cumulant_b', 'cumulant_c']:
+            # Cumulant refinement
+            method_letter = method_type.split('_')[1].upper()
+            available_methods = [method_letter]
+
+            dialog = PostFitRefinementDialog(self.cumulant_analyzer, available_methods, self)
+            if dialog.exec_() != dialog.Accepted:
+                return
+
+            # Continue with existing cumulant refinement code (kept as-is)...
             # Get refinement parameters
             params = dialog.get_refinement_params()
 
@@ -1552,151 +1621,32 @@ class AnalysisView(QWidget):
                 import traceback
                 traceback.print_exc()
 
-    def _recompute_method_c(self, q_range, excluded_fits):
-        """
-        Re-compute Method C with filtered data
+        elif method_type in ['nnls', 'regularized']:
+            # Laplace (NNLS/Regularized) refinement
+            method_name = "NNLS" if method_type == 'nnls' else "Regularized"
+            self._open_laplace_refinement_for_method(method_name)
 
-        Args:
-            q_range: Tuple (min_q, max_q) or None
-            excluded_fits: List of filenames to exclude
-
-        Returns:
-            DataFrame with updated results
-        """
-        import pandas as pd
-        import numpy as np
-        import statsmodels.api as sm
-
-        # Get the fit data
-        if not hasattr(self.cumulant_analyzer, 'method_c_data'):
-            print("[ERROR] No Method C data available")
-            return None
-
-        cumulant_method_C_data = self.cumulant_analyzer.method_c_data.copy()
-
-        # Exclude fits if specified
-        if excluded_fits:
-            mask = ~cumulant_method_C_data['filename'].isin(excluded_fits)
-            cumulant_method_C_data = cumulant_method_C_data[mask].reset_index(drop=True)
-            cumulant_method_C_data.index = cumulant_method_C_data.index + 1
-            print(f"  Excluded {len(excluded_fits)} fits, {len(cumulant_method_C_data)} remaining")
-
-        # Apply q-range filter if specified
-        if q_range is not None:
-            min_q, max_q = q_range
-            mask = (cumulant_method_C_data['q^2'] >= min_q) & (cumulant_method_C_data['q^2'] <= max_q)
-            cumulant_method_C_data = cumulant_method_C_data[mask].reset_index(drop=True)
-            cumulant_method_C_data.index = cumulant_method_C_data.index + 1
-            print(f"  Applied q² range filter: {len(cumulant_method_C_data)} points remaining")
-
-        if cumulant_method_C_data.empty:
-            print("[ERROR] No data remaining after filtering")
-            return None
-
-        # Re-compute diffusion coefficient
-        X = cumulant_method_C_data['q^2']
-        Y = cumulant_method_C_data['best_b']
-        X_with_const = sm.add_constant(X)
-        model = sm.OLS(Y, X_with_const).fit()
-
-        print(f"  New D: {model.params.iloc[1]:.4e} s⁻¹·nm²")
-        print(f"  New R²: {model.rsquared:.6f}")
-
-        # Calculate diffusion coefficient
-        C_diff = pd.DataFrame()
-        C_diff['D [m^2/s]'] = [model.params.iloc[1] * 10**(-18)]
-        C_diff['std err D [m^2/s]'] = [model.bse.iloc[1] * 10**(-18)]
-
-        # Calculate polydispersity
-        cumulant_method_C_data['polydispersity'] = (
-            cumulant_method_C_data['best_c'] / (cumulant_method_C_data['best_b'])**2
-        )
-        polydispersity_method_C = cumulant_method_C_data['polydispersity'].mean()
-
-        # Calculate results
-        c_value = self.cumulant_analyzer.c_value
-        delta_c = self.cumulant_analyzer.delta_c
-
-        method_c_results = pd.DataFrame()
-        method_c_results['Rh [nm]'] = [c_value * (1 / C_diff['D [m^2/s]'][0]) * 10**9]
-
-        fractional_error_Rh_C = np.sqrt(
-            (delta_c / c_value)**2 +
-            (C_diff['std err D [m^2/s]'][0] / C_diff['D [m^2/s]'][0])**2
-        )
-        method_c_results['Rh error [nm]'] = [fractional_error_Rh_C * method_c_results['Rh [nm]'][0]]
-        method_c_results['R_squared'] = [model.rsquared]
-        method_c_results['Fit'] = ['Rh from iterative non-linear cumulant fit (refined)']
-        method_c_results['Residuals'] = ['N/A']
-        method_c_results['PDI'] = [polydispersity_method_C]
-
-        return method_c_results
-
-    def _open_laplace_refinement(self):
-        """
-        Open refinement dialog for NNLS/Regularized NNLS
-
-        Provides graphical refinement with:
-        - Interactive Γ vs q² plot for range selection
-        - Distribution plot inspection and exclusion
-        """
-        from PyQt5.QtWidgets import QMessageBox, QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox
-        from gui.dialogs.laplace_postfit_dialog import LaplacePostFitRefinementDialog
-
-        # Determine which type of Laplace results we have
-        has_nnls = (hasattr(self.laplace_analyzer, 'nnls_final_results') and
-                    self.laplace_analyzer.nnls_final_results is not None)
-        has_regularized = (hasattr(self.laplace_analyzer, 'regularized_final_results') and
-                          self.laplace_analyzer.regularized_final_results is not None)
-
-        if not has_nnls and not has_regularized:
+        else:
             QMessageBox.warning(
                 self,
-                "No Results",
-                "No NNLS or Regularized NNLS results available.\n"
-                "Please run an analysis first."
+                "Unknown Method",
+                f"Unknown method type: {method_type}"
             )
-            return
 
-        # If both methods have results, ask user which one to refine
-        method_name = "NNLS"  # Default to NNLS if available
-        if has_nnls and has_regularized:
-            choice_dialog = QDialog(self)
-            choice_dialog.setWindowTitle("Select Method to Refine")
-            choice_layout = QVBoxLayout()
+    def _open_laplace_refinement_for_method(self, method_name):
+        """
+        Open Laplace refinement dialog for specific method (NNLS or Regularized)
 
-            choice_layout.addWidget(QLabel(
-                "Both NNLS and Regularized NNLS results are available.\n"
-                "Which method would you like to refine?"
-            ))
-
-            method_combo = QComboBox()
-            method_combo.addItem("NNLS")
-            method_combo.addItem("Regularized")
-            choice_layout.addWidget(method_combo)
-
-            button_layout = QHBoxLayout()
-            ok_btn = QPushButton("OK")
-            ok_btn.clicked.connect(choice_dialog.accept)
-            cancel_btn = QPushButton("Cancel")
-            cancel_btn.clicked.connect(choice_dialog.reject)
-            button_layout.addWidget(cancel_btn)
-            button_layout.addWidget(ok_btn)
-            choice_layout.addLayout(button_layout)
-
-            choice_dialog.setLayout(choice_layout)
-
-            if choice_dialog.exec_() != QDialog.Accepted:
-                return
-
-            method_name = method_combo.currentText()
-        elif has_regularized and not has_nnls:
-            method_name = "Regularized"
+        Args:
+            method_name: 'NNLS' or 'Regularized'
+        """
+        from PyQt5.QtWidgets import QMessageBox
+        from gui.dialogs.laplace_postfit_dialog import LaplacePostFitRefinementDialog
 
         # Open the refinement dialog
         dialog = LaplacePostFitRefinementDialog(self.laplace_analyzer, method_name, self)
 
-        if dialog.exec_() != QDialog.Accepted:
+        if dialog.exec_() != dialog.Accepted:
             return
 
         # Get refinement parameters
@@ -1794,3 +1744,84 @@ class AnalysisView(QWidget):
             )
             import traceback
             traceback.print_exc()
+
+    def _recompute_method_c(self, q_range, excluded_fits):
+        """
+        Re-compute Method C with filtered data
+
+        Args:
+            q_range: Tuple (min_q, max_q) or None
+            excluded_fits: List of filenames to exclude
+
+        Returns:
+            DataFrame with updated results
+        """
+        import pandas as pd
+        import numpy as np
+        import statsmodels.api as sm
+
+        # Get the fit data
+        if not hasattr(self.cumulant_analyzer, 'method_c_data'):
+            print("[ERROR] No Method C data available")
+            return None
+
+        cumulant_method_C_data = self.cumulant_analyzer.method_c_data.copy()
+
+        # Exclude fits if specified
+        if excluded_fits:
+            mask = ~cumulant_method_C_data['filename'].isin(excluded_fits)
+            cumulant_method_C_data = cumulant_method_C_data[mask].reset_index(drop=True)
+            cumulant_method_C_data.index = cumulant_method_C_data.index + 1
+            print(f"  Excluded {len(excluded_fits)} fits, {len(cumulant_method_C_data)} remaining")
+
+        # Apply q-range filter if specified
+        if q_range is not None:
+            min_q, max_q = q_range
+            mask = (cumulant_method_C_data['q^2'] >= min_q) & (cumulant_method_C_data['q^2'] <= max_q)
+            cumulant_method_C_data = cumulant_method_C_data[mask].reset_index(drop=True)
+            cumulant_method_C_data.index = cumulant_method_C_data.index + 1
+            print(f"  Applied q² range filter: {len(cumulant_method_C_data)} points remaining")
+
+        if cumulant_method_C_data.empty:
+            print("[ERROR] No data remaining after filtering")
+            return None
+
+        # Re-compute diffusion coefficient
+        X = cumulant_method_C_data['q^2']
+        Y = cumulant_method_C_data['best_b']
+        X_with_const = sm.add_constant(X)
+        model = sm.OLS(Y, X_with_const).fit()
+
+        print(f"  New D: {model.params.iloc[1]:.4e} s⁻¹·nm²")
+        print(f"  New R²: {model.rsquared:.6f}")
+
+        # Calculate diffusion coefficient
+        C_diff = pd.DataFrame()
+        C_diff['D [m^2/s]'] = [model.params.iloc[1] * 10**(-18)]
+        C_diff['std err D [m^2/s]'] = [model.bse.iloc[1] * 10**(-18)]
+
+        # Calculate polydispersity
+        cumulant_method_C_data['polydispersity'] = (
+            cumulant_method_C_data['best_c'] / (cumulant_method_C_data['best_b'])**2
+        )
+        polydispersity_method_C = cumulant_method_C_data['polydispersity'].mean()
+
+        # Calculate results
+        c_value = self.cumulant_analyzer.c_value
+        delta_c = self.cumulant_analyzer.delta_c
+
+        method_c_results = pd.DataFrame()
+        method_c_results['Rh [nm]'] = [c_value * (1 / C_diff['D [m^2/s]'][0]) * 10**9]
+
+        fractional_error_Rh_C = np.sqrt(
+            (delta_c / c_value)**2 +
+            (C_diff['std err D [m^2/s]'][0] / C_diff['D [m^2/s]'][0])**2
+        )
+        method_c_results['Rh error [nm]'] = [fractional_error_Rh_C * method_c_results['Rh [nm]'][0]]
+        method_c_results['R_squared'] = [model.rsquared]
+        method_c_results['Fit'] = ['Rh from iterative non-linear cumulant fit (refined)']
+        method_c_results['Residuals'] = ['N/A']
+        method_c_results['PDI'] = [polydispersity_method_C]
+
+        return method_c_results
+

@@ -347,7 +347,12 @@ class LaplaceAnalyzer:
                                   num_datasets=num_datasets, seed=seed)
 
     def calculate_nnls_diffusion_coefficients(self, tau_columns: Optional[List[str]] = None,
-                                              x_range: Optional[Tuple[float, float]] = None) -> pd.DataFrame:
+                                              x_range: Optional[Tuple[float, float]] = None,
+                                              use_clustering: bool = True,
+                                              clustering_method: str = 'dbscan',
+                                              clustering_eps: float = 0.3,
+                                              use_robust_regression: bool = True,
+                                              robust_method: str = 'ransac') -> pd.DataFrame:
         """
         Calculate diffusion coefficients from NNLS tau values
 
@@ -355,6 +360,11 @@ class LaplaceAnalyzer:
             tau_columns: List of tau column names (e.g., ['tau_1', 'tau_2'])
                         If None, auto-detects all tau columns
             x_range: Optional q² range for fitting (min, max)
+            use_clustering: If True, cluster peaks across angles before regression
+            clustering_method: 'dbscan' or 'log_proximity'
+            clustering_eps: Clustering epsilon parameter (as fraction of data range)
+            use_robust_regression: If True, use robust regression (RANSAC, Theil-Sen, etc.)
+            robust_method: 'ransac', 'theil-sen', or 'huber'
 
         Returns:
             DataFrame with diffusion coefficients for each peak
@@ -362,7 +372,23 @@ class LaplaceAnalyzer:
         if self.nnls_data is None:
             raise ValueError("Must run NNLS analysis first")
 
-        # Auto-detect tau columns if not provided
+        # Perform peak clustering if requested
+        if use_clustering:
+            print(f"\n[NNLS] Performing automatic peak clustering...")
+            from peak_clustering import cluster_peaks_across_datasets
+
+            self.nnls_data, cluster_info = cluster_peaks_across_datasets(
+                self.nnls_data,
+                tau_prefix='tau_',
+                method=clustering_method,
+                eps_factor=clustering_eps,
+                min_samples=max(2, int(0.2 * len(self.nnls_data)))
+            )
+
+            # Store clustering info
+            self.nnls_cluster_info = cluster_info
+
+        # Auto-detect tau columns if not provided (after clustering)
         if tau_columns is None:
             tau_columns = [col for col in self.nnls_data.columns if col.startswith('tau_')]
 
@@ -370,7 +396,6 @@ class LaplaceAnalyzer:
 
         # Lazy imports
         from regularized_optimized import calculate_decay_rates
-        from cumulants import analyze_diffusion_coefficient
 
         # Calculate gamma from tau
         self.nnls_data = calculate_decay_rates(self.nnls_data, tau_columns)
@@ -379,13 +404,26 @@ class LaplaceAnalyzer:
         gamma_columns = [col.replace('tau', 'gamma') for col in tau_columns]
 
         # Analyze diffusion coefficient via Γ vs q² regression
-        self.nnls_diff_results = analyze_diffusion_coefficient(
-            data_df=self.nnls_data,
-            q_squared_col='q^2',
-            gamma_cols=gamma_columns,
-            x_range=x_range,
-            show_plots=False  # Don't show plots - they're displayed in GUI
-        )
+        if use_robust_regression:
+            from peak_clustering import analyze_diffusion_coefficient_robust
+            print(f"[NNLS] Using robust regression: {robust_method.upper()}")
+            self.nnls_diff_results = analyze_diffusion_coefficient_robust(
+                data_df=self.nnls_data,
+                q_squared_col='q^2',
+                gamma_cols=gamma_columns,
+                x_range=x_range,
+                robust_method=robust_method,
+                show_plots=False  # Don't show plots - they're displayed in GUI
+            )
+        else:
+            from cumulants import analyze_diffusion_coefficient
+            self.nnls_diff_results = analyze_diffusion_coefficient(
+                data_df=self.nnls_data,
+                q_squared_col='q^2',
+                gamma_cols=gamma_columns,
+                x_range=x_range,
+                show_plots=False  # Don't show plots - they're displayed in GUI
+            )
 
         # Create summary plot (Gamma vs q²)
         print(f"[NNLS] Creating Gamma vs q² summary plot...")
@@ -736,13 +774,23 @@ class LaplaceAnalyzer:
 
     def calculate_regularized_diffusion_coefficients(self,
                                                     tau_columns: Optional[List[str]] = None,
-                                                    x_range: Optional[Tuple[float, float]] = None) -> pd.DataFrame:
+                                                    x_range: Optional[Tuple[float, float]] = None,
+                                                    use_clustering: bool = True,
+                                                    clustering_method: str = 'dbscan',
+                                                    clustering_eps: float = 0.3,
+                                                    use_robust_regression: bool = True,
+                                                    robust_method: str = 'ransac') -> pd.DataFrame:
         """
         Calculate diffusion coefficients from regularized fit tau values
 
         Args:
             tau_columns: List of tau column names
             x_range: Optional q² range for fitting
+            use_clustering: If True, cluster peaks across angles before regression
+            clustering_method: 'dbscan' or 'log_proximity'
+            clustering_eps: Clustering epsilon parameter (as fraction of data range)
+            use_robust_regression: If True, use robust regression (RANSAC, Theil-Sen, etc.)
+            robust_method: 'ransac', 'theil-sen', or 'huber'
 
         Returns:
             DataFrame with diffusion coefficients
@@ -750,7 +798,23 @@ class LaplaceAnalyzer:
         if self.regularized_data is None:
             raise ValueError("Must run regularized analysis first")
 
-        # Auto-detect tau columns if not provided
+        # Perform peak clustering if requested
+        if use_clustering:
+            print(f"\n[Regularized] Performing automatic peak clustering...")
+            from peak_clustering import cluster_peaks_across_datasets
+
+            self.regularized_data, cluster_info = cluster_peaks_across_datasets(
+                self.regularized_data,
+                tau_prefix='tau_',
+                method=clustering_method,
+                eps_factor=clustering_eps,
+                min_samples=max(2, int(0.2 * len(self.regularized_data)))
+            )
+
+            # Store clustering info
+            self.regularized_cluster_info = cluster_info
+
+        # Auto-detect tau columns if not provided (after clustering)
         if tau_columns is None:
             tau_columns = [col for col in self.regularized_data.columns if col.startswith('tau_')]
 
@@ -758,7 +822,6 @@ class LaplaceAnalyzer:
 
         # Lazy imports
         from regularized_optimized import calculate_decay_rates
-        from cumulants import analyze_diffusion_coefficient
 
         # Calculate gamma from tau
         self.regularized_data = calculate_decay_rates(self.regularized_data, tau_columns)
@@ -767,13 +830,26 @@ class LaplaceAnalyzer:
         gamma_columns = [col.replace('tau', 'gamma') for col in tau_columns]
 
         # Analyze diffusion coefficient
-        self.regularized_diff_results = analyze_diffusion_coefficient(
-            data_df=self.regularized_data,
-            q_squared_col='q^2',
-            gamma_cols=gamma_columns,
-            x_range=x_range,
-            show_plots=False  # Don't show plots - they're displayed in GUI
-        )
+        if use_robust_regression:
+            from peak_clustering import analyze_diffusion_coefficient_robust
+            print(f"[Regularized] Using robust regression: {robust_method.upper()}")
+            self.regularized_diff_results = analyze_diffusion_coefficient_robust(
+                data_df=self.regularized_data,
+                q_squared_col='q^2',
+                gamma_cols=gamma_columns,
+                x_range=x_range,
+                robust_method=robust_method,
+                show_plots=False  # Don't show plots - they're displayed in GUI
+            )
+        else:
+            from cumulants import analyze_diffusion_coefficient
+            self.regularized_diff_results = analyze_diffusion_coefficient(
+                data_df=self.regularized_data,
+                q_squared_col='q^2',
+                gamma_cols=gamma_columns,
+                x_range=x_range,
+                show_plots=False  # Don't show plots - they're displayed in GUI
+            )
 
         # Create summary plot (Gamma vs q²)
         print(f"[Regularized] Creating Gamma vs q² summary plot...")
