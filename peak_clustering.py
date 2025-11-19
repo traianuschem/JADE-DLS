@@ -9,6 +9,8 @@ from sklearn.cluster import DBSCAN
 from sklearn.preprocessing import StandardScaler
 from typing import List, Tuple, Dict, Optional
 from scipy import stats
+import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
 
 
 def cluster_peaks_across_datasets(data_df: pd.DataFrame,
@@ -19,8 +21,14 @@ def cluster_peaks_across_datasets(data_df: pd.DataFrame,
     """
     Cluster tau values across all datasets to identify common modes
 
+    IMPORTANT: This function clusters based on diffusion coefficients (D),
+    not raw tau values. This is physically correct because:
+    - τ = 1/(D × q²), so τ depends on scattering angle (q²)
+    - D should be constant for a given particle species across all angles
+    - Clustering on D groups peaks with the same physical origin
+
     Args:
-        data_df: DataFrame with tau columns (tau_1, tau_2, etc.)
+        data_df: DataFrame with tau columns (tau_1, tau_2, etc.) AND q^2 column
         tau_prefix: Prefix for tau columns
         method: Clustering method ('dbscan' or 'log_proximity')
         eps_factor: DBSCAN epsilon as fraction of log-space range
@@ -35,39 +43,60 @@ def cluster_peaks_across_datasets(data_df: pd.DataFrame,
     if not tau_cols:
         raise ValueError(f"No columns starting with '{tau_prefix}' found")
 
+    # Check if q^2 column exists (required for physics-based clustering)
+    if 'q^2' not in data_df.columns:
+        raise ValueError("DataFrame must contain 'q^2' column for physics-based clustering")
+
     print(f"\n[Peak Clustering] Found {len(tau_cols)} tau columns")
-    print(f"[Peak Clustering] Method: {method}")
+    print(f"[Peak Clustering] Method: {method} (physics-based: clusters by D = Γ/q²)")
 
     # Collect all tau values with their source information
     all_tau_values = []
+    all_D_values = []  # Diffusion coefficients
     tau_metadata = []
 
     for idx, row in data_df.iterrows():
+        q_squared = row.get('q^2', None)
+
+        if q_squared is None or q_squared <= 0:
+            print(f"[Peak Clustering] Warning: Invalid q^2 value for row {idx}, skipping")
+            continue
+
         for tau_col in tau_cols:
             tau_val = row[tau_col]
             if pd.notna(tau_val) and tau_val > 0:
+                # Calculate diffusion coefficient: D = Γ/q² = 1/(τ × q²)
+                # This is the physically meaningful quantity that should be constant across angles
+                gamma = 1.0 / tau_val  # Relaxation rate
+                D = gamma / q_squared   # Diffusion coefficient (units: nm²/s if q² in nm⁻²)
+
                 all_tau_values.append(tau_val)
+                all_D_values.append(D)
                 tau_metadata.append({
                     'row_idx': idx,
                     'original_col': tau_col,
                     'filename': row.get('filename', f'Row_{idx}'),
                     'angle': row.get('angle', None),
-                    'q^2': row.get('q^2', None)
+                    'q^2': q_squared,
+                    'tau': tau_val,
+                    'D': D
                 })
 
     if len(all_tau_values) == 0:
         raise ValueError("No valid tau values found")
 
     print(f"[Peak Clustering] Total tau values: {len(all_tau_values)}")
+    print(f"[Peak Clustering] D range: {min(all_D_values):.3e} to {max(all_D_values):.3e} nm²/s")
 
-    # Convert to log space for clustering (tau values span orders of magnitude)
-    log_tau = np.log10(all_tau_values).reshape(-1, 1)
+    # Convert D values to log space for clustering (D values span orders of magnitude)
+    # We cluster on D, not τ, because D is constant across angles for the same mode
+    log_D = np.log10(all_D_values).reshape(-1, 1)
 
-    # Perform clustering
+    # Perform clustering on diffusion coefficients
     if method == 'dbscan':
-        labels = _cluster_dbscan(log_tau, eps_factor, min_samples)
+        labels = _cluster_dbscan(log_D, eps_factor, min_samples)
     elif method == 'log_proximity':
-        labels = _cluster_log_proximity(log_tau, eps_factor)
+        labels = _cluster_log_proximity(log_D, eps_factor)
     else:
         raise ValueError(f"Unknown clustering method: {method}")
 
@@ -110,33 +139,47 @@ def cluster_peaks_across_datasets(data_df: pd.DataFrame,
 
         reassigned_df.at[row_idx, cluster_col] = tau_val
 
-    # Calculate cluster statistics
+    # Calculate cluster statistics (based on D values, the physically relevant quantity)
     cluster_info = {}
     for cluster_id in range(n_clusters):
         cluster_label = cluster_id  # 0-indexed in labels array
         cluster_tau_values = [all_tau_values[i] for i, label in enumerate(labels) if label == cluster_label]
+        cluster_D_values = [all_D_values[i] for i, label in enumerate(labels) if label == cluster_label]
+
+        # Calculate statistics for both tau and D
+        mean_D = np.mean(cluster_D_values)
+        std_D = np.std(cluster_D_values)
+        cv_D = std_D / mean_D if mean_D > 0 else 0
 
         cluster_info[f'mode_{cluster_id + 1}'] = {
             'n_points': len(cluster_tau_values),
+            # Tau statistics (these vary with q²)
             'mean_tau': np.mean(cluster_tau_values),
             'std_tau': np.std(cluster_tau_values),
             'min_tau': np.min(cluster_tau_values),
             'max_tau': np.max(cluster_tau_values),
-            'cv': np.std(cluster_tau_values) / np.mean(cluster_tau_values) if np.mean(cluster_tau_values) > 0 else 0
+            'cv_tau': np.std(cluster_tau_values) / np.mean(cluster_tau_values) if np.mean(cluster_tau_values) > 0 else 0,
+            # D statistics (these should be relatively constant)
+            'mean_D': mean_D,
+            'std_D': std_D,
+            'min_D': np.min(cluster_D_values),
+            'max_D': np.max(cluster_D_values),
+            'cv_D': cv_D  # Coefficient of variation for D (should be small!)
         }
 
         print(f"  Mode {cluster_id + 1}: n={len(cluster_tau_values)}, "
-              f"τ_mean={np.mean(cluster_tau_values):.3e} s (CV={cluster_info[f'mode_{cluster_id + 1}']['cv']:.2%})")
+              f"D_mean={mean_D:.3e} nm²/s (CV_D={cv_D:.2%}), "
+              f"τ_range=[{np.min(cluster_tau_values):.3e}, {np.max(cluster_tau_values):.3e}] s")
 
     return reassigned_df, cluster_info
 
 
-def _cluster_dbscan(log_tau: np.ndarray, eps_factor: float, min_samples: int) -> np.ndarray:
+def _cluster_dbscan(log_D: np.ndarray, eps_factor: float, min_samples: int) -> np.ndarray:
     """
     Cluster using DBSCAN in log-space
 
     Args:
-        log_tau: Log10-transformed tau values
+        log_D: Log10-transformed diffusion coefficient values
         eps_factor: Epsilon as fraction of data range
         min_samples: Minimum samples per cluster
 
@@ -144,45 +187,45 @@ def _cluster_dbscan(log_tau: np.ndarray, eps_factor: float, min_samples: int) ->
         Cluster labels (-1 for noise)
     """
     # Calculate epsilon based on data range
-    data_range = log_tau.max() - log_tau.min()
+    data_range = log_D.max() - log_D.min()
     eps = eps_factor * data_range
 
-    print(f"[DBSCAN] eps={eps:.3f} (log scale), min_samples={min_samples}")
+    print(f"[DBSCAN] eps={eps:.3f} (log-D scale), min_samples={min_samples}")
 
     # Perform DBSCAN clustering
     clustering = DBSCAN(eps=eps, min_samples=min_samples, metric='euclidean')
-    labels = clustering.fit_predict(log_tau)
+    labels = clustering.fit_predict(log_D)
 
     return labels
 
 
-def _cluster_log_proximity(log_tau: np.ndarray, threshold_factor: float) -> np.ndarray:
+def _cluster_log_proximity(log_D: np.ndarray, threshold_factor: float) -> np.ndarray:
     """
     Simple clustering based on log-space proximity
     Groups values that are within threshold_factor * range of each other
 
     Args:
-        log_tau: Log10-transformed tau values
+        log_D: Log10-transformed diffusion coefficient values
         threshold_factor: Proximity threshold as fraction of range
 
     Returns:
         Cluster labels
     """
     # Sort values with their original indices
-    sorted_indices = np.argsort(log_tau.flatten())
-    sorted_log_tau = log_tau.flatten()[sorted_indices]
+    sorted_indices = np.argsort(log_D.flatten())
+    sorted_log_D = log_D.flatten()[sorted_indices]
 
     # Calculate threshold
-    data_range = sorted_log_tau.max() - sorted_log_tau.min()
+    data_range = sorted_log_D.max() - sorted_log_D.min()
     threshold = threshold_factor * data_range
 
-    print(f"[Log Proximity] threshold={threshold:.3f} (log scale)")
+    print(f"[Log Proximity] threshold={threshold:.3f} (log-D scale)")
 
     # Assign clusters
-    labels = np.full(len(log_tau), -1)
+    labels = np.full(len(log_D), -1)
     current_cluster = 0
 
-    for i in range(len(sorted_log_tau)):
+    for i in range(len(sorted_log_D)):
         original_idx = sorted_indices[i]
 
         if labels[original_idx] != -1:
@@ -192,10 +235,10 @@ def _cluster_log_proximity(log_tau: np.ndarray, threshold_factor: float) -> np.n
         labels[original_idx] = current_cluster
 
         # Find all nearby points
-        for j in range(i + 1, len(sorted_log_tau)):
+        for j in range(i + 1, len(sorted_log_D)):
             original_j = sorted_indices[j]
 
-            if sorted_log_tau[j] - sorted_log_tau[i] <= threshold:
+            if sorted_log_D[j] - sorted_log_D[i] <= threshold:
                 labels[original_j] = current_cluster
             else:
                 break  # No more nearby points
@@ -468,3 +511,134 @@ def analyze_diffusion_coefficient_robust(data_df: pd.DataFrame,
         return pd.DataFrame()
 
     return pd.DataFrame(all_results)
+
+
+def plot_peak_clustering(data_df: pd.DataFrame,
+                         tau_prefix: str = 'tau_',
+                         cluster_info: Optional[Dict] = None,
+                         show_plot: bool = True) -> Figure:
+    """
+    Visualize the peak clustering results
+
+    Shows diffusion coefficients (D), which is what was actually clustered.
+    This is the physically meaningful quantity that should be constant across angles.
+
+    Args:
+        data_df: DataFrame with tau columns (after clustering) AND q^2 column
+        tau_prefix: Prefix for tau columns
+        cluster_info: Clustering information dict (from cluster_peaks_across_datasets)
+        show_plot: Whether to display the plot
+
+    Returns:
+        Figure object
+    """
+    # Find all tau columns
+    tau_cols = sorted([col for col in data_df.columns if col.startswith(tau_prefix)])
+
+    if not tau_cols:
+        raise ValueError(f"No columns starting with '{tau_prefix}' found")
+
+    # Check for q^2 column
+    if 'q^2' not in data_df.columns:
+        raise ValueError("DataFrame must contain 'q^2' column for D calculation")
+
+    # Collect all tau and D values with their cluster assignment
+    cluster_tau_data = {col: [] for col in tau_cols}
+    cluster_D_data = {col: [] for col in tau_cols}
+
+    for tau_col in tau_cols:
+        # Get tau values and corresponding q² values
+        for idx, row in data_df.iterrows():
+            tau_val = row[tau_col]
+            q_squared = row.get('q^2', None)
+
+            if pd.notna(tau_val) and tau_val > 0 and q_squared is not None and q_squared > 0:
+                # Calculate D = 1/(τ × q²)
+                gamma = 1.0 / tau_val
+                D = gamma / q_squared
+
+                cluster_tau_data[tau_col].append(tau_val)
+                cluster_D_data[tau_col].append(D)
+
+    # Create figure with two subplots
+    fig = Figure(figsize=(14, 6))
+
+    # Subplot 1: Diffusion coefficients (D) in log space - this is what was clustered!
+    ax1 = fig.add_subplot(121)
+
+    colors = plt.cm.tab10(np.linspace(0, 1, len(tau_cols)))
+
+    for i, tau_col in enumerate(tau_cols):
+        D_values = cluster_D_data[tau_col]
+        if len(D_values) > 0:
+            cluster_num = int(tau_col.replace(tau_prefix, ''))
+            log_D = np.log10(D_values)
+
+            # Plot as scatter with jitter for visibility
+            y_jitter = np.random.normal(0, 0.02, len(log_D))
+            ax1.scatter(log_D, y_jitter + i, c=[colors[i]], s=60,
+                       alpha=0.7, label=f'Mode {cluster_num} (n={len(D_values)})',
+                       edgecolors='black', linewidths=0.5)
+
+            # Add mean line
+            mean_log_D = np.mean(log_D)
+            ax1.axvline(mean_log_D, color=colors[i], linestyle='--',
+                       alpha=0.5, linewidth=1.5)
+
+    ax1.set_xlabel(r'log$_{10}$(D) [log(nm²/s)]', fontsize=12)
+    ax1.set_ylabel('Mode Number', fontsize=12)
+    ax1.set_title('Clustering based on Diffusion Coefficient (D = Γ/q²)', fontsize=14, fontweight='bold')
+    ax1.set_yticks(range(len(tau_cols)))
+    ax1.set_yticklabels([int(col.replace(tau_prefix, '')) for col in tau_cols])
+    ax1.grid(True, alpha=0.3, axis='x')
+    ax1.legend(loc='best', fontsize=9)
+
+    # Subplot 2: Distribution of D values per cluster (should be tight!)
+    ax2 = fig.add_subplot(122)
+
+    positions = []
+    data_for_box = []
+    labels_list = []
+
+    for i, tau_col in enumerate(tau_cols):
+        D_values = cluster_D_data[tau_col]
+        if len(D_values) > 0:
+            positions.append(i)
+            data_for_box.append(np.log10(D_values))
+            cluster_num = int(tau_col.replace(tau_prefix, ''))
+            labels_list.append(f'Mode {cluster_num}')
+
+    bp = ax2.boxplot(data_for_box, positions=positions, labels=labels_list,
+                     patch_artist=True, widths=0.6)
+
+    # Color the boxes
+    for patch, color in zip(bp['boxes'], colors[:len(positions)]):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.7)
+
+    ax2.set_ylabel(r'log$_{10}$(D) [log(nm²/s)]', fontsize=12)
+    ax2.set_xlabel('Mode', fontsize=12)
+    ax2.set_title('Distribution of D per Mode (should be constant!)', fontsize=14, fontweight='bold')
+    ax2.grid(True, alpha=0.3, axis='y')
+
+    # Add statistics text if available
+    if cluster_info:
+        stats_text = "Cluster Statistics (D-based):\n"
+        for mode_key, info in cluster_info.items():
+            mode_num = mode_key.replace('mode_', '')
+            stats_text += f"Mode {mode_num}: n={info['n_points']}, "
+            stats_text += f"D={info['mean_D']:.2e} nm²/s, "
+            stats_text += f"CV_D={info['cv_D']:.1%}\n"
+            if info['cv_D'] > 0.15:  # Warn if CV is too high
+                stats_text += f"  ⚠ High variability!\n"
+
+        fig.text(0.02, 0.98, stats_text, transform=fig.transFigure,
+                fontsize=9, verticalalignment='top',
+                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
+
+    if show_plot:
+        plt.show()
+
+    return fig

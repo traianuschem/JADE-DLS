@@ -10,7 +10,8 @@ Allows refinement of NNLS/Regularized analysis results after initial fitting:
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
                              QLabel, QDoubleSpinBox, QFormLayout, QTabWidget,
                              QWidget, QGroupBox, QMessageBox, QSizePolicy,
-                             QListWidget, QListWidgetItem, QCheckBox, QScrollArea)
+                             QListWidget, QListWidgetItem, QCheckBox, QScrollArea,
+                             QSplitter)
 from PyQt5.QtCore import Qt
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -182,10 +183,18 @@ class DistributionInspectorWidget(QWidget):
         # Info
         info_label = QLabel(
             f"<b>Select distributions to exclude</b><br>"
-            f"Check the boxes next to distributions you want to exclude from the final analysis."
+            f"Check the boxes next to distributions you want to exclude from the final analysis.<br>"
+            f"Click on a distribution to view its plot on the right."
         )
         info_label.setWordWrap(True)
         layout.addWidget(info_label)
+
+        # Create horizontal split: List on left, Plot on right
+        splitter = QSplitter(Qt.Horizontal)
+
+        # Left side: Checkbox list
+        left_widget = QWidget()
+        left_layout = QVBoxLayout()
 
         # Create scroll area for distribution list
         scroll = QScrollArea()
@@ -211,9 +220,8 @@ class DistributionInspectorWidget(QWidget):
             # Create checkbox
             checkbox = QCheckBox(filename)
             checkbox.setChecked(False)
+            checkbox.clicked.connect(lambda checked, fn=filename: self._show_plot(fn))
             self.checkboxes[filename] = checkbox
-
-            # Create a small preview (optional - can be added later)
             scroll_layout.addWidget(checkbox)
 
         print(f"[DistributionInspector] Created {len(self.checkboxes)} checkboxes")
@@ -221,7 +229,7 @@ class DistributionInspectorWidget(QWidget):
         scroll_layout.addStretch()
         scroll_widget.setLayout(scroll_layout)
         scroll.setWidget(scroll_widget)
-        layout.addWidget(scroll)
+        left_layout.addWidget(scroll)
 
         # Selection controls
         control_layout = QHBoxLayout()
@@ -240,7 +248,39 @@ class DistributionInspectorWidget(QWidget):
         self.count_label = QLabel("0 distributions selected for exclusion")
         control_layout.addWidget(self.count_label)
 
-        layout.addLayout(control_layout)
+        left_layout.addLayout(control_layout)
+        left_widget.setLayout(left_layout)
+
+        # Right side: Plot display
+        from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+        from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
+
+        right_widget = QWidget()
+        right_layout = QVBoxLayout()
+
+        # Placeholder figure
+        from matplotlib.figure import Figure
+        self.current_figure = Figure(figsize=(8, 6))
+        ax = self.current_figure.add_subplot(111)
+        ax.text(0.5, 0.5, 'Click on a distribution to view its plot',
+                ha='center', va='center', fontsize=12, color='gray')
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+        self.canvas = FigureCanvas(self.current_figure)
+        self.toolbar = NavigationToolbar(self.canvas, self)
+
+        right_layout.addWidget(self.toolbar)
+        right_layout.addWidget(self.canvas)
+        right_widget.setLayout(right_layout)
+
+        # Add both sides to splitter
+        splitter.addWidget(left_widget)
+        splitter.addWidget(right_widget)
+        splitter.setStretchFactor(0, 1)  # Left: 1 part
+        splitter.setStretchFactor(1, 2)  # Right: 2 parts
+
+        layout.addWidget(splitter)
 
         # Connect signals
         for checkbox in self.checkboxes.values():
@@ -257,6 +297,74 @@ class DistributionInspectorWidget(QWidget):
         """Deselect all distributions"""
         for checkbox in self.checkboxes.values():
             checkbox.setChecked(False)
+
+    def _show_plot(self, filename):
+        """Display the plot for the selected distribution"""
+        if filename not in self.plots_dict:
+            print(f"[DistributionInspector] Plot not found for: {filename}")
+            return
+
+        # Clear current figure
+        self.current_figure.clear()
+
+        # Get the stored figure
+        stored_fig = self.plots_dict[filename]
+
+        # Copy axes from stored figure to current figure
+        if hasattr(stored_fig, 'axes') and len(stored_fig.axes) > 0:
+            for i, ax_src in enumerate(stored_fig.axes):
+                # Create subplot in same position
+                ax_dest = self.current_figure.add_subplot(len(stored_fig.axes), 1, i+1)
+
+                # Copy plot contents
+                for line in ax_src.get_lines():
+                    ax_dest.plot(line.get_xdata(), line.get_ydata(),
+                               color=line.get_color(),
+                               linestyle=line.get_linestyle(),
+                               linewidth=line.get_linewidth(),
+                               label=line.get_label(),
+                               marker=line.get_marker(),
+                               markersize=line.get_markersize())
+
+                # Copy axis labels and title
+                ax_dest.set_xlabel(ax_src.get_xlabel())
+                ax_dest.set_ylabel(ax_src.get_ylabel())
+                ax_dest.set_title(ax_src.get_title())
+
+                # Copy scale
+                ax_dest.set_xscale(ax_src.get_xscale())
+                ax_dest.set_yscale(ax_src.get_yscale())
+
+                # Copy grid
+                ax_dest.grid(ax_src.xaxis._gridOnMajor)
+
+                # Copy legend if exists
+                if ax_src.get_legend() is not None:
+                    ax_dest.legend()
+
+                # Copy text annotations
+                for text in ax_src.texts:
+                    ax_dest.text(text.get_position()[0], text.get_position()[1],
+                               text.get_text(),
+                               transform=ax_dest.transData if text.get_transform() == ax_src.transData else ax_dest.transAxes,
+                               fontsize=text.get_fontsize(),
+                               color=text.get_color(),
+                               ha=text.get_ha(),
+                               va=text.get_va(),
+                               bbox=text.get_bbox_patch().get_boxstyle() if text.get_bbox_patch() else None)
+
+        else:
+            # Fallback: show message
+            ax = self.current_figure.add_subplot(111)
+            ax.text(0.5, 0.5, f'Plot loaded: {filename}',
+                   ha='center', va='center', fontsize=10)
+            ax.set_xticks([])
+            ax.set_yticks([])
+
+        self.current_figure.tight_layout()
+        self.canvas.draw()
+
+        print(f"[DistributionInspector] Displayed plot: {filename}")
 
     def _update_count(self):
         """Update the count of excluded distributions"""

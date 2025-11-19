@@ -1573,6 +1573,10 @@ print(method_c_results)
         if hasattr(self.laplace_analyzer, 'nnls_summary_plot'):
             plots_dict['NNLS Diffusion Analysis'] = (self.laplace_analyzer.nnls_summary_plot, {})
 
+        # Add clustering visualization plot
+        if hasattr(self.laplace_analyzer, 'nnls_clustering_plot'):
+            plots_dict['NNLS Peak Clustering'] = (self.laplace_analyzer.nnls_clustering_plot, {})
+
         # Create fit quality dict
         fit_quality = {}
         if hasattr(self.laplace_analyzer, 'nnls_plots'):
@@ -1767,6 +1771,10 @@ print(method_c_results)
         # Add summary plot (Gamma vs q²)
         if hasattr(self.laplace_analyzer, 'regularized_summary_plot'):
             plots_dict['Regularized Diffusion Analysis'] = (self.laplace_analyzer.regularized_summary_plot, {})
+
+        # Add clustering visualization plot
+        if hasattr(self.laplace_analyzer, 'regularized_clustering_plot'):
+            plots_dict['Regularized Peak Clustering'] = (self.laplace_analyzer.regularized_clustering_plot, {})
 
         # Create fit quality dict
         fit_quality = {}
