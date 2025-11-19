@@ -380,7 +380,7 @@ class LaplaceAnalyzer:
         # Perform peak clustering if requested
         if use_clustering:
             print(f"\n[NNLS] Performing automatic peak clustering...")
-            from peak_clustering import cluster_peaks_across_datasets
+            from peak_clustering import cluster_peaks_across_datasets, plot_peak_clustering
 
             self.nnls_data, cluster_info = cluster_peaks_across_datasets(
                 self.nnls_data,
@@ -392,6 +392,15 @@ class LaplaceAnalyzer:
 
             # Store clustering info
             self.nnls_cluster_info = cluster_info
+
+            # Create clustering visualization plot
+            print(f"[NNLS] Creating peak clustering visualization...")
+            self.nnls_clustering_plot = plot_peak_clustering(
+                self.nnls_data,
+                tau_prefix='tau_',
+                cluster_info=cluster_info,
+                show_plot=False
+            )
 
         # Auto-detect tau columns if not provided (after clustering)
         if tau_columns is None:
@@ -811,7 +820,7 @@ class LaplaceAnalyzer:
         # Perform peak clustering if requested
         if use_clustering:
             print(f"\n[Regularized] Performing automatic peak clustering...")
-            from peak_clustering import cluster_peaks_across_datasets
+            from peak_clustering import cluster_peaks_across_datasets, plot_peak_clustering
 
             self.regularized_data, cluster_info = cluster_peaks_across_datasets(
                 self.regularized_data,
@@ -823,6 +832,15 @@ class LaplaceAnalyzer:
 
             # Store clustering info
             self.regularized_cluster_info = cluster_info
+
+            # Create clustering visualization plot
+            print(f"[Regularized] Creating peak clustering visualization...")
+            self.regularized_clustering_plot = plot_peak_clustering(
+                self.regularized_data,
+                tau_prefix='tau_',
+                cluster_info=cluster_info,
+                show_plot=False
+            )
 
         # Auto-detect tau columns if not provided (after clustering)
         if tau_columns is None:

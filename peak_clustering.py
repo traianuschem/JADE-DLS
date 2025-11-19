@@ -9,6 +9,8 @@ from sklearn.cluster import DBSCAN
 from sklearn.preprocessing import StandardScaler
 from typing import List, Tuple, Dict, Optional
 from scipy import stats
+import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
 
 
 def cluster_peaks_across_datasets(data_df: pd.DataFrame,
@@ -468,3 +470,111 @@ def analyze_diffusion_coefficient_robust(data_df: pd.DataFrame,
         return pd.DataFrame()
 
     return pd.DataFrame(all_results)
+
+
+def plot_peak_clustering(data_df: pd.DataFrame,
+                         tau_prefix: str = 'tau_',
+                         cluster_info: Optional[Dict] = None,
+                         show_plot: bool = True) -> Figure:
+    """
+    Visualize the peak clustering results
+
+    Args:
+        data_df: DataFrame with tau columns (after clustering)
+        tau_prefix: Prefix for tau columns
+        cluster_info: Clustering information dict (from cluster_peaks_across_datasets)
+        show_plot: Whether to display the plot
+
+    Returns:
+        Figure object
+    """
+    # Find all tau columns
+    tau_cols = sorted([col for col in data_df.columns if col.startswith(tau_prefix)])
+
+    if not tau_cols:
+        raise ValueError(f"No columns starting with '{tau_prefix}' found")
+
+    # Collect all tau values with their cluster assignment
+    cluster_data = {col: [] for col in tau_cols}
+
+    for tau_col in tau_cols:
+        tau_values = data_df[tau_col].dropna().values
+        cluster_data[tau_col] = tau_values
+
+    # Create figure with two subplots
+    fig = Figure(figsize=(14, 6))
+
+    # Subplot 1: Tau values in log space with clusters
+    ax1 = fig.add_subplot(121)
+
+    colors = plt.cm.tab10(np.linspace(0, 1, len(tau_cols)))
+
+    for i, (tau_col, tau_values) in enumerate(cluster_data.items()):
+        if len(tau_values) > 0:
+            cluster_num = int(tau_col.replace(tau_prefix, ''))
+            log_tau = np.log10(tau_values)
+
+            # Plot as scatter with jitter for visibility
+            y_jitter = np.random.normal(0, 0.02, len(log_tau))
+            ax1.scatter(log_tau, y_jitter + i, c=[colors[i]], s=60,
+                       alpha=0.7, label=f'Mode {cluster_num} (n={len(tau_values)})',
+                       edgecolors='black', linewidths=0.5)
+
+            # Add mean line
+            mean_log_tau = np.mean(log_tau)
+            ax1.axvline(mean_log_tau, color=colors[i], linestyle='--',
+                       alpha=0.5, linewidth=1.5)
+
+    ax1.set_xlabel(r'log$_{10}$($\tau$) [log s]', fontsize=12)
+    ax1.set_ylabel('Mode Number', fontsize=12)
+    ax1.set_title('Peak Clustering in Log-Space', fontsize=14, fontweight='bold')
+    ax1.set_yticks(range(len(tau_cols)))
+    ax1.set_yticklabels([int(col.replace(tau_prefix, '')) for col in tau_cols])
+    ax1.grid(True, alpha=0.3, axis='x')
+    ax1.legend(loc='best', fontsize=9)
+
+    # Subplot 2: Distribution of tau values per cluster
+    ax2 = fig.add_subplot(122)
+
+    positions = []
+    data_for_box = []
+    labels = []
+
+    for i, (tau_col, tau_values) in enumerate(cluster_data.items()):
+        if len(tau_values) > 0:
+            positions.append(i)
+            data_for_box.append(np.log10(tau_values))
+            cluster_num = int(tau_col.replace(tau_prefix, ''))
+            labels.append(f'Mode {cluster_num}')
+
+    bp = ax2.boxplot(data_for_box, positions=positions, labels=labels,
+                     patch_artist=True, widths=0.6)
+
+    # Color the boxes
+    for patch, color in zip(bp['boxes'], colors[:len(positions)]):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.7)
+
+    ax2.set_ylabel(r'log$_{10}$($\tau$) [log s]', fontsize=12)
+    ax2.set_xlabel('Mode', fontsize=12)
+    ax2.set_title('Distribution of Relaxation Times per Mode', fontsize=14, fontweight='bold')
+    ax2.grid(True, alpha=0.3, axis='y')
+
+    # Add statistics text if available
+    if cluster_info:
+        stats_text = "Cluster Statistics:\n"
+        for mode_key, info in cluster_info.items():
+            mode_num = mode_key.replace('mode_', '')
+            stats_text += f"Mode {mode_num}: n={info['n_points']}, "
+            stats_text += f"CV={info['cv']:.1%}\n"
+
+        fig.text(0.02, 0.98, stats_text, transform=fig.transFigure,
+                fontsize=9, verticalalignment='top',
+                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
+
+    if show_plot:
+        plt.show()
+
+    return fig

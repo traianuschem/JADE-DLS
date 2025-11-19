@@ -6,7 +6,7 @@ Main central panel for displaying data, plots, and results
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTabWidget,
                              QTableWidget, QTableWidgetItem, QLabel, QTextEdit,
                              QGroupBox, QScrollArea, QListWidget, QListWidgetItem,
-                             QPushButton, QSplitter)
+                             QPushButton, QSplitter, QComboBox)
 from PyQt5.QtCore import Qt
 import pandas as pd
 
@@ -234,11 +234,22 @@ class AnalysisView(QWidget):
         self.refinement_widget = QWidget()
         refinement_layout = QHBoxLayout()
 
+        # Label
+        refine_label = QLabel("Post-Fit Refinement:")
+        refine_label.setStyleSheet("font-weight: bold;")
+        refinement_layout.addWidget(refine_label)
+
+        # Method selection dropdown
+        self.refinement_method_combo = QComboBox()
+        self.refinement_method_combo.setToolTip("Select which analysis method to refine")
+        self.refinement_method_combo.setMinimumWidth(200)
+        refinement_layout.addWidget(self.refinement_method_combo)
+
         # Global refinement button
-        self.refinement_btn = QPushButton("⚙️ Post-Fit Refinement")
+        self.refinement_btn = QPushButton("⚙️ Open Refinement")
         self.refinement_btn.setToolTip(
             "Adjust q² range and exclude fits after analysis\n"
-            "(Available after running cumulant analysis)"
+            "(Available after running analysis)"
         )
         self.refinement_btn.setStyleSheet("""
             QPushButton {
@@ -255,7 +266,7 @@ class AnalysisView(QWidget):
                 background-color: #BDBDBD;
             }
         """)
-        self.refinement_btn.clicked.connect(self._open_refinement_dialog)
+        self.refinement_btn.clicked.connect(self._open_selected_refinement)
         refinement_layout.addWidget(self.refinement_btn)
 
         refinement_layout.addStretch()
@@ -419,6 +430,7 @@ class AnalysisView(QWidget):
         # Show post-fit refinement button if any analyzer is available
         if (hasattr(self, 'cumulant_analyzer') and self.cumulant_analyzer is not None) or \
            (hasattr(self, 'laplace_analyzer') and self.laplace_analyzer is not None):
+            self._update_refinement_dropdown()
             self.refinement_widget.show()
 
     def show_results_tab(self):
@@ -1418,8 +1430,66 @@ class AnalysisView(QWidget):
         except Exception as e:
             print(f"Could not reset plot style: {e}")
 
+    def _update_refinement_dropdown(self):
+        """Update the refinement method dropdown with available analyses"""
+        # Clear existing items
+        self.refinement_method_combo.clear()
+
+        # Collect all available analysis methods
+        available_methods = []
+
+        # Check for Cumulant methods
+        if hasattr(self, 'cumulant_analyzer') and self.cumulant_analyzer is not None:
+            if hasattr(self.cumulant_analyzer, 'method_a_results') and self.cumulant_analyzer.method_a_results is not None:
+                available_methods.append(('Cumulant Method A', 'cumulant_a'))
+            if hasattr(self.cumulant_analyzer, 'method_b_results') and self.cumulant_analyzer.method_b_results is not None:
+                available_methods.append(('Cumulant Method B', 'cumulant_b'))
+            if hasattr(self.cumulant_analyzer, 'method_c_results') and self.cumulant_analyzer.method_c_results is not None:
+                available_methods.append(('Cumulant Method C', 'cumulant_c'))
+
+        # Check for Laplace methods
+        if hasattr(self, 'laplace_analyzer') and self.laplace_analyzer is not None:
+            if hasattr(self.laplace_analyzer, 'nnls_final_results') and self.laplace_analyzer.nnls_final_results is not None:
+                available_methods.append(('NNLS', 'nnls'))
+            if hasattr(self.laplace_analyzer, 'regularized_final_results') and self.laplace_analyzer.regularized_final_results is not None:
+                available_methods.append(('Regularized NNLS', 'regularized'))
+
+        # Populate dropdown
+        for display_name, method_type in available_methods:
+            self.refinement_method_combo.addItem(display_name, method_type)
+
+        # Enable/disable button based on availability
+        self.refinement_btn.setEnabled(len(available_methods) > 0)
+
+    def _open_selected_refinement(self):
+        """Open refinement for the currently selected method in dropdown"""
+        from PyQt5.QtWidgets import QMessageBox
+
+        if self.refinement_method_combo.count() == 0:
+            QMessageBox.warning(
+                self,
+                "No Analysis Results",
+                "No analysis results available for refinement.\n"
+                "Please run an analysis first."
+            )
+            return
+
+        # Get selected method
+        selected_method = self.refinement_method_combo.currentData()
+
+        if selected_method is None:
+            QMessageBox.warning(
+                self,
+                "No Selection",
+                "Please select a method to refine."
+            )
+            return
+
+        # Open refinement for selected method
+        self._open_refinement_for_method(selected_method)
+
     def _open_refinement_dialog(self):
-        """Open the post-fit refinement dialog with method selection"""
+        """Open the post-fit refinement dialog with method selection (legacy method - kept for compatibility)"""
         from PyQt5.QtWidgets import (QMessageBox, QDialog, QVBoxLayout, QHBoxLayout,
                                     QLabel, QPushButton, QComboBox, QGroupBox)
         from gui.dialogs import PostFitRefinementDialog
