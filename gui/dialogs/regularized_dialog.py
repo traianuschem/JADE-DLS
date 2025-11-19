@@ -6,7 +6,7 @@ Allows users to configure Tikhonov-Phillips regularization parameters
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox,
                              QLabel, QLineEdit, QPushButton, QCheckBox,
                              QSlider, QSpinBox, QDoubleSpinBox, QTabWidget,
-                             QWidget, QMessageBox, QSizePolicy, QComboBox)
+                             QWidget, QMessageBox, QSizePolicy, QComboBox, QScrollArea)
 from PyQt5.QtCore import Qt, pyqtSignal
 import numpy as np
 import pandas as pd
@@ -492,15 +492,20 @@ class RegularizedDialog(QDialog):
         self.preview_info_label.setStyleSheet("color: #666; font-style: italic; padding: 5px;")
         layout.addWidget(self.preview_info_label)
 
-        # Matplotlib canvas
-        self.canvas = FigureCanvas(Figure(figsize=(12, 8)))
+        # Matplotlib canvas with larger figure size for better visibility
+        self.canvas = FigureCanvas(Figure(figsize=(16, 12)))
         self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         # Navigation toolbar
         self.toolbar = NavigationToolbar(self.canvas, self)
-
         layout.addWidget(self.toolbar)
-        layout.addWidget(self.canvas)
+
+        # Add scroll area to make plots scrollable
+        scroll_area = QScrollArea()
+        scroll_area.setWidget(self.canvas)
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setMinimumHeight(400)
+        layout.addWidget(scroll_area)
 
         widget.setLayout(layout)
         return widget

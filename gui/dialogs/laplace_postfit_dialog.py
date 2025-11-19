@@ -340,8 +340,11 @@ class DistributionInspectorWidget(QWidget):
                 ax_dest.set_xscale(ax_src.get_xscale())
                 ax_dest.set_yscale(ax_src.get_yscale())
 
-                # Copy grid
-                ax_dest.grid(ax_src.xaxis._gridOnMajor)
+                # Copy grid settings
+                # Check if grid is enabled by inspecting gridlines visibility
+                grid_visible = (len(ax_src.xaxis.get_gridlines()) > 0 and
+                              ax_src.xaxis.get_gridlines()[0].get_visible())
+                ax_dest.grid(grid_visible)
 
                 # Copy legend if exists
                 if ax_src.get_legend() is not None:
