@@ -1540,9 +1540,12 @@ print(method_c_results)
                 f"Error setting up NNLS analyzer:\n\n{str(e)}"
             )
 
-    def _display_nnls_results(self):
+    def _display_nnls_results(self, replace_existing=False):
         """
         Display NNLS analysis results in Analysis View (analog to cumulant results)
+
+        Args:
+            replace_existing: If True, replace existing NNLS plots (for post-refinement)
         """
         if not hasattr(self, 'laplace_analyzer') or self.laplace_analyzer.nnls_final_results is None:
             QMessageBox.warning(
@@ -1608,7 +1611,8 @@ print(method_c_results)
             fit_quality,
             switch_tab=False,
             regression_stats=regression_stats if regression_stats.get('regression_results') else None,
-            analyzer=self.laplace_analyzer  # Pass analyzer for post-fit refinement
+            analyzer=self.laplace_analyzer,  # Pass analyzer for post-fit refinement
+            replace_existing=replace_existing  # Replace plots if this is post-refinement update
         )
 
         # Switch to Results tab to show the summary
@@ -1743,9 +1747,12 @@ print(method_c_results)
             import traceback
             traceback.print_exc()
 
-    def _display_regularized_results(self):
+    def _display_regularized_results(self, replace_existing=False):
         """
         Display Regularized NNLS analysis results in Analysis View
+
+        Args:
+            replace_existing: If True, replace existing Regularized plots (for post-refinement)
         """
         if not hasattr(self, 'laplace_analyzer') or self.laplace_analyzer.regularized_final_results is None:
             QMessageBox.warning(
@@ -1807,7 +1814,8 @@ print(method_c_results)
             fit_quality,
             switch_tab=False,
             regression_stats=regression_stats if regression_stats.get('regression_results') else None,
-            analyzer=self.laplace_analyzer  # Pass analyzer for post-fit refinement
+            analyzer=self.laplace_analyzer,  # Pass analyzer for post-fit refinement
+            replace_existing=replace_existing  # Replace plots if this is post-refinement update
         )
 
         # Switch to Results tab to show the summary

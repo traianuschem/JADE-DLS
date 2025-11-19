@@ -389,7 +389,7 @@ class AnalysisView(QWidget):
 
     # ========== Cumulant Analysis Display Methods ==========
 
-    def display_cumulant_results(self, method_name, results_df, plots_dict=None, fit_quality=None, switch_tab=True, regression_stats=None, analyzer=None):
+    def display_cumulant_results(self, method_name, results_df, plots_dict=None, fit_quality=None, switch_tab=True, regression_stats=None, analyzer=None, replace_existing=False):
         """
         Display cumulant analysis results in Results and Plots tabs
 
@@ -401,6 +401,7 @@ class AnalysisView(QWidget):
             switch_tab: Whether to switch to appropriate tab (default True)
             regression_stats: Dictionary with regression statistics (all methods)
             analyzer: CumulantAnalyzer instance for recomputation (optional)
+            replace_existing: If True, replace existing plots for this method (for post-refinement)
         """
         # Store analyzer for all methods (used by post-fit refinement)
         if analyzer is not None:
@@ -419,7 +420,7 @@ class AnalysisView(QWidget):
 
         # Update Plots tab if plots are available
         if plots_dict:
-            self._load_plots(method_name, plots_dict, fit_quality)
+            self._load_plots(method_name, plots_dict, fit_quality, replace_method=replace_existing)
             if switch_tab:
                 # Switch to Plots tab
                 self.tabs.setCurrentIndex(1)
@@ -774,15 +775,41 @@ class AnalysisView(QWidget):
         else:
             self.details_text.setHtml(new_section)
 
-    def _load_plots(self, method_name, plots_dict, fit_quality):
-        """Load plots into the plotting system"""
-        print(f"[ANALYSIS VIEW] Loading {len(plots_dict)} plots for {method_name}")
+    def _load_plots(self, method_name, plots_dict, fit_quality, replace_method=False):
+        """
+        Load plots into the plotting system
+
+        Args:
+            method_name: Name of the method
+            plots_dict: Dictionary of plots
+            fit_quality: Dictionary of fit quality info
+            replace_method: If True, replace all plots for this method (used for post-refinement)
+        """
+        print(f"[ANALYSIS VIEW] Loading {len(plots_dict)} plots for {method_name} (replace_method={replace_method})")
 
         # Add to existing plots instead of replacing
         if not hasattr(self, 'current_plots'):
             self.current_plots = {}
         if not hasattr(self, 'current_fit_quality'):
             self.current_fit_quality = {}
+
+        # If replacing method, remove all plots for this method from the list
+        if replace_method:
+            items_to_remove = []
+            for row in range(self.plot_list.count()):
+                item = self.plot_list.item(row)
+                filename = item.data(Qt.UserRole)
+                if filename and filename in plots_dict:
+                    items_to_remove.append(row)
+                # Also remove method separators
+                elif item and method_name in item.text() and "───" in item.text():
+                    items_to_remove.append(row)
+
+            # Remove items in reverse order to maintain indices
+            for row in reversed(items_to_remove):
+                self.plot_list.takeItem(row)
+
+            print(f"[ANALYSIS VIEW] Removed {len(items_to_remove)} existing items for {method_name}")
 
         # Merge new plots with existing ones
         self.current_plots.update(plots_dict)
@@ -1769,27 +1796,27 @@ class AnalysisView(QWidget):
                 self.laplace_analyzer.calculate_nnls_diffusion_coefficients(x_range=q_range)
                 self.laplace_analyzer._calculate_nnls_final_results()
 
-                # Update display
+                # Update display with replace_existing=True to update plots in panel
                 from gui.main_window import JADEDLSMainWindow
                 parent = self.parent()
                 while parent and not isinstance(parent, JADEDLSMainWindow):
                     parent = parent.parent()
 
                 if parent:
-                    parent._display_nnls_results()
+                    parent._display_nnls_results(replace_existing=False)
 
             else:  # Regularized
                 self.laplace_analyzer.calculate_regularized_diffusion_coefficients(x_range=q_range)
                 self.laplace_analyzer._calculate_regularized_final_results()
 
-                # Update display
+                # Update display with replace_existing=True to update plots in panel
                 from gui.main_window import JADEDLSMainWindow
                 parent = self.parent()
                 while parent and not isinstance(parent, JADEDLSMainWindow):
                     parent = parent.parent()
 
                 if parent:
-                    parent._display_regularized_results()
+                    parent._display_regularized_results(replace_existing=False)
 
             print("="*60 + "\n")
 
