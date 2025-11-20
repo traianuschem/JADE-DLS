@@ -123,12 +123,9 @@ class AnalysisView(QWidget):
         self.prev_plot_btn.clicked.connect(self._show_previous_plot)
         self.next_plot_btn = QPushButton("Next ▶")
         self.next_plot_btn.clicked.connect(self._show_next_plot)
-        self.grid_view_btn = QPushButton("Grid View")
-        self.grid_view_btn.clicked.connect(self._show_grid_view)
 
         nav_buttons.addWidget(self.prev_plot_btn)
         nav_buttons.addWidget(self.next_plot_btn)
-        nav_buttons.addWidget(self.grid_view_btn)
         nav_buttons.addStretch()
 
         nav_layout.addLayout(nav_buttons)
@@ -1074,90 +1071,6 @@ class AnalysisView(QWidget):
             item = self.plot_list.item(0)
             if item and item.data(Qt.UserRole):
                 self._show_plot_by_item(item)
-
-    def _show_grid_view(self):
-        """Show all plots in grid view"""
-        from PyQt5.QtWidgets import QDialog, QScrollArea, QGridLayout
-        import matplotlib.pyplot as plt
-        from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
-
-        if not self.current_plots:
-            return
-
-        # Create grid dialog
-        grid_dialog = QDialog(self)
-        grid_dialog.setWindowTitle(f"All Plots - {self.current_method_name}")
-        grid_dialog.setMinimumSize(1200, 800)
-
-        layout = QVBoxLayout()
-
-        # Info
-        info_label = QLabel(
-            f"<b>Showing all {len(self.current_plots)} datasets</b>"
-        )
-        layout.addWidget(info_label)
-
-        # Scroll area
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-
-        # Grid widget
-        from PyQt5.QtWidgets import QWidget
-        grid_widget = QWidget()
-        grid_layout = QGridLayout()
-
-        # Calculate grid dimensions
-        num_plots = len(self.current_plots)
-        cols = min(4, num_plots)
-        rows = (num_plots + cols - 1) // cols
-
-        # Create grid of plots
-        for i, (filename, (fig, _)) in enumerate(self.current_plots.items()):
-            row = i // cols
-            col = i % cols
-
-            if fig is not None:
-                # Create small canvas
-                small_fig = plt.Figure(figsize=(3, 2.5))
-                small_canvas = FigureCanvasQTAgg(small_fig)
-
-                # Copy plot to small figure
-                source_axes = fig.get_axes()
-                if source_axes:
-                    ax = small_fig.add_subplot(111)
-                    source_ax = source_axes[0]
-
-                    # Copy lines
-                    for line in source_ax.get_lines():
-                        ax.plot(line.get_xdata(), line.get_ydata(),
-                               color=line.get_color(),
-                               linestyle=line.get_linestyle(),
-                               linewidth=0.5)
-
-                    ax.set_title(f"{i+1}. {filename[:20]}...", fontsize=8)
-                    ax.tick_params(labelsize=6)
-                    if source_ax.get_xscale() == 'log':
-                        ax.set_xscale('log')
-                    if source_ax.get_yscale() == 'log':
-                        ax.set_yscale('log')
-
-                small_fig.tight_layout()
-
-                # Add to grid
-                grid_layout.addWidget(small_canvas, row, col)
-
-        grid_widget.setLayout(grid_layout)
-        scroll.setWidget(grid_widget)
-        layout.addWidget(scroll)
-
-        # Close button
-        from PyQt5.QtWidgets import QPushButton
-        close_btn = QPushButton("Close")
-        close_btn.clicked.connect(grid_dialog.accept)
-        layout.addWidget(close_btn)
-
-        grid_dialog.setLayout(layout)
-        grid_dialog.exec_()
 
     def clear_results(self):
         """Clear all results"""

@@ -4,8 +4,7 @@ Shows analysis steps and their status
 """
 
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-                             QLabel, QListWidget, QListWidgetItem, QGroupBox,
-                             QProgressBar)
+                             QLabel, QListWidget, QListWidgetItem, QGroupBox)
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QIcon, QColor
 
@@ -39,12 +38,6 @@ class WorkflowPanel(QWidget):
         # Workflow steps list
         self.setup_workflow_list()
         layout.addWidget(self.workflow_group)
-
-        # Progress indicator
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 100)
-        self.progress_bar.setValue(0)
-        layout.addWidget(self.progress_bar)
 
         # Control buttons
         self.setup_control_buttons()
@@ -133,7 +126,6 @@ class WorkflowPanel(QWidget):
 
     def on_reset(self):
         """Reset the workflow"""
-        self.progress_bar.setValue(0)
         # Additional reset logic
 
     def activate_step(self, step_id):
@@ -144,12 +136,6 @@ class WorkflowPanel(QWidget):
                 self.step_list.setCurrentItem(item)
                 self.on_step_clicked(item)
                 break
-
-    def update_progress(self):
-        """Update progress bar based on pipeline state"""
-        if len(self.pipeline.steps) > 0:
-            progress = int((len(self.pipeline.steps) / len(self.steps)) * 100)
-            self.progress_bar.setValue(min(progress, 100))
 
     def mark_step_complete(self, step_id):
         """Mark a step as complete with visual indicator"""
