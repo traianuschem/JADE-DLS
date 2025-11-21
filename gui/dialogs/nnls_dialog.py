@@ -307,6 +307,27 @@ class NNLSDialog(QDialog):
         cluster_group.setLayout(cluster_layout)
         layout.addWidget(cluster_group)
 
+        # Peak Position Method
+        position_group = QGroupBox("Peak Position Method")
+        position_layout = QVBoxLayout()
+
+        position_info = QLabel("Choose how to calculate the characteristic decay time for each peak:\n"
+                              "• Maximum: Use the tau value at the peak maximum (traditional method)\n"
+                              "• Centroid: Use the center of mass in log-space (compensates for log-distortion)")
+        position_info.setWordWrap(True)
+        position_info.setStyleSheet("color: #666; font-style: italic;")
+        position_layout.addWidget(position_info)
+
+        # Centroid checkbox
+        self.use_centroid_check = QCheckBox("Use centroid (center of mass) instead of maximum")
+        self.use_centroid_check.setChecked(False)
+        self.use_centroid_check.setToolTip("Calculate peak position as weighted average in log-space.\n"
+                                           "Recommended for distributions with asymmetric or log-distorted peaks.")
+        position_layout.addWidget(self.use_centroid_check)
+
+        position_group.setLayout(position_layout)
+        layout.addWidget(position_group)
+
         # Quick presets
         preset_group = QGroupBox("Quick Presets")
         preset_layout = QHBoxLayout()
@@ -914,6 +935,9 @@ class NNLSDialog(QDialog):
         # Clustering parameters
         self.params['use_clustering'] = self.clustering_enabled_check.isChecked()
         self.params['eps_factor'] = self.eps_factor_input.value()
+
+        # Peak position method
+        self.params['use_centroid'] = self.use_centroid_check.isChecked()
 
         # Processing options
         self.params['use_multiprocessing'] = self.multiprocessing_check.isChecked()

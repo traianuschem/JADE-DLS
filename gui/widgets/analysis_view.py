@@ -1707,9 +1707,12 @@ class AnalysisView(QWidget):
             # Recalculate diffusion coefficients with new q² range
             if is_nnls:
                 self.laplace_analyzer.calculate_nnls_diffusion_coefficients(x_range=q_range)
-                self.laplace_analyzer._calculate_nnls_final_results()
+                self.laplace_analyzer._calculate_nnls_final_results(
+                    append_mode=True,
+                    label_suffix=" (Post-Refined)"
+                )
 
-                # Update display with replace_existing=True to update plots in panel
+                # Update display with replace_existing=False to append plots
                 from gui.main_window import JADEDLSMainWindow
                 parent = self.parent()
                 while parent and not isinstance(parent, JADEDLSMainWindow):
