@@ -126,6 +126,49 @@ class TransparentPipeline(QObject):
 
         return step
 
+    def add_post_refinement_step(self, method_name: str, q_range: tuple = None,
+                                 excluded_files: List[str] = None,
+                                 is_laplace: bool = False) -> AnalysisStep:
+        """
+        Add a post-fit refinement step to the pipeline
+
+        Args:
+            method_name: Name of method being refined ('Method C', 'NNLS', 'Regularized')
+            q_range: Optional (min, max) q² range for refinement
+            excluded_files: Optional list of files/datasets to exclude
+            is_laplace: True for NNLS/Regularized, False for Cumulant methods
+
+        Returns:
+            The created AnalysisStep
+        """
+        # Generate code based on method type
+        if is_laplace:
+            # NNLS or Regularized refinement
+            if method_name == "NNLS":
+                code = self._generate_nnls_refinement_code(q_range, excluded_files)
+            else:  # Regularized
+                code = self._generate_regularized_refinement_code(q_range, excluded_files)
+        else:
+            # Cumulant Method C refinement
+            code = self._generate_method_c_refinement_code(q_range, excluded_files)
+
+        # Create step
+        step = AnalysisStep(
+            name=f"{method_name} Post-Refinement",
+            step_type='refinement',
+            custom_code=code,
+            params={
+                'method': method_name,
+                'q_range': q_range,
+                'excluded_files': excluded_files or []
+            }
+        )
+
+        self.steps.append(step)
+        self.step_added.emit(step.to_dict())
+
+        return step
+
     def add_filter_step(self, filter_type: str, excluded_files: List[str],
                        original_count: int, remaining_count: int) -> AnalysisStep:
         """
@@ -259,6 +302,7 @@ print(f"No files excluded from {filter_type} filtering - {{len({filter_type}_dat
 # JADE-DLS Analysis Script
 # Auto-generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 # Generated from GUI session
+# FAIR-compliant data processing pipeline
 
 import numpy as np
 import pandas as pd
@@ -272,10 +316,87 @@ import os
 
         # Add each step
         for i, step in enumerate(self.steps):
-            code_parts.append(f"\n# ========== Step {i+1}: {step.name} ==========")
+            code_parts.append(f"\n\n# ========== Step {i+1}: {step.name} ==========")
             code_parts.append(step.generate_code())
 
+        # Add final export code
+        code_parts.append(self._generate_export_code())
+
         return '\n'.join(code_parts)
+
+    def _generate_export_code(self) -> str:
+        """Generate code for final results export"""
+        return """
+
+# ========== Final Step: Export Results ==========
+
+# Combine all results into a summary
+all_results_list = []
+
+# Add cumulant results if they exist
+if 'method_a_results' in locals():
+    all_results_list.append(method_a_results)
+if 'method_b_results' in locals():
+    all_results_list.append(method_b_results)
+if 'method_c_results' in locals():
+    all_results_list.append(method_c_results)
+if 'method_c_results_refined' in locals():
+    all_results_list.append(method_c_results_refined)
+
+# Add NNLS results if they exist
+if 'nnls_final_results_df' in locals():
+    all_results_list.append(nnls_final_results_df)
+if 'nnls_final_results_refined_df' in locals():
+    all_results_list.append(nnls_final_results_refined_df)
+
+# Add Regularized results if they exist
+if 'regularized_final_results_df' in locals():
+    all_results_list.append(regularized_final_results_df)
+if 'regularized_final_results_refined_df' in locals():
+    all_results_list.append(regularized_final_results_refined_df)
+
+# Combine all results
+if all_results_list:
+    all_results = pd.concat(all_results_list, ignore_index=True)
+
+    print("\\n" + "="*60)
+    print("FINAL RESULTS SUMMARY")
+    print("="*60)
+    print(all_results.to_string())
+    print("="*60)
+
+    # Export to Excel
+    output_file = "DLS_Analysis_Results.xlsx"
+    with pd.ExcelWriter(output_file) as writer:
+        all_results.to_excel(writer, sheet_name='Summary', index=False)
+
+        # Export individual method results to separate sheets
+        if 'method_a_results' in locals():
+            method_a_results.to_excel(writer, sheet_name='Method_A', index=False)
+        if 'method_b_results' in locals():
+            method_b_results.to_excel(writer, sheet_name='Method_B', index=False)
+        if 'method_c_results' in locals():
+            method_c_results.to_excel(writer, sheet_name='Method_C', index=False)
+        if 'method_c_results_refined' in locals():
+            method_c_results_refined.to_excel(writer, sheet_name='Method_C_Refined', index=False)
+        if 'nnls_final_results_df' in locals():
+            nnls_final_results_df.to_excel(writer, sheet_name='NNLS', index=False)
+        if 'nnls_final_results_refined_df' in locals():
+            nnls_final_results_refined_df.to_excel(writer, sheet_name='NNLS_Refined', index=False)
+        if 'regularized_final_results_df' in locals():
+            regularized_final_results_df.to_excel(writer, sheet_name='Regularized', index=False)
+        if 'regularized_final_results_refined_df' in locals():
+            regularized_final_results_refined_df.to_excel(writer, sheet_name='Regularized_Refined', index=False)
+
+    print(f"\\nResults exported to: {output_file}")
+
+    # Also export to CSV for FAIR compliance
+    csv_file = "DLS_Analysis_Results.csv"
+    all_results.to_csv(csv_file, index=False)
+    print(f"Results also exported to: {csv_file}")
+else:
+    print("\\nNo results to export.")
+"""
 
     def export_to_script(self, filename: str):
         """
@@ -611,3 +732,228 @@ Analysis Steps:
         # Note: Can't fully restore functions from JSON,
         # would need to re-create steps manually
         print("Session metadata loaded. Note: Step functions need manual restoration.")
+
+    def _generate_method_c_refinement_code(self, q_range: tuple, excluded_files: List[str]) -> str:
+        """Generate code for Method C post-refinement"""
+        excluded_str = ""
+        if excluded_files and len(excluded_files) > 0:
+            files_list = ',\n    '.join([f"'{f}'" for f in excluded_files])
+            excluded_str = f"""
+# Files to exclude
+excluded_files_c = [
+    {files_list}
+]
+
+# Filter data
+cumulant_method_C_data_refined = cumulant_method_C_data[
+    ~cumulant_method_C_data['filename'].isin(excluded_files_c)
+].reset_index(drop=True)
+cumulant_method_C_data_refined.index = cumulant_method_C_data_refined.index + 1
+print(f"Excluded {{len(excluded_files_c)}} files, {{len(cumulant_method_C_data_refined)}} remaining")
+"""
+        else:
+            excluded_str = "\ncumulant_method_C_data_refined = cumulant_method_C_data.copy()\n"
+
+        q_range_str = ""
+        if q_range:
+            q_range_str = f"""
+# Apply q² range filter
+q_range_c = {q_range}
+mask = ((cumulant_method_C_data_refined['q^2'] >= q_range_c[0]) &
+        (cumulant_method_C_data_refined['q^2'] <= q_range_c[1]))
+cumulant_method_C_data_refined = cumulant_method_C_data_refined[mask].reset_index(drop=True)
+cumulant_method_C_data_refined.index = cumulant_method_C_data_refined.index + 1
+print(f"Applied q² range filter: {{len(cumulant_method_C_data_refined)}} points remaining")
+"""
+
+        return f"""
+# Post-refinement for Method C
+# Exclude outliers and recalculate with q² range filter
+
+from cumulants import analyze_diffusion_coefficient
+import numpy as np
+{excluded_str}{q_range_str}
+# Recalculate diffusion coefficient
+cumulant_method_C_diff_refined = analyze_diffusion_coefficient(
+    data_df=cumulant_method_C_data_refined,
+    q_squared_col='q^2',
+    gamma_cols=['best_b'],
+    method_names=['Method C (Post-Refined)'],
+    x_range={q_range if q_range else 'None'}
+)
+
+# Calculate refined results
+C_diff_refined = pd.DataFrame()
+C_diff_refined['D [m^2/s]'] = cumulant_method_C_diff_refined['q^2_coef'] * 10**(-18)
+C_diff_refined['std err D [m^2/s]'] = cumulant_method_C_diff_refined['q^2_se'] * 10**(-18)
+
+# Calculate polydispersity
+cumulant_method_C_data_refined['polydispersity'] = (
+    cumulant_method_C_data_refined['best_c'] / (cumulant_method_C_data_refined['best_b'])**2
+)
+polydispersity_method_C_refined = cumulant_method_C_data_refined['polydispersity'].mean()
+
+# Calculate Rh
+method_c_results_refined = pd.DataFrame()
+method_c_results_refined['Rh [nm]'] = c * (1 / C_diff_refined['D [m^2/s]'][0]) * 10**9
+fractional_error_Rh_C_refined = np.sqrt(
+    (delta_c / c)**2 +
+    (C_diff_refined['std err D [m^2/s]'][0] / C_diff_refined['D [m^2/s]'][0])**2
+)
+method_c_results_refined['Rh error [nm]'] = fractional_error_Rh_C_refined * method_c_results_refined['Rh [nm]']
+method_c_results_refined['R_squared'] = cumulant_method_C_diff_refined['R_squared']
+method_c_results_refined['Fit'] = 'Method C (Post-Refined)'
+method_c_results_refined['Residuals'] = cumulant_method_C_diff_refined['Normality']
+method_c_results_refined['PDI'] = polydispersity_method_C_refined
+
+print("\\nMethod C Post-Refined Results:")
+print(method_c_results_refined)
+"""
+
+    def _generate_nnls_refinement_code(self, q_range: tuple, excluded_files: List[str]) -> str:
+        """Generate code for NNLS post-refinement"""
+        excluded_str = ""
+        if excluded_files and len(excluded_files) > 0:
+            files_list = ',\n    '.join([f"'{f}'" for f in excluded_files])
+            excluded_str = f"""
+# Files to exclude
+excluded_files_nnls = [
+    {files_list}
+]
+
+# Filter data
+nnls_data_refined = nnls_data[
+    ~nnls_data['filename'].isin(excluded_files_nnls)
+].reset_index(drop=True)
+nnls_data_refined.index = nnls_data_refined.index + 1
+print(f"[NNLS Post-Refinement] Removed {{len(excluded_files_nnls)}} datasets, {{len(nnls_data_refined)}} remaining")
+"""
+        else:
+            excluded_str = "\nnnls_data_refined = nnls_data.copy()\n"
+
+        return f"""
+# Post-refinement for NNLS
+# Apply q² range and exclude distributions
+
+from peak_clustering import analyze_diffusion_coefficient_robust
+import numpy as np
+{excluded_str}
+# Recalculate diffusion coefficients with new q² range (using robust regression)
+q_range_nnls = {q_range if q_range else 'None'}
+
+# Get gamma columns (should exist from initial analysis)
+gamma_columns_refined = [col for col in nnls_data_refined.columns if col.startswith('gamma_')]
+
+nnls_diff_results_refined = analyze_diffusion_coefficient_robust(
+    data_df=nnls_data_refined,
+    q_squared_col='q^2',
+    gamma_cols=gamma_columns_refined,
+    robust_method='ransac',
+    x_range=q_range_nnls,
+    show_plots=False
+)
+
+# Calculate refined Rh results
+nnls_final_results_refined = []
+for i in range(len(nnls_diff_results_refined)):
+    if pd.notna(nnls_diff_results_refined['q^2_coef'][i]):
+        # Convert D from nm²/s to m²/s
+        D_m2s = nnls_diff_results_refined['q^2_coef'][i] * 1e-18
+        D_err_m2s = nnls_diff_results_refined['q^2_se'][i] * 1e-18
+
+        # Calculate Rh
+        Rh_nm = c * (1 / D_m2s) * 1e9
+
+        # Error propagation
+        fractional_error = np.sqrt((delta_c / c)**2 + (D_err_m2s / D_m2s)**2)
+        Rh_error_nm = fractional_error * Rh_nm
+
+        result = {{
+            'Rh [nm]': Rh_nm,
+            'Rh error [nm]': Rh_error_nm,
+            'D [m^2/s]': D_m2s,
+            'D error [m^2/s]': D_err_m2s,
+            'R_squared': nnls_diff_results_refined['R_squared'][i],
+            'Fit': f'NNLS Peak {{i+1}} (Post-Refined)',
+            'Residuals': nnls_diff_results_refined.get('Normality', [0])[i]
+        }}
+        nnls_final_results_refined.append(result)
+
+nnls_final_results_refined_df = pd.DataFrame(nnls_final_results_refined)
+print("\\nNNLS Post-Refined Results:")
+print(nnls_final_results_refined_df)
+"""
+
+    def _generate_regularized_refinement_code(self, q_range: tuple, excluded_files: List[str]) -> str:
+        """Generate code for Regularized NNLS post-refinement"""
+        excluded_str = ""
+        if excluded_files and len(excluded_files) > 0:
+            files_list = ',\n    '.join([f"'{f}'" for f in excluded_files])
+            excluded_str = f"""
+# Files to exclude
+excluded_files_reg = [
+    {files_list}
+]
+
+# Filter data
+regularized_data_refined = regularized_data[
+    ~regularized_data['filename'].isin(excluded_files_reg)
+].reset_index(drop=True)
+regularized_data_refined.index = regularized_data_refined.index + 1
+print(f"[Regularized Post-Refinement] Removed {{len(excluded_files_reg)}} datasets, {{len(regularized_data_refined)}} remaining")
+"""
+        else:
+            excluded_str = "\nregularized_data_refined = regularized_data.copy()\n"
+
+        return f"""
+# Post-refinement for Regularized NNLS
+# Apply q² range and exclude distributions
+
+from peak_clustering import analyze_diffusion_coefficient_robust
+import numpy as np
+{excluded_str}
+# Recalculate diffusion coefficients with new q² range
+q_range_reg = {q_range if q_range else 'None'}
+
+# Get gamma columns (should exist from initial analysis)
+gamma_columns_refined = [col for col in regularized_data_refined.columns if col.startswith('gamma_')]
+
+regularized_diff_results_refined = analyze_diffusion_coefficient_robust(
+    data_df=regularized_data_refined,
+    q_squared_col='q^2',
+    gamma_cols=gamma_columns_refined,
+    robust_method='ransac',
+    x_range=q_range_reg,
+    show_plots=False
+)
+
+# Calculate refined Rh results
+regularized_final_results_refined = []
+for i in range(len(regularized_diff_results_refined)):
+    if pd.notna(regularized_diff_results_refined['q^2_coef'][i]):
+        # Convert D from nm²/s to m²/s
+        D_m2s = regularized_diff_results_refined['q^2_coef'][i] * 1e-18
+        D_err_m2s = regularized_diff_results_refined['q^2_se'][i] * 1e-18
+
+        # Calculate Rh
+        Rh_nm = c * (1 / D_m2s) * 1e9
+
+        # Error propagation
+        fractional_error = np.sqrt((delta_c / c)**2 + (D_err_m2s / D_m2s)**2)
+        Rh_error_nm = fractional_error * Rh_nm
+
+        result = {{
+            'Rh [nm]': Rh_nm,
+            'Rh error [nm]': Rh_error_nm,
+            'D [m^2/s]': D_m2s,
+            'D error [m^2/s]': D_err_m2s,
+            'R_squared': regularized_diff_results_refined['R_squared'][i],
+            'Fit': f'Regularized Peak {{i+1}} (Post-Refined)',
+            'Residuals': regularized_diff_results_refined.get('Normality', [0])[i]
+        }}
+        regularized_final_results_refined.append(result)
+
+regularized_final_results_refined_df = pd.DataFrame(regularized_final_results_refined)
+print("\\nRegularized NNLS Post-Refined Results:")
+print(regularized_final_results_refined_df)
+"""

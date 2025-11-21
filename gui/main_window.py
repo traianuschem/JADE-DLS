@@ -1833,43 +1833,103 @@ print(method_c_results)
 
     def _add_nnls_step_to_pipeline(self, params):
         """Add NNLS analysis step to pipeline"""
+        # Extract parameters
+        use_clustering = params.get('use_clustering', True)
+        use_centroid = params.get('use_centroid', False)
+        eps_factor = params.get('eps_factor', 0.3)
+
         # Create code for this step
         code = f"""
 # NNLS Analysis
 # Parameters: prominence={params['prominence']}, distance={params['distance']}
+# Peak position: {'Centroid (center of mass)' if use_centroid else 'Maximum'}
+# Clustering: {'Enabled (automatic mode detection)' if use_clustering else 'Disabled'}
 
 from regularized_optimized import nnls_all_optimized, calculate_decay_rates
-from cumulants import analyze_diffusion_coefficient
+from peak_clustering import cluster_peaks_across_datasets, analyze_diffusion_coefficient_robust
 import numpy as np
 
 # Run NNLS
 nnls_params = {{
     'decay_times': np.logspace({np.log10(params['decay_times'][0]):.2f}, {np.log10(params['decay_times'][-1]):.2f}, {len(params['decay_times'])}),
     'prominence': {params['prominence']},
-    'distance': {params['distance']}
+    'distance': {params['distance']},
+    'use_centroid': {use_centroid}  # Use centroid instead of maximum for peak position
 }}
 
 nnls_results = nnls_all_optimized(
     processed_correlations,
     nnls_params,
     use_multiprocessing={params.get('use_multiprocessing', False)},
-    show_plots={params.get('show_plots', True)}
+    show_plots=False  # Don't show individual plots in batch mode
 )
 
 # Merge with basedata
 nnls_data = pd.merge(df_basedata, nnls_results, on='filename', how='outer')
+"""
 
+        # Add clustering code if enabled
+        if use_clustering:
+            code += f"""
+# Perform automatic peak clustering to identify common modes across angles
+print("\\n[NNLS] Performing automatic peak clustering...")
+nnls_data, cluster_info = cluster_peaks_across_datasets(
+    nnls_data,
+    tau_prefix='tau_',
+    method='dbscan',
+    eps_factor={eps_factor},
+    min_samples=max(2, int(0.2 * len(nnls_data)))
+)
+
+print(f"[NNLS] Detected {{len(cluster_info)}} mode(s) via clustering")
+for mode_key, info in cluster_info.items():
+    print(f"  {{mode_key}}: n={{info['n_points']}}, D={{info['mean_D']:.2e}} nm²/s, CV={{info['cv_D']:.2%}}")
+"""
+
+        code += """
 # Calculate decay rates
 tau_columns = [col for col in nnls_data.columns if col.startswith('tau_')]
 nnls_data = calculate_decay_rates(nnls_data, tau_columns)
 
-# Calculate diffusion coefficients
+# Calculate diffusion coefficients using robust regression
 gamma_columns = [col.replace('tau', 'gamma') for col in tau_columns]
-nnls_diff_results = analyze_diffusion_coefficient(
+nnls_diff_results = analyze_diffusion_coefficient_robust(
     data_df=nnls_data,
     q_squared_col='q^2',
-    gamma_cols=gamma_columns
+    gamma_cols=gamma_columns,
+    robust_method='ransac',
+    show_plots=False
 )
+
+# Calculate final Rh results
+nnls_final_results = []
+for i in range(len(nnls_diff_results)):
+    if pd.notna(nnls_diff_results['q^2_coef'][i]):
+        # Convert D from nm²/s to m²/s
+        D_m2s = nnls_diff_results['q^2_coef'][i] * 1e-18
+        D_err_m2s = nnls_diff_results['q^2_se'][i] * 1e-18
+
+        # Calculate Rh
+        Rh_nm = c * (1 / D_m2s) * 1e9
+
+        # Error propagation
+        fractional_error = np.sqrt((delta_c / c)**2 + (D_err_m2s / D_m2s)**2)
+        Rh_error_nm = fractional_error * Rh_nm
+
+        result = {
+            'Rh [nm]': Rh_nm,
+            'Rh error [nm]': Rh_error_nm,
+            'D [m^2/s]': D_m2s,
+            'D error [m^2/s]': D_err_m2s,
+            'R_squared': nnls_diff_results['R_squared'][i],
+            'Fit': f'NNLS Peak {i+1}',
+            'Residuals': nnls_diff_results.get('Normality', [0])[i]
+        }
+        nnls_final_results.append(result)
+
+nnls_final_results_df = pd.DataFrame(nnls_final_results)
+print("\\nNNLS Analysis Results:")
+print(nnls_final_results_df)
 """
 
         # Add step to pipeline
@@ -1885,13 +1945,17 @@ nnls_diff_results = analyze_diffusion_coefficient(
 
     def _add_regularized_step_to_pipeline(self, params):
         """Add Regularized NNLS analysis step to pipeline"""
+        # Extract parameters
+        use_centroid = params.get('use_centroid', False)
+
         # Create code for this step
         code = f"""
 # Regularized NNLS Analysis with Tikhonov-Phillips Regularization
 # Parameters: alpha={params['alpha']}, prominence={params['prominence']}, distance={params['distance']}
+# Peak position: {'Centroid (center of mass)' if use_centroid else 'Maximum'}
 
 from regularized import nnls_reg_all, calculate_decay_rates
-from cumulants import analyze_diffusion_coefficient
+from peak_clustering import analyze_diffusion_coefficient_robust
 import numpy as np
 
 # Run Regularized NNLS
@@ -1902,7 +1966,8 @@ reg_params = {{
     'distance': {params['distance']},
     'normalize': {params.get('normalize', True)},
     'sparsity_penalty': {params.get('sparsity_penalty', 0.0)},
-    'enforce_unimodality': {params.get('enforce_unimodality', False)}
+    'enforce_unimodality': {params.get('enforce_unimodality', False)},
+    'use_centroid': {use_centroid}
 }}
 
 regularized_results, full_results = nnls_reg_all(
@@ -1917,13 +1982,40 @@ regularized_data = pd.merge(df_basedata, regularized_results, on='filename', how
 tau_columns = [col for col in regularized_data.columns if col.startswith('tau_')]
 regularized_data = calculate_decay_rates(regularized_data, tau_columns)
 
-# Calculate diffusion coefficients
+# Calculate diffusion coefficients using robust regression
 gamma_columns = [col.replace('tau', 'gamma') for col in tau_columns]
-regularized_diff_results = analyze_diffusion_coefficient(
+regularized_diff_results = analyze_diffusion_coefficient_robust(
     data_df=regularized_data,
     q_squared_col='q^2',
-    gamma_cols=gamma_columns
+    gamma_cols=gamma_columns,
+    robust_method='ransac',
+    show_plots=False
 )
+
+# Calculate final Rh results
+regularized_final_results = []
+for i in range(len(regularized_diff_results)):
+    if pd.notna(regularized_diff_results['q^2_coef'][i]):
+        D_m2s = regularized_diff_results['q^2_coef'][i] * 1e-18
+        D_err_m2s = regularized_diff_results['q^2_se'][i] * 1e-18
+        Rh_nm = c * (1 / D_m2s) * 1e9
+        fractional_error = np.sqrt((delta_c / c)**2 + (D_err_m2s / D_m2s)**2)
+        Rh_error_nm = fractional_error * Rh_nm
+
+        result = {{
+            'Rh [nm]': Rh_nm,
+            'Rh error [nm]': Rh_error_nm,
+            'D [m^2/s]': D_m2s,
+            'D error [m^2/s]': D_err_m2s,
+            'R_squared': regularized_diff_results['R_squared'][i],
+            'Fit': f'Regularized Peak {{i+1}}',
+            'Residuals': regularized_diff_results.get('Normality', [0])[i]
+        }}
+        regularized_final_results.append(result)
+
+regularized_final_results_df = pd.DataFrame(regularized_final_results)
+print("\\nRegularized NNLS Results:")
+print(regularized_final_results_df)
 """
 
         # Add step to pipeline

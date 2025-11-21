@@ -1605,6 +1605,20 @@ class AnalysisView(QWidget):
                             results_updated.append(('Method C', result_c))
                             self._update_results_table('Method C', result_c)
 
+                            # Add post-refinement step to pipeline
+                            from gui.main_window import JADEDLSMainWindow
+                            parent = self.parent()
+                            while parent and not isinstance(parent, JADEDLSMainWindow):
+                                parent = parent.parent()
+
+                            if parent and hasattr(parent, 'pipeline'):
+                                parent.pipeline.add_post_refinement_step(
+                                    method_name="Method C",
+                                    q_range=q_range,
+                                    excluded_files=excluded_fits,
+                                    is_laplace=False
+                                )
+
                 print("="*60 + "\n")
 
                 # Show summary
@@ -1720,12 +1734,20 @@ class AnalysisView(QWidget):
 
                 if parent:
                     parent._display_nnls_results(replace_existing=False)
+                    # Add post-refinement step to pipeline
+                    if hasattr(parent, 'pipeline'):
+                        parent.pipeline.add_post_refinement_step(
+                            method_name="NNLS",
+                            q_range=q_range,
+                            excluded_files=excluded_files,
+                            is_laplace=True
+                        )
 
             else:  # Regularized
                 self.laplace_analyzer.calculate_regularized_diffusion_coefficients(x_range=q_range)
                 self.laplace_analyzer._calculate_regularized_final_results()
 
-                # Update display with replace_existing=True to update plots in panel
+                # Update display with replace_existing=False to append plots
                 from gui.main_window import JADEDLSMainWindow
                 parent = self.parent()
                 while parent and not isinstance(parent, JADEDLSMainWindow):
@@ -1733,6 +1755,14 @@ class AnalysisView(QWidget):
 
                 if parent:
                     parent._display_regularized_results(replace_existing=False)
+                    # Add post-refinement step to pipeline
+                    if hasattr(parent, 'pipeline'):
+                        parent.pipeline.add_post_refinement_step(
+                            method_name="Regularized",
+                            q_range=q_range,
+                            excluded_files=excluded_files,
+                            is_laplace=True
+                        )
 
             print("="*60 + "\n")
 
