@@ -468,8 +468,14 @@ class LaplaceAnalyzer:
             '1/s'
         )
 
-    def _calculate_nnls_final_results(self):
-        """Internal: Calculate final NNLS results with Rh values"""
+    def _calculate_nnls_final_results(self, append_mode=False, label_suffix=""):
+        """
+        Internal: Calculate final NNLS results with Rh values
+
+        Args:
+            append_mode: If True, append to existing results instead of replacing
+            label_suffix: Suffix to add to result labels (e.g., " (Post-Refined)")
+        """
         if self.nnls_diff_results is None:
             raise ValueError("Must calculate diffusion coefficients first")
 
@@ -494,13 +500,16 @@ class LaplaceAnalyzer:
             )
             Rh_error_nm = fractional_error * Rh_nm
 
+            # Create label with optional suffix
+            fit_label = f'NNLS Peak {i+1}{label_suffix}'
+
             result = pd.DataFrame({
                 'Rh [nm]': [Rh_nm],
                 'Rh error [nm]': [Rh_error_nm],
                 'D [m^2/s]': [D_m2s],
                 'D error [m^2/s]': [D_err_m2s],
                 'R_squared': [self.nnls_diff_results['R_squared'][i]],
-                'Fit': [f'NNLS Peak {i+1}'],
+                'Fit': [fit_label],
                 'Residuals': [self.nnls_diff_results.get('Normality', [0])[i]]
             })
             temp_results.append(result)
@@ -508,12 +517,19 @@ class LaplaceAnalyzer:
         # Check if we have valid results
         if len(temp_results) == 0:
             print("[NNLS] Warning: No valid results to finalize. Creating empty DataFrame.")
-            self.nnls_final_results = pd.DataFrame(columns=[
+            new_results = pd.DataFrame(columns=[
                 'Rh [nm]', 'Rh error [nm]', 'D [m^2/s]', 'D error [m^2/s]',
                 'R_squared', 'Fit', 'Residuals'
             ])
         else:
-            self.nnls_final_results = pd.concat(temp_results, ignore_index=True)
+            new_results = pd.concat(temp_results, ignore_index=True)
+
+        # Append or replace based on mode
+        if append_mode and self.nnls_final_results is not None and not self.nnls_final_results.empty:
+            print(f"[NNLS] Appending {len(new_results)} new results to {len(self.nnls_final_results)} existing results")
+            self.nnls_final_results = pd.concat([self.nnls_final_results, new_results], ignore_index=True)
+        else:
+            self.nnls_final_results = new_results
 
     def remove_nnls_outliers(self, indices_to_remove: List[int]):
         """

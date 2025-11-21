@@ -402,16 +402,25 @@ def analyze_diffusion_coefficient_robust(data_df: pd.DataFrame,
         method_name = method_names[i] if i < len(method_names) else ''
         Y_full = data_df[gamma_col].values
 
+        # First, filter out NaN values
+        valid_mask = ~(np.isnan(X_full) | np.isnan(Y_full))
+        X_valid = X_full[valid_mask]
+        Y_valid = Y_full[valid_mask]
+
+        if len(X_valid) < 3:
+            print(f"Warning: Only {len(X_valid)} valid (non-NaN) points for {gamma_col}. Need at least 3.")
+            continue
+
         # Filter by x_range if specified
         if x_range is not None:
             min_x, max_x = x_range
-            mask = (X_full >= min_x) & (X_full <= max_x)
-            X_fit = X_full[mask]
-            Y_fit = Y_full[mask]
+            mask = (X_valid >= min_x) & (X_valid <= max_x)
+            X_fit = X_valid[mask]
+            Y_fit = Y_valid[mask]
             fit_range_text = f" (fit range: {min_x:.3f} to {max_x:.3f})"
         else:
-            X_fit = X_full
-            Y_fit = Y_full
+            X_fit = X_valid
+            Y_fit = Y_valid
             fit_range_text = ""
 
         if len(X_fit) < 3:
@@ -431,8 +440,8 @@ def analyze_diffusion_coefficient_robust(data_df: pd.DataFrame,
         if show_plots:
             plt.figure(figsize=(10, 6))
 
-            # Plot all data
-            plt.scatter(X_full, Y_full, alpha=0.3, s=30, label='All data', color='lightgray')
+            # Plot all valid data (non-NaN)
+            plt.scatter(X_valid, Y_valid, alpha=0.3, s=30, label='All valid data', color='lightgray')
 
             # Highlight fitting range
             if x_range is not None:
@@ -450,7 +459,7 @@ def analyze_diffusion_coefficient_robust(data_df: pd.DataFrame,
                            color='red', marker='x', linewidths=2)
 
             # Plot regression line
-            X_line = np.linspace(X_full.min(), X_full.max(), 100)
+            X_line = np.linspace(X_valid.min(), X_valid.max(), 100)
             Y_line = slope * X_line + intercept
             plt.plot(X_line, Y_line, 'r-', linewidth=2,
                     label=f'{robust_method.upper()} fit{fit_range_text}')
