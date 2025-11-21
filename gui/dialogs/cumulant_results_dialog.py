@@ -86,10 +86,6 @@ class CumulantResultsDialog(QDialog):
         # Buttons
         button_layout = QHBoxLayout()
 
-        self.show_all_btn = QPushButton("Show All Plots (Grid View)")
-        self.show_all_btn.clicked.connect(self.show_all_plots_grid)
-        button_layout.addWidget(self.show_all_btn)
-
         # Post-filter button (only for Methods B and C)
         if 'Method B' in self.method_name or 'Method C' in self.method_name:
             self.postfilter_btn = QPushButton("🔧 Post-Filter Results")
@@ -296,84 +292,6 @@ class CumulantResultsDialog(QDialog):
         """Show next dataset"""
         if self.current_index < len(self.filenames) - 1:
             self.show_plot(self.current_index + 1)
-
-    def show_all_plots_grid(self):
-        """Show all plots in a grid view"""
-        if not self.individual_plots:
-            return
-
-        # Create grid dialog
-        grid_dialog = QDialog(self)
-        grid_dialog.setWindowTitle(f"All Plots - {self.method_name}")
-        grid_dialog.setMinimumSize(1200, 800)
-
-        layout = QVBoxLayout()
-
-        # Info
-        info_label = QLabel(
-            f"<b>Showing all {len(self.filenames)} datasets</b><br>"
-            f"Click on a plot to see it in detail"
-        )
-        layout.addWidget(info_label)
-
-        # Scroll area
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-
-        # Grid widget
-        grid_widget = QWidget()
-        grid_layout = QGridLayout()
-
-        # Calculate grid dimensions
-        num_plots = len(self.filenames)
-        cols = min(4, num_plots)  # Max 4 columns
-        rows = (num_plots + cols - 1) // cols
-
-        # Create grid of plots
-        for i, filename in enumerate(self.filenames):
-            row = i // cols
-            col = i % cols
-
-            if filename in self.individual_plots:
-                fig, _ = self.individual_plots[filename]
-
-                # Create small canvas
-                small_fig = plt.Figure(figsize=(3, 2.5))
-                small_canvas = FigureCanvas(small_fig)
-
-                # Copy plot to small figure
-                if fig is not None:
-                    source_axes = fig.get_axes()
-                    if source_axes:
-                        ax = small_fig.add_subplot(111)
-                        source_ax = source_axes[0]
-
-                        # Copy lines
-                        for line in source_ax.get_lines():
-                            ax.plot(line.get_xdata(), line.get_ydata(),
-                                   color=line.get_color(),
-                                   linestyle=line.get_linestyle(),
-                                   linewidth=0.5)
-
-                        ax.set_title(f"{i+1}. {filename[:20]}...", fontsize=8)
-                        ax.tick_params(labelsize=6)
-
-                small_fig.tight_layout()
-
-                # Add to grid
-                grid_layout.addWidget(small_canvas, row, col)
-
-        grid_widget.setLayout(grid_layout)
-        scroll.setWidget(grid_widget)
-        layout.addWidget(scroll)
-
-        # Close button
-        close_btn = QPushButton("Close")
-        close_btn.clicked.connect(grid_dialog.accept)
-        layout.addWidget(close_btn)
-
-        grid_dialog.setLayout(layout)
-        grid_dialog.exec_()
 
     def open_postfilter_dialog(self):
         """Open post-filter dialog to remove bad fits"""

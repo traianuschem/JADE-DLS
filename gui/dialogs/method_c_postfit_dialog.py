@@ -23,26 +23,23 @@ class MethodCPostFitDialog(QDialog):
     Allows exclusion of bad fits before recomputing diffusion analysis
     """
 
-    def __init__(self, plots_dict, fit_quality, results_df, analyzer, parent=None):
+    def __init__(self, plots_dict, fit_quality, initially_excluded=None, parent=None):
         """
         Initialize the dialog
 
         Args:
             plots_dict: Dictionary {filename: (fig, data)} of Method C fits
             fit_quality: Dictionary {filename: {'R2': float, 'chi2': float, ...}}
-            results_df: Current Method C results DataFrame
-            analyzer: CumulantAnalyzer instance for recomputation
+            initially_excluded: List of filenames that are initially excluded (optional)
             parent: Parent widget
         """
         super().__init__(parent)
 
         self.plots_dict = plots_dict
         self.fit_quality = fit_quality
-        self.results_df = results_df
-        self.analyzer = analyzer
 
         # Track excluded files
-        self.excluded_files = set()
+        self.excluded_files = set(initially_excluded) if initially_excluded else set()
 
         # Current plot index
         self.current_index = 0
@@ -153,7 +150,9 @@ class MethodCPostFitDialog(QDialog):
             item_text = f"{filename}\n   {chi2_str}, {r2_str}"
             item = QListWidgetItem(item_text)
             item.setData(Qt.UserRole, filename)
-            item.setCheckState(Qt.Checked)  # Initially all checked
+            # Check if file is initially excluded
+            is_excluded = filename in self.excluded_files
+            item.setCheckState(Qt.Unchecked if is_excluded else Qt.Checked)
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
             self.file_list.addItem(item)
 
@@ -403,3 +402,12 @@ class MethodCPostFitDialog(QDialog):
         if hasattr(self, 'filtered_results'):
             return self.filtered_results
         return None
+
+    def get_excluded_files(self):
+        """
+        Get list of excluded filenames
+
+        Returns:
+            list: List of filenames that are excluded
+        """
+        return list(self.excluded_files)

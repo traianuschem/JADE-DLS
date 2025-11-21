@@ -101,11 +101,6 @@ class CountrateFilterDialog(QDialog):
         unmark_btn.clicked.connect(self.unmark_selected)
         layout.addWidget(unmark_btn)
 
-        # Show all button
-        show_all_btn = QPushButton("📊 Show All Plots")
-        show_all_btn.clicked.connect(self.show_all_plots)
-        layout.addWidget(show_all_btn)
-
         # Accept/Cancel buttons
         button_layout = QHBoxLayout()
 
@@ -175,37 +170,6 @@ class CountrateFilterDialog(QDialog):
                        bbox=dict(boxstyle='round', facecolor='red', alpha=0.5),
                        fontsize=14, fontweight='bold')
 
-        self.canvas.draw()
-
-    def show_all_plots(self):
-        """Show all countrate plots in a grid"""
-        self.figure.clear()
-
-        n_files = len(self.countrate_data)
-        if n_files == 0:
-            return
-
-        # Calculate grid size
-        n_cols = min(3, n_files)
-        n_rows = (n_files + n_cols - 1) // n_cols
-
-        for idx, (filename, df) in enumerate(sorted(self.countrate_data.items())):
-            ax = self.figure.add_subplot(n_rows, n_cols, idx + 1)
-
-            # Plot
-            if 'time [s]' in df.columns:
-                for col in ['detectorslot 1', 'detectorslot 2']:
-                    if col in df.columns and not df[col].isna().all():
-                        ax.plot(df['time [s]'], df[col], alpha=0.7, linewidth=0.5)
-
-            ax.set_title(filename, fontsize=8)
-            ax.tick_params(labelsize=6)
-
-            # Mark if excluded
-            if filename in self.excluded_files:
-                ax.set_facecolor('#ffcccc')
-
-        self.figure.tight_layout()
         self.canvas.draw()
 
     def mark_selected_as_bad(self):
@@ -369,11 +333,6 @@ class CorrelationFilterDialog(QDialog):
         unmark_btn.clicked.connect(self.unmark_selected)
         layout.addWidget(unmark_btn)
 
-        # Show all button
-        show_all_btn = QPushButton("📊 Show All Plots")
-        show_all_btn.clicked.connect(self.show_all_plots)
-        layout.addWidget(show_all_btn)
-
         # Accept/Cancel buttons
         button_layout = QHBoxLayout()
 
@@ -447,40 +406,6 @@ class CorrelationFilterDialog(QDialog):
                        bbox=dict(boxstyle='round', facecolor='red', alpha=0.5),
                        fontsize=14, fontweight='bold')
 
-        self.canvas.draw()
-
-    def show_all_plots(self):
-        """Show all correlation plots in a grid"""
-        self.figure.clear()
-
-        n_files = len(self.correlation_data)
-        if n_files == 0:
-            return
-
-        # Calculate grid size
-        n_cols = min(3, n_files)
-        n_rows = (n_files + n_cols - 1) // n_cols
-
-        for idx, (filename, df) in enumerate(sorted(self.correlation_data.items())):
-            ax = self.figure.add_subplot(n_rows, n_cols, idx + 1)
-
-            # Plot
-            if 'time [ms]' in df.columns:
-                for col in ['correlation 1', 'correlation 2']:
-                    if col in df.columns and not df[col].isna().all():
-                        correlation = df[col].values
-                        if len(correlation) > 0 and not np.all(np.isnan(correlation)):
-                            ax.semilogx(df['time [ms]'], correlation, alpha=0.7, linewidth=0.5)
-
-            ax.set_title(filename, fontsize=8)
-            ax.tick_params(labelsize=6)
-            ax.set_ylim(bottom=-0.1)
-
-            # Mark if excluded
-            if filename in self.excluded_files:
-                ax.set_facecolor('#ffcccc')
-
-        self.figure.tight_layout()
         self.canvas.draw()
 
     def mark_selected_as_bad(self):

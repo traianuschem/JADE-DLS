@@ -563,7 +563,6 @@ class JADEDLSMainWindow(QMainWindow):
     def on_pipeline_step_added(self, step_info):
         """Handle new pipeline step"""
         self.inspector_panel.update_code_view()
-        self.workflow_panel.update_progress()
 
     def on_analysis_completed(self, results):
         """Handle analysis completion"""
@@ -697,7 +696,6 @@ print(f"Extracted correlations from {len(correlations_data)} files")
 
         # Mark load data step as complete
         self.workflow_panel.mark_step_complete('load_data')
-        self.workflow_panel.update_progress()
 
         # Now run filtering
         self.perform_filtering(auto_after_load=True)
@@ -834,7 +832,6 @@ print(f"Extracted correlations from {len(correlations_data)} files")
 
         # Mark workflow step as complete
         self.workflow_panel.mark_step_complete('preprocess')
-        self.workflow_panel.update_progress()
 
         # Show summary
         final_count = filtered_data.get('num_files', 0)
