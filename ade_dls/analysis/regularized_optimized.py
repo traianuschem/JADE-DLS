@@ -473,7 +473,7 @@ def nnls_preview_random(dataframes_dict: Dict[str, pd.DataFrame],
 # ===== RE-EXPORT ORIGINAL FUNCTIONS FOR BACKWARD COMPATIBILITY =====
 # Import from original module
 try:
-    from regularized import (
+    from .regularized import (
         nnls as nnls_original,
         nnls_all as nnls_all_original,
         nnls_reg,

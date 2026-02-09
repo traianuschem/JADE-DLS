@@ -12,19 +12,19 @@ from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QIcon
 
-from gui.widgets.workflow_panel import WorkflowPanel
-from gui.widgets.analysis_view import AnalysisView
-from gui.widgets.inspector_panel import InspectorPanel
-from gui.core.pipeline import TransparentPipeline
-from gui.core.status_manager import StatusManager, ProgressDialog
-from gui.core.data_loader import DataLoader
-from gui.dialogs.filtering_dialogs import CountrateFilterDialog, CorrelationFilterDialog
-from gui.dialogs.cumulant_dialog import CumulantAnalysisDialog
-from gui.dialogs.nnls_dialog import NNLSDialog
-from gui.dialogs.nnls_results_dialog import NNLSResultsDialog
-from gui.dialogs.regularized_dialog import RegularizedDialog
-from gui.analysis.cumulant_analyzer import CumulantAnalyzer
-from gui.analysis.laplace_analyzer import LaplaceAnalyzer
+from .widgets.workflow_panel import WorkflowPanel
+from .widgets.analysis_view import AnalysisView
+from .widgets.inspector_panel import InspectorPanel
+from .core.pipeline import TransparentPipeline
+from .core.status_manager import StatusManager, ProgressDialog
+from .core.data_loader import DataLoader
+from .dialogs.filtering_dialogs import CountrateFilterDialog, CorrelationFilterDialog
+from .dialogs.cumulant_dialog import CumulantAnalysisDialog
+from .dialogs.nnls_dialog import NNLSDialog
+from .dialogs.nnls_results_dialog import NNLSResultsDialog
+from .dialogs.regularized_dialog import RegularizedDialog
+from .analysis.cumulant_analyzer import CumulantAnalyzer
+from .analysis.laplace_analyzer import LaplaceAnalyzer
 
 
 class JADEDLSMainWindow(QMainWindow):
@@ -644,7 +644,7 @@ correlations_data = {{}}
 df_basedata = pd.DataFrame()
 """
 
-        from gui.core.pipeline import AnalysisStep
+        from ade_dls.gui.core.pipeline import AnalysisStep
         load_step = AnalysisStep(
             name="Load Data",
             step_type='custom',
@@ -1042,7 +1042,7 @@ print(f"Extracted correlations from {len(correlations_data)} files")
         Add basedata statistics and c/delta_c calculation to pipeline
         This should be called once before any cumulant methods
         """
-        from gui.core.pipeline import AnalysisStep
+        from ade_dls.gui.core.pipeline import AnalysisStep
 
         # Check if already added
         if hasattr(self, '_basedata_calc_added') and self._basedata_calc_added:
@@ -1103,7 +1103,7 @@ print(f"Relative error in c: {(delta_c/c):.4%}\\n")
             method: 'A', 'B', or 'C'
             config: Configuration dictionary from dialog
         """
-        from gui.core.pipeline import AnalysisStep
+        from ade_dls.gui.core.pipeline import AnalysisStep
 
         # Ensure c/delta_c calculation is added first
         self._add_basedata_calculation_to_pipeline()
@@ -1111,7 +1111,7 @@ print(f"Relative error in c: {(delta_c/c):.4%}\\n")
         if method == 'A':
             code = """
 # Cumulant Method A: Extract cumulant data from ALV software
-from cumulants import extract_cumulants, analyze_diffusion_coefficient, calculate_cumulant_results_A
+from ade_dls.analysis.cumulants import extract_cumulants, analyze_diffusion_coefficient, calculate_cumulant_results_A
 import glob
 import os
 
@@ -1178,8 +1178,8 @@ print(method_a_results)
             fit_limits = config['method_b_params']['fit_limits']
             code = f"""
 # Cumulant Method B: Linear fit method
-from cumulants import calculate_g2_B, plot_processed_correlations, analyze_diffusion_coefficient
-from preprocessing import process_correlation_data
+from ade_dls.analysis.cumulants import calculate_g2_B, plot_processed_correlations, analyze_diffusion_coefficient
+from ade_dls.core.preprocessing import process_correlation_data
 
 # Process correlations
 columns_to_drop = ['time [ms]', 'correlation 1', 'correlation 2', 'correlation 3', 'correlation 4']
@@ -1236,9 +1236,9 @@ print(method_b_results)
             params = config['method_c_params']
             code = f"""
 # Cumulant Method C: Iterative non-linear fit
-from cumulants_C import plot_processed_correlations_iterative, get_adaptive_initial_parameters, get_meaningful_parameters
-from cumulants import analyze_diffusion_coefficient
-from preprocessing import process_correlation_data
+from ade_dls.analysis.cumulants_C import plot_processed_correlations_iterative, get_adaptive_initial_parameters, get_meaningful_parameters
+from ade_dls.analysis.cumulants import analyze_diffusion_coefficient
+from ade_dls.core.preprocessing import process_correlation_data
 
 # Process correlations
 columns_to_drop = ['time [ms]', 'correlation 1', 'correlation 2', 'correlation 3', 'correlation 4']
@@ -1845,8 +1845,8 @@ print(method_c_results)
 # Peak position: {'Centroid (center of mass)' if use_centroid else 'Maximum'}
 # Clustering: {'Enabled (automatic mode detection)' if use_clustering else 'Disabled'}
 
-from regularized_optimized import nnls_all_optimized, calculate_decay_rates
-from peak_clustering import cluster_peaks_across_datasets, analyze_diffusion_coefficient_robust
+from ade_dls.analysis.regularized_optimized import nnls_all_optimized, calculate_decay_rates
+from ade_dls.analysis.peak_clustering import cluster_peaks_across_datasets, analyze_diffusion_coefficient_robust
 import numpy as np
 
 # Run NNLS
@@ -1933,7 +1933,7 @@ print(nnls_final_results_df)
 """
 
         # Add step to pipeline
-        from gui.core.pipeline import AnalysisStep
+        from ade_dls.gui.core.pipeline import AnalysisStep
         step = AnalysisStep(
             name="NNLS Analysis",
             step_type='custom',
@@ -1954,8 +1954,8 @@ print(nnls_final_results_df)
 # Parameters: alpha={params['alpha']}, prominence={params['prominence']}, distance={params['distance']}
 # Peak position: {'Centroid (center of mass)' if use_centroid else 'Maximum'}
 
-from regularized import nnls_reg_all, calculate_decay_rates
-from peak_clustering import analyze_diffusion_coefficient_robust
+from ade_dls.analysis.regularized import nnls_reg_all, calculate_decay_rates
+from ade_dls.analysis.peak_clustering import analyze_diffusion_coefficient_robust
 import numpy as np
 
 # Run Regularized NNLS
@@ -2019,7 +2019,7 @@ print(regularized_final_results_df)
 """
 
         # Add step to pipeline
-        from gui.core.pipeline import AnalysisStep
+        from ade_dls.gui.core.pipeline import AnalysisStep
         step = AnalysisStep(
             name="Regularized NNLS Analysis",
             step_type='custom',
@@ -2028,3 +2028,21 @@ print(regularized_final_results_df)
         )
         self.pipeline.steps.append(step)
         self.pipeline.step_added.emit(step.to_dict())
+
+def main():
+    """Main entry point for ADE-DLS GUI application."""
+    import sys
+    from PyQt5.QtWidgets import QApplication
+    
+    app = QApplication(sys.argv)
+    app.setApplicationName("ADE-DLS")
+    app.setOrganizationName("ADE-DLS")
+    
+    window = JADEDLSMainWindow()
+    window.show()
+    
+    sys.exit(app.exec_())
+
+
+if __name__ == '__main__':
+    main()

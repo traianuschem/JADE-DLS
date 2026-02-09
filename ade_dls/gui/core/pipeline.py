@@ -307,9 +307,9 @@ print(f"No files excluded from {filter_type} filtering - {{len({filter_type}_dat
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from preprocessing import extract_data, extract_correlation
-from cumulants import analyze_diffusion_coefficient
-from regularized import nnls_reg_all
+from ade_dls.core.preprocessing import extract_data, extract_correlation
+from ade_dls.analysis.cumulants import analyze_diffusion_coefficient
+from ade_dls.analysis.regularized import nnls_reg_all
 import glob
 import os
 """)
@@ -436,9 +436,9 @@ This notebook was auto-generated from the JADE-DLS GUI and contains all analysis
         nb.cells.append(new_code_cell("""import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from preprocessing import extract_data, extract_correlation
-from cumulants import analyze_diffusion_coefficient
-from regularized import nnls_reg_all
+from ade_dls.core.preprocessing import extract_data, extract_correlation
+from ade_dls.analysis.cumulants import analyze_diffusion_coefficient
+from ade_dls.analysis.regularized import nnls_reg_all
 import glob
 import os
 
@@ -770,7 +770,7 @@ print(f"Applied q² range filter: {{len(cumulant_method_C_data_refined)}} points
 # Post-refinement for Method C
 # Exclude outliers and recalculate with q² range filter
 
-from cumulants import analyze_diffusion_coefficient
+from ade_dls.analysis.cumulants import analyze_diffusion_coefficient
 import numpy as np
 {excluded_str}{q_range_str}
 # Recalculate diffusion coefficient
@@ -835,7 +835,7 @@ print(f"[NNLS Post-Refinement] Removed {{len(excluded_files_nnls)}} datasets, {{
 # Post-refinement for NNLS
 # Apply q² range and exclude distributions
 
-from peak_clustering import analyze_diffusion_coefficient_robust
+from ade_dls.analysis.peak_clustering import analyze_diffusion_coefficient_robust
 import numpy as np
 {excluded_str}
 # Recalculate diffusion coefficients with new q² range (using robust regression)
@@ -909,7 +909,7 @@ print(f"[Regularized Post-Refinement] Removed {{len(excluded_files_reg)}} datase
 # Post-refinement for Regularized NNLS
 # Apply q² range and exclude distributions
 
-from peak_clustering import analyze_diffusion_coefficient_robust
+from ade_dls.analysis.peak_clustering import analyze_diffusion_coefficient_robust
 import numpy as np
 {excluded_str}
 # Recalculate diffusion coefficients with new q² range

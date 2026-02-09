@@ -13,7 +13,7 @@ from PyQt5.QtCore import QObject, pyqtSignal, QThread
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
-from preprocessing import (extract_data, extract_correlation, extract_countrate,
+from ade_dls.core.preprocessing import (extract_data, extract_correlation, extract_countrate,
                           find_correlation_row, find_countrate_row,
                           process_correlation_data)
 

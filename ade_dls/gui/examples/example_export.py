@@ -12,9 +12,9 @@ It demonstrates the transparency feature of the GUI.
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from preprocessing import extract_data, extract_correlation
-from cumulants import analyze_diffusion_coefficient
-from regularized import nnls_reg_all
+from ade_dls.core.preprocessing import extract_data, extract_correlation
+from ade_dls.analysis.cumulants import analyze_diffusion_coefficient
+from ade_dls.analysis.regularized import nnls_reg_all
 import glob
 import os
 
@@ -81,10 +81,10 @@ print(f"Extracted correlation data for {len(all_correlations)} files")
 #   adaptive: True
 #   strategy: individual
 
-from cumulants_C import plot_processed_correlations_iterative
+from ade_dls.analysis.cumulants_C import plot_processed_correlations_iterative
 
 # Process correlations
-from preprocessing import process_correlation_data
+from ade_dls.core.preprocessing import process_correlation_data
 columns_to_drop = ['time [ms]', 'correlation 1', 'correlation 2',
                    'correlation 3', 'correlation 4']
 processed_correlations = process_correlation_data(all_correlations, columns_to_drop)

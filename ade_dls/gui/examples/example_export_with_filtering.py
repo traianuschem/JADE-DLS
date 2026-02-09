@@ -8,9 +8,9 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from preprocessing import extract_data, extract_correlation
-from cumulants import analyze_diffusion_coefficient
-from regularized import nnls_reg_all
+from ade_dls.core.preprocessing import extract_data, extract_correlation
+from ade_dls.analysis.cumulants import analyze_diffusion_coefficient
+from ade_dls.analysis.regularized import nnls_reg_all
 import glob
 import os
 
