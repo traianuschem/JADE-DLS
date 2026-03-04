@@ -127,6 +127,14 @@ class CumulantAnalyzer:
             columns_to_drop
         )
 
+        # Apply noise correction if parameters were set by the filter dialog
+        if getattr(self, 'noise_params', None):
+            from ade_dls.analysis.noise import apply_noise_corrections
+            self.processed_correlations = apply_noise_corrections(
+                self.processed_correlations,
+                **self.noise_params
+            )
+
         return self.processed_correlations
 
     def run_method_a(self, q_range=None) -> pd.DataFrame:
@@ -141,7 +149,7 @@ class CumulantAnalyzer:
         Returns:
             DataFrame with results (Rh, errors, R^2, PDI)
         """
-        from cumulants import extract_cumulants, calculate_cumulant_results_A
+        from cumulants import extract_cumulants
         from gui.analysis.cumulant_plotting import create_summary_plot
         import statsmodels.api as sm
 
@@ -256,31 +264,25 @@ class CumulantAnalyzer:
         )
         polydispersity_method_A_3 = cumulant_method_A_data['polydispersity_3rd_order'].mean()
 
-        # Debug: Print data before calling calculate_cumulant_results_A
-        print(f"[CUMULANT METHOD A DEBUG] Data before calculate_cumulant_results_A:")
-        print(f"  A_diff shape: {A_diff.shape}")
-        print(f"  A_diff:\n{A_diff}")
-        print(f"  cumulant_method_A_diff shape: {cumulant_method_A_diff.shape}")
-        print(f"  cumulant_method_A_diff:\n{cumulant_method_A_diff}")
-        print(f"  polydispersity_method_A_2: {polydispersity_method_A_2}")
-        print(f"  polydispersity_method_A_3: {polydispersity_method_A_3}")
-        print(f"  c_value: {self.c_value}")
-        print(f"  delta_c: {self.delta_c}")
-
-        # Calculate final results
-        self.method_a_results = calculate_cumulant_results_A(
-            A_diff,
-            cumulant_method_A_diff,
-            polydispersity_method_A_2,
-            polydispersity_method_A_3,
-            self.c_value,
-            self.delta_c
-        )
-
-        print(f"[CUMULANT METHOD A DEBUG] Final results:")
-        print(f"  Shape: {self.method_a_results.shape}")
-        print(f"  Columns: {self.method_a_results.columns.tolist()}")
-        print(self.method_a_results)
+        # Build results DataFrame (Rh calculation removed; report D and PDI directly)
+        fit_names = [
+            'Rh from 1st order cumulant fit',
+            'Rh from 2nd order cumulant fit',
+            'Rh from 3rd order cumulant fit',
+        ]
+        pdi_values = [None, polydispersity_method_A_2, polydispersity_method_A_3]
+        result_rows = []
+        for i in range(len(cumulant_method_A_diff)):
+            row = {
+                'Fit': fit_names[i] if i < len(fit_names) else f'Order {i+1}',
+                'D [m^2/s]': A_diff['D [m^2/s]'].iloc[i],
+                'std err D [m^2/s]': A_diff['std err D [m^2/s]'].iloc[i],
+                'R_squared': cumulant_method_A_diff['R_squared'].iloc[i],
+                'Residuals': cumulant_method_A_diff['Normality'].iloc[i],
+                'PDI': pdi_values[i] if i < len(pdi_values) else None,
+            }
+            result_rows.append(row)
+        self.method_a_results = pd.DataFrame(result_rows)
 
         # Store regression statistics for detailed output
         self.method_a_regression_stats = {

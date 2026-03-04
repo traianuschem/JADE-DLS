@@ -81,15 +81,15 @@ def nnls(df, name, nnls_params, plot_number):
     distance = nnls_params['distance']
     
     #create the vectors
-    tau = df['t (s)'].to_numpy()
-    D = df['g(2)'].to_numpy()
-    
+    tau = df['t [s]'].to_numpy()
+    D = df['g(2)-1'].to_numpy()
+
     #create grid of tau and decay time combinations
     decay_times_N, tau_M = np.meshgrid(decay_times, tau)
-    
+
     #create matrix A from the mesh
     T = np.exp(-tau_M / decay_times_N)
-    
+
     #define the residual function
     def residuals(f, T, D):
         return (T @ f)**2 - D
@@ -207,12 +207,12 @@ def nnls_reg(df, name, nnls_reg_params, plot_number):
     enforce_unimodality = nnls_reg_params.get('enforce_unimodality', False) #default, not enforced
         
     #the vectors
-    tau = df['t (s)'].to_numpy()
-    D = df['g(2)'].to_numpy()
-    
+    tau = df['t [s]'].to_numpy()
+    D = df['g(2)-1'].to_numpy()
+
     #create grid of tau and decay time combinations
     decay_times_N, tau_M = np.meshgrid(decay_times, tau)
-    
+
     #matrix A from the mesh - this represents exp(-t/τ) for all combinations
     T = np.exp(-tau_M / decay_times_N)
     
@@ -347,9 +347,9 @@ def nnls_reg(df, name, nnls_reg_params, plot_number):
     # Check if centroid mode is enabled
     use_centroid = nnls_reg_params.get('use_centroid', False)
     
-    #enhanced peak analysis for normalized distributions
+    #enhanced peak analysis — always computed when peaks are found
     peak_stats = {}
-    if normalize and len(peaks) > 0:
+    if len(peaks) > 0:
         #calculate peak areas, skewness, and other statistics
         for i, peak_idx in enumerate(peaks):
             #get left and right indices from peak_properties
@@ -443,43 +443,43 @@ def nnls_reg(df, name, nnls_reg_params, plot_number):
                 'right_idx': right_base_idx
             }
     
-    #create plot
-    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(18, 6))
+    #create 4-panel plot: data+fit | distribution | residuals | Q-Q
+    fig, (ax1, ax2, ax3, ax4) = plt.subplots(1, 4, figsize=(24, 6))
     fig.suptitle(f'[{plot_number}]: Analysis for {name}', fontsize=16)
-    
+
     # First subplot: Data and optimized function
-    ax1.semilogx(tau, D, 'ro', label='Data (D)')
-    ax1.semilogx(tau, optimized_values, 'g-', label='Optimized Function (f_optimized)')
+    ax1.semilogx(tau, D, 'ro', label='Data (D)', markersize=4)
+    ax1.semilogx(tau, optimized_values, 'g-', label='Optimized Function', linewidth=2)
     ax1.set_xlabel('lag time [s]')
     ax1.set_ylabel('g(2)-1')
     ax1.set_title('Optimization Results')
     ax1.legend()
     ax1.grid(True)
-    
+
     # Second subplot: Tau distribution with peak markers and colored areas
-    ax2.semilogx(decay_times, f_optimized, 'bo-', label='Tau Distribution (f_optimized)')
-    
+    ax2.semilogx(decay_times, f_optimized, 'bo-', label='Tau Distribution (f_optimized)', markersize=3)
+
     #colors for peak areas
     colors = ['red', 'green', 'orange', 'purple', 'cyan', 'magenta']
-    
-    if normalize and len(peaks) > 0:
-        #colored peak areas
+
+    if len(peaks) > 0:
+        #colored peak areas with full stats annotation
         for i, peak_idx in enumerate(peaks):
             color = colors[i % len(colors)]
-            
+
             #get peak information from peak_stats
             peak_info = peak_stats[f'peak_{i+1}']
             left_idx = peak_info['left_idx']
             right_idx = peak_info['right_idx']
-            
+
             #fill the peak area
             x_fill = decay_times[left_idx:right_idx+1]
             y_fill = f_optimized[left_idx:right_idx+1]
             ax2.fill_between(x_fill, 0, y_fill, alpha=0.3, color=color, label=f'Area {i+1}')
-            
+
             #mark peak position
             ax2.plot(decay_times[peak_idx], f_optimized[peak_idx], 'x', color=color, markersize=10)
-            
+
             #create annotation text with peak info
             annotation_text = (f'τ={decay_times[peak_idx]:.2e}\n'
                               f'I={f_optimized[peak_idx]:.2e}\n'
@@ -487,46 +487,35 @@ def nnls_reg(df, name, nnls_reg_params, plot_number):
                               f'Area={peak_info["area"]:.2e}\n'
                               f'FWHM={peak_info["fwhm"]:.2e}\n'
                               f'Skew={peak_info["skewness"]:.2f}')
-            
-            #annotation with peak info
+
             ax2.annotate(annotation_text,
                         xy=(decay_times[peak_idx], f_optimized[peak_idx]),
                         xytext=(5, 5), textcoords='offset points',
                         fontsize=8, color='black', backgroundcolor='white',
                         bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="gray", alpha=0.8))
-    else:
-        #original peak marking without coloring areas
-        for i, peak_idx in enumerate(peaks):
-            color = colors[i % len(colors)]
-            #mark peak position
-            ax2.plot(decay_times[peak_idx], f_optimized[peak_idx], 'x', color=color, markersize=10)
-            
-            #text annotation with peak info
-            ax2.annotate(f'τ={decay_times[peak_idx]:.2e}\nI={f_optimized[peak_idx]:.2e}\nNorm={normalized_amplitudes_sum[i]:.2f}',
-                        xy=(decay_times[peak_idx], f_optimized[peak_idx]),
-                        xytext=(5, 5), textcoords='offset points',
-                        fontsize=8, color='black', backgroundcolor='white',
-                        bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="gray", alpha=0.8))
-    
+
     ax2.set_xlabel('Tau (Decay Times)')
     ax2.set_ylabel('Intensity (f_optimized)')
     ax2.set_title('Tau Distribution')
     ax2.grid(True, which="both", ls="--")
-    
+    ax2.legend(loc='best', fontsize=8)
+
     # Third subplot: Residuals
-    ax3.plot(residuals_values)
-    ax3.set_xlabel('Sample Index')
+    ax3.plot(tau, residuals_values, 'b-', alpha=0.7)
+    ax3.set_xlabel('lag time [s]')
     ax3.set_ylabel('Residual Value')
     ax3.set_title('Residuals')
     ax3.axhline(0, color='r', linestyle='--')
+    ax3.set_xscale('log')
     ax3.grid(True)
-    
-    #legend
-    handles, labels = ax2.get_legend_handles_labels()
-    ax2.legend(loc='best', fontsize=8)
-    
+
+    # Fourth subplot: Q-Q plot
+    from scipy import stats as _stats
+    _stats.probplot(residuals_values, dist="norm", plot=ax4)
+    ax4.set_title('Q-Q Plot of Residuals')
+    ax4.grid(True)
+
     plt.tight_layout()
-        
     plt.show()
     
     #prepare results for this dataframe
@@ -545,8 +534,8 @@ def nnls_reg(df, name, nnls_reg_params, plot_number):
         results[f'intensity_{i+1}'] = f_optimized[peak_index]
         results[f'normalized_sum_percent_{i+1}'] = percentage
 
-        #additional peak metrics if normalize is True
-        if normalize and f'peak_{i+1}' in peak_stats:
+        #additional peak metrics (always computed)
+        if f'peak_{i+1}' in peak_stats:
             peak_info = peak_stats[f'peak_{i+1}']
             results[f'area_{i+1}'] = peak_info['area']
             results[f'fwhm_{i+1}'] = peak_info['fwhm']
@@ -596,15 +585,15 @@ def nnls_reg_simple(df, name, nnls_reg_params):
     alpha = nnls_reg_params.get('alpha', 0.01)
     
     #create the vectors
-    tau = df['t (s)'].to_numpy()
-    D = df['g(2)'].to_numpy()
-    
+    tau = df['t [s]'].to_numpy()
+    D = df['g(2)-1'].to_numpy()
+
     #create grid of tau and decay time combinations
     decay_times_N, tau_M = np.meshgrid(decay_times, tau)
-    
+
     #create matrix A from the mesh
     T = np.exp(-tau_M / decay_times_N)
-    
+
     #create Tikhonov regularization matrix (second derivative)
     def create_tikhonov_matrix(n):
         D2 = sparse.diags([1, -2, 1], [-1, 0, 1], shape=(n-2, n)).toarray()

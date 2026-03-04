@@ -449,9 +449,9 @@ def process_correlation_data(input_dict, columns_to_remove = None):
             #create a copy to avoid modifying the original DataFrame
             new_df = df.copy()  
             #time in s
-            new_df['t (s)'] = df['time [ms]']*10**(-3)
+            new_df['t [s]'] = df['time [ms]']*10**(-3)
             #calculates the mean of the two correlation detectors
-            new_df['g(2)'] = (df['correlation 1']+df['correlation 2'])/2
+            new_df['g(2)-1'] = (df['correlation 1']+df['correlation 2'])/2
             
             #remove columns
             if columns_to_remove:

@@ -1,162 +1,134 @@
 """
 Workflow Panel Widget
-Shows analysis steps and their status
+Categorized tool buttons for analysis workflow
 """
 
-from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-                             QLabel, QListWidget, QListWidgetItem, QGroupBox)
+from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QPushButton,
+                             QLabel, QScrollArea, QSizePolicy, QFrame)
 from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtGui import QIcon, QColor
+from PyQt5.QtGui import QFont
+
+
+CATEGORIES = [
+    ("Loading & Preprocessing", [
+        ("Load Data",                "load_data",   "Load .asc data files"),
+        ("Preprocess & Filter",      "preprocess",  "Filter & process correlations"),
+    ]),
+    ("Monomodal Analysis", [
+        ("A - ALV cumulant data",    "cumulant_a",  "Extract cumulant fit from ALV output"),
+        ("B - Linear cumulant fit",  "cumulant_b",  "Linear fit of ln(g\u00b2-1)"),
+        ("C - Iterative non-linear", "cumulant_c",  "Iterative non-linear cumulant fit"),
+    ]),
+    ("Multimodal Analysis", [
+        ("D - Multi-exponential",    "cumulant_d",  "Multi-exponential decomposition"),
+        ("NNLS",                     "nnls",        "Inverse Laplace NNLS"),
+        ("Regularized",              "regularized", "Tikhonov-Phillips regularization"),
+    ]),
+]
 
 
 class WorkflowPanel(QWidget):
     """
-    Left panel showing workflow steps
+    Left panel with categorized tool buttons.
 
     Signals:
-        step_selected: Emitted when a step is selected
-        run_analysis: Emitted when user wants to run analysis
+        step_selected: Emitted when a button is clicked
+        run_analysis:  Emitted when a button is clicked — triggers dialog in main_window
     """
 
     step_selected = pyqtSignal(str)
-    run_analysis = pyqtSignal(str)
+    run_analysis  = pyqtSignal(str)
 
     def __init__(self, pipeline, parent=None):
         super().__init__(parent)
         self.pipeline = pipeline
-        self.init_ui()
+        self._buttons = {}   # step_id -> QPushButton
+        self._init_ui()
 
-    def init_ui(self):
-        """Initialize the UI"""
-        layout = QVBoxLayout()
+    def _init_ui(self):
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(4, 4, 4, 4)
+        outer_layout.setSpacing(4)
 
         # Title
         title = QLabel("Analysis Workflow")
-        title.setStyleSheet("font-size: 14pt; font-weight: bold;")
-        layout.addWidget(title)
+        title.setStyleSheet("font-size: 13pt; font-weight: bold;")
+        outer_layout.addWidget(title)
 
-        # Workflow steps list
-        self.setup_workflow_list()
-        layout.addWidget(self.workflow_group)
+        # Scroll area so the panel stays usable when the window is small
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
 
-        # Control buttons
-        self.setup_control_buttons()
-        layout.addLayout(self.button_layout)
+        container = QWidget()
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(2, 2, 2, 2)
+        container_layout.setSpacing(4)
 
-        # Stretch to push everything to top
-        layout.addStretch()
+        for category_name, tools in CATEGORIES:
+            # Category header label
+            cat_label = QLabel(category_name)
+            cat_font = QFont()
+            cat_font.setBold(True)
+            cat_label.setFont(cat_font)
+            cat_label.setStyleSheet(
+                "color: palette(mid);"
+                "border-bottom: 1px solid palette(mid);"
+                "padding-bottom: 2px;"
+                "margin-top: 8px;"
+            )
+            container_layout.addWidget(cat_label)
 
-        self.setLayout(layout)
+            # Tool buttons
+            for label, step_id, tooltip in tools:
+                btn = QPushButton(label)
+                btn.setToolTip(tooltip)
+                btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+                btn.setMinimumHeight(28)
+                btn.setStyleSheet("text-align: left; padding-left: 8px;")
+                btn.clicked.connect(lambda checked, sid=step_id: self._on_button_clicked(sid))
+                container_layout.addWidget(btn)
+                self._buttons[step_id] = btn
 
-    def setup_workflow_list(self):
-        """Setup the workflow steps list"""
-        self.workflow_group = QGroupBox("Steps:")
-        workflow_layout = QVBoxLayout()
+        container_layout.addStretch()
+        scroll.setWidget(container)
+        outer_layout.addWidget(scroll)
 
-        self.step_list = QListWidget()
-        self.step_list.itemClicked.connect(self.on_step_clicked)
-
-        # Define workflow steps
-        self.steps = [
-            ("📂 Load Data", "load_data", "Load .asc data files"),
-            ("🔍 Preprocess", "preprocess", "Extract and filter data"),
-            ("📊 Cumulant A", "cumulant_a", "ALV software cumulant data"),
-            ("📈 Cumulant B", "cumulant_b", "Linear cumulant fit"),
-            ("📉 Cumulant C", "cumulant_c", "Iterative non-linear fit"),
-            ("🔬 NNLS", "nnls", "Inverse Laplace NNLS"),
-            ("⚙️ Regularized", "regularized", "Tikhonov-Phillips regularization"),
-            ("📋 Compare", "compare", "Compare all methods")
-        ]
-
-        for icon_name, step_id, description in self.steps:
-            item = QListWidgetItem(f"{icon_name}\n{description}")
-            item.setData(Qt.UserRole, step_id)
-            item.setToolTip(description)
-            self.step_list.addItem(item)
-
-        workflow_layout.addWidget(self.step_list)
-        self.workflow_group.setLayout(workflow_layout)
-
-    def setup_control_buttons(self):
-        """Setup control buttons"""
-        self.button_layout = QVBoxLayout()
-
-        # Run All button
-        self.run_all_btn = QPushButton("▶ Run All")
-        self.run_all_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #4CAF50;
-                color: white;
-                font-weight: bold;
-                padding: 8px;
-                border-radius: 4px;
-            }
-            QPushButton:hover {
-                background-color: #45a049;
-            }
-        """)
-        self.run_all_btn.clicked.connect(self.on_run_all)
-        self.button_layout.addWidget(self.run_all_btn)
-
-        # Run Selected button
-        self.run_selected_btn = QPushButton("▶ Run Selected")
-        self.run_selected_btn.clicked.connect(self.on_run_selected)
-        self.button_layout.addWidget(self.run_selected_btn)
-
-        # Reset button
-        self.reset_btn = QPushButton("⟲ Reset")
-        self.reset_btn.clicked.connect(self.on_reset)
-        self.button_layout.addWidget(self.reset_btn)
-
-    def on_step_clicked(self, item):
-        """Handle step click"""
-        step_id = item.data(Qt.UserRole)
+    def _on_button_clicked(self, step_id):
         self.step_selected.emit(step_id)
+        self.run_analysis.emit(step_id)
 
-    def on_run_all(self):
-        """Run all analysis steps"""
-        self.run_analysis.emit("all")
-
-    def on_run_selected(self):
-        """Run selected step"""
-        current_item = self.step_list.currentItem()
-        if current_item:
-            step_id = current_item.data(Qt.UserRole)
-            self.run_analysis.emit(step_id)
-
-    def on_reset(self):
-        """Reset the workflow"""
-        # Additional reset logic
+    # --- Public API (compatible with existing main_window.py usage) ---
 
     def activate_step(self, step_id):
-        """Activate a specific step"""
-        for i in range(self.step_list.count()):
-            item = self.step_list.item(i)
-            if item.data(Qt.UserRole) == step_id:
-                self.step_list.setCurrentItem(item)
-                self.on_step_clicked(item)
-                break
+        """Highlight a step button with a blue border."""
+        btn = self._buttons.get(step_id)
+        if btn:
+            btn.setStyleSheet(
+                "text-align: left; padding-left: 8px;"
+                "border: 2px solid #2196F3;"
+            )
 
     def mark_step_complete(self, step_id):
-        """Mark a step as complete with visual indicator"""
-        for i in range(self.step_list.count()):
-            item = self.step_list.item(i)
-            if item.data(Qt.UserRole) == step_id:
-                # Add checkmark to text
-                current_text = item.text()
-                if "✓" not in current_text:
-                    item.setText(f"✓ {current_text}")
-                # Change background color - adapt to system theme
-                from PyQt5.QtWidgets import QApplication
-                palette = QApplication.palette()
-                base_color = palette.base().color()
+        """Mark a step as complete — green background and ✓ prefix."""
+        btn = self._buttons.get(step_id)
+        if btn is None:
+            return
 
-                # Check if dark mode (base color is dark)
-                is_dark = base_color.lightness() < 128
-                if is_dark:
-                    # Dark mode: use dark green
-                    item.setBackground(QColor(0, 80, 0))  # Dark green
-                else:
-                    # Light mode: use light green
-                    item.setBackground(QColor("#E8F5E9"))  # Light green
-                break
+        text = btn.text()
+        if not text.startswith("\u2713 "):
+            btn.setText("\u2713 " + text)
+
+        from PyQt5.QtWidgets import QApplication
+        is_dark = QApplication.palette().base().color().lightness() < 128
+
+        if is_dark:
+            btn.setStyleSheet(
+                "text-align: left; padding-left: 8px;"
+                "background-color: #1B5E20; color: #C8E6C9;"
+            )
+        else:
+            btn.setStyleSheet(
+                "text-align: left; padding-left: 8px;"
+                "background-color: #E8F5E9; color: #1B5E20;"
+            )

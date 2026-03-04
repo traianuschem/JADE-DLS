@@ -19,10 +19,12 @@ def get_meaningful_parameters(fit_function, full_parameter_list):
     a, b, c, d, e, f = full_parameter_list
     
     func_name = fit_function.__name__
-    
-    if func_name == 'fit_function2':
+
+    if func_name == 'fit_function1':
+        return [a, b, f]
+    elif func_name == 'fit_function2':
         return [a, b, c, f]
-    elif func_name == 'fit_function3':  
+    elif func_name == 'fit_function3':
         return [a, b, c, d, f]
     elif func_name == 'fit_function4':
         return [a, b, c, d, e, f]
@@ -138,8 +140,8 @@ def estimate_parameters_from_data(x_data, y_data, base_parameters):
         }
 
 #different approaches for adaptive fitting
-def get_adaptive_parameters_strategy(dataframes_dict, fit_function, base_parameters, 
-                                   strategy='individual', x_col='t (s)', y_col='g(2)'):
+def get_adaptive_parameters_strategy(dataframes_dict, fit_function, base_parameters,
+                                   strategy='individual', x_col='t [s]', y_col='g(2)-1'):
     
     if strategy == 'individual':
         return _individual_strategy(dataframes_dict, fit_function, base_parameters, x_col, y_col)
@@ -241,8 +243,8 @@ def _representative_strategy(dataframes_dict, fit_function, base_parameters, x_c
     return {name: meaningful_params for name in dataframes_dict.keys()}
 
 #convenience wrapper function for easy integration
-def get_adaptive_initial_parameters(dataframes_dict, fit_function, base_parameters, 
-                                  strategy='individual', x_col='t (s)', y_col='g(2)', 
+def get_adaptive_initial_parameters(dataframes_dict, fit_function, base_parameters,
+                                  strategy='individual', x_col='t [s]', y_col='g(2)-1',
                                   verbose=True):
     if verbose:
         print(f"Using '{strategy}' strategy for parameter adaptation...")
@@ -265,19 +267,10 @@ def get_adaptive_initial_parameters(dataframes_dict, fit_function, base_paramete
 
 #fit and plot for cumulant-method C
 def plot_processed_correlations_iterative(dataframes_dict, fit_function2, fit_x_limits, initial_guesses,
-                                         max_iterations=5, tolerance=1e-4, maxfev=5000,
-                                         method='lm', show_plots=True):
-    """
-    Optimized iterative fitting with optional plotting
-
-    Performance improvements:
-    - Reduced default max_iterations from 10 to 5 (usually converges earlier)
-    - Reduced default maxfev from 50000 to 5000 (sufficient for most cases)
-    - Added show_plots parameter to skip plotting for speed
-    - Optimized redundant calculations
-    """
+                                         max_iterations=10, tolerance=1e-4, maxfev=50000,
+                                         method='lm', show_plots=True, plot_number_start=1):
     all_fit_results = []
-    plot_number = 1
+    plot_number = plot_number_start
     total = len(dataframes_dict)
 
     for idx, (name, df) in enumerate(dataframes_dict.items(), 1):
@@ -285,8 +278,8 @@ def plot_processed_correlations_iterative(dataframes_dict, fit_function2, fit_x_
 
         fit_result = {'filename': name}
         try:
-            x_data = df['t (s)']
-            y_data = df['g(2)']
+            x_data = df['t [s]']
+            y_data = df['g(2)-1']
 
             x_fit = x_data[(x_data >= fit_x_limits[0]) & (x_data <= fit_x_limits[1])]
             y_fit = y_data[(x_data >= fit_x_limits[0]) & (x_data <= fit_x_limits[1])]
@@ -412,8 +405,8 @@ def plot_processed_correlations_iterative(dataframes_dict, fit_function2, fit_x_
                 best_y_fit_values_in_range = fit_function2(x_fit, *best_popt)
                 best_residuals = y_fit - best_y_fit_values_in_range
 
-                #horizontal subplot layout
-                fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+                #3-panel subplot layout: data+fit | residuals | Q-Q
+                fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(20, 5))
 
                 #left plot: Original data and fit iterations
                 ax1.plot(x_data, y_data, marker='.', linestyle='', label='Data')
@@ -430,29 +423,35 @@ def plot_processed_correlations_iterative(dataframes_dict, fit_function2, fit_x_
                         ax1.plot(x_data, y_fit_values, '-', alpha=opacity,
                                  color='gray', linewidth=1)
 
-                ax1.set_xlabel(r"lag time [s]")
-                ax1.set_ylabel('g(2)-1')
-                ax1.set_title(f'[{plot_number}]: g(2)-1 vs. lag time for {name}')
+                ax1.set_xlabel(r'lag time τ [s]')
+                ax1.set_ylabel(r'$g^{(2)}(\tau) - 1$')
+                ax1.set_title(f'[{plot_number}]: Method C — {name}')
                 ax1.grid(True)
                 ax1.set_xscale('log')
-                ax1.set_xlim(0, 10)
                 ax1.legend()
-
-                #right plot: Q-Q plot for the best fit
-                stats.probplot(best_residuals, dist="norm", plot=ax2)
-                ax2.set_title(f'[{plot_number}]: Q-Q Plot of Residuals (Best Fit: Iter {best_iteration})')
-                ax2.grid(True)
 
                 #add parameters of best fit as text
                 param_text = f"Best Fit (Iteration {best_iteration}):\n"
                 param_text += f"R² = {all_r_squared[best_iteration_index]:.4f}\n"
                 param_text += f"RMSE = {all_rmse[best_iteration_index]:.4e}\n"
                 param_text += f"AIC = {all_aic[best_iteration_index]:.2f}"
-
-                #position the text
                 ax1.text(0.95, 0.95, param_text, transform=ax1.transAxes,
                         verticalalignment='top', horizontalalignment='right',
                         bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
+
+                #middle plot: residuals
+                ax2.plot(x_fit, best_residuals, marker='.', linestyle='', color='steelblue')
+                ax2.axhline(0, color='r', linestyle='--', linewidth=1)
+                ax2.set_xlabel(r'lag time τ [s]')
+                ax2.set_ylabel('Residuals')
+                ax2.set_title(f'[{plot_number}]: Residuals (Best Fit: Iter {best_iteration})')
+                ax2.set_xscale('log')
+                ax2.grid(True)
+
+                #right plot: Q-Q plot for the best fit
+                stats.probplot(best_residuals, dist="norm", plot=ax3)
+                ax3.set_title(f'[{plot_number}]: Q-Q Plot of Residuals (Best Fit: Iter {best_iteration})')
+                ax3.grid(True)
 
                 plt.tight_layout()
                 plt.show()

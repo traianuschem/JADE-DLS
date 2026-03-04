@@ -74,7 +74,7 @@ def nnls_optimized(df: pd.DataFrame, name: str, nnls_params: dict,
     Optimized NNLS fit with pre-computed matrix support
 
     Args:
-        df: DataFrame with 't (s)' and 'g(2)' columns
+        df: DataFrame with 't [s]' and 'g(2)-1' columns
         name: Dataset name
         nnls_params: Parameters dict with 'decay_times', 'prominence', 'distance'
         plot_number: Plot number for visualization
@@ -88,8 +88,8 @@ def nnls_optimized(df: pd.DataFrame, name: str, nnls_params: dict,
     distance = nnls_params.get('distance', 1)
 
     # Create the vectors
-    tau = df['t (s)'].to_numpy()
-    D = df['g(2)'].to_numpy()
+    tau = df['t [s]'].to_numpy()
+    D = df['g(2)-1'].to_numpy()
 
     # Use pre-computed matrix if provided, otherwise compute
     if T_matrix is None:
@@ -157,7 +157,7 @@ def nnls_all_optimized(dataframes_dict: Dict[str, pd.DataFrame],
 
     # Pre-compute T matrix once if all datasets have same time points
     # Check if all tau arrays are identical
-    tau_arrays = [df['t (s)'].to_numpy() for df in dataframes_dict.values()]
+    tau_arrays = [df['t [s]'].to_numpy() for df in dataframes_dict.values()]
     all_same_tau = all(np.array_equal(tau_arrays[0], tau) for tau in tau_arrays[1:])
 
     T_matrix = None
@@ -208,8 +208,8 @@ def _plot_nnls_results(name: str, df: pd.DataFrame, decay_times: np.ndarray,
                        residuals_values: np.ndarray, peaks: np.ndarray,
                        nnls_params: dict, plot_number: int):
     """Helper function to create NNLS result plots"""
-    tau = df['t (s)'].to_numpy()
-    D = df['g(2)'].to_numpy()
+    tau = df['t [s]'].to_numpy()
+    D = df['g(2)-1'].to_numpy()
 
     peak_amplitudes = f_optimized[peaks]
     normalized_amplitudes_sum = peak_amplitudes / np.sum(peak_amplitudes) if len(peak_amplitudes) > 0 else np.array([])
@@ -269,7 +269,7 @@ def regularized_nnls_optimized(df: pd.DataFrame, name: str, params: dict,
     Optimized Regularized NNLS (Tikhonov) with pre-computed matrix support
 
     Args:
-        df: DataFrame with 't (s)' and 'g(2)' columns
+        df: DataFrame with 't [s]' and 'g(2)-1' columns
         name: Dataset name
         params: Parameters dict with 'decay_times', 'alpha', 'prominence', 'distance'
         plot_number: Plot number for visualization
@@ -284,8 +284,8 @@ def regularized_nnls_optimized(df: pd.DataFrame, name: str, params: dict,
     alpha = params.get('alpha', 0.01)
 
     # Create the vectors
-    tau = df['t (s)'].to_numpy()
-    D = df['g(2)'].to_numpy()
+    tau = df['t [s]'].to_numpy()
+    D = df['g(2)-1'].to_numpy()
 
     # Use pre-computed matrix if provided, otherwise compute
     if T_matrix is None:
@@ -410,7 +410,7 @@ def nnls_preview_random(dataframes_dict: Dict[str, pd.DataFrame],
     axes = axes.flatten()
 
     # Pre-compute T matrix if possible
-    tau_arrays = [dataframes_dict[key]['t (s)'].to_numpy() for key in chosen_keys]
+    tau_arrays = [dataframes_dict[key]['t [s]'].to_numpy() for key in chosen_keys]
     all_same_tau = all(np.array_equal(tau_arrays[0], tau) for tau in tau_arrays[1:])
 
     T_matrix = None

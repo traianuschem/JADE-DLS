@@ -3,6 +3,9 @@ JADE-DLS Main GUI Window
 A transparent, user-friendly GUI for Dynamic Light Scattering analysis
 """
 
+import sys
+import os
+
 import numpy as np
 import pandas as pd
 
@@ -393,6 +396,10 @@ class JADEDLSMainWindow(QMainWindow):
                     working_data['data_folder']
                 )
 
+                # Pass pending noise correction parameters (set by CorrelationFilterDialog)
+                if getattr(self, '_pending_noise_params', None):
+                    analyzer.noise_params = self._pending_noise_params
+
                 # Prepare basedata
                 self.status_manager.update("Preparing basedata...")
                 analyzer.prepare_basedata()
@@ -550,6 +557,10 @@ class JADEDLSMainWindow(QMainWindow):
             self.run_nnls_analysis()
         elif analysis_type == 'regularized':
             self.run_regularized_analysis()
+        elif analysis_type == 'cumulant_d':
+            from PyQt5.QtWidgets import QMessageBox
+            QMessageBox.information(self, "Method D",
+                                    "Method D dialog is not yet implemented.")
         elif analysis_type == 'compare':
             self.compare_results()
         elif analysis_type == 'all':
@@ -788,6 +799,10 @@ print(f"Extracted correlations from {len(correlations_data)} files")
                 filtered_data['correlations'] = filtered_correlations
                 excluded_count = len(correlations_to_filter) - len(filtered_correlations)
 
+                # Store noise correction parameters for application after preprocessing
+                noise_active, noise_params = correlation_dialog.get_noise_params()
+                self._pending_noise_params = noise_params if noise_active else None
+
                 # Track which files were excluded for reproducibility
                 excluded_files = [f for f in correlations_to_filter.keys()
                                  if f not in filtered_correlations]
@@ -810,6 +825,7 @@ print(f"Extracted correlations from {len(correlations_data)} files")
                 # User cancelled - use all data
                 self.status_manager.update("Correlation filtering cancelled - using all data")
                 filtered_data['correlations'] = correlations_to_filter
+                self._pending_noise_params = None
 
         # Step 3: Update base data to match filtered correlations
         if 'basedata' in filtered_data and 'correlations' in filtered_data:
@@ -843,7 +859,22 @@ print(f"Extracted correlations from {len(correlations_data)} files")
         summary_msg += f"Final dataset: {final_count} files\n\n"
         summary_msg += f"Base data: {len(filtered_data.get('basedata', []))} entries\n"
         summary_msg += f"Correlations: {len(filtered_data.get('correlations', {}))} datasets\n"
-        summary_msg += f"Count rates: {len(filtered_data.get('countrates', {}))} datasets"
+        summary_msg += f"Count rates: {len(filtered_data.get('countrates', {}))} datasets\n\n"
+
+        # Noise correction status
+        if self._pending_noise_params:
+            p = self._pending_noise_params
+            noise_lines = []
+            if p.get('baseline_correction'):
+                noise_lines.append(f"  • Baseline correction: last {p.get('baseline_pct', 5)} %")
+            if p.get('intercept_correction'):
+                noise_lines.append(f"  • Intercept correction: first {p.get('intercept_pct', 2)} %")
+            if noise_lines:
+                summary_msg += "Noise correction active:\n" + "\n".join(noise_lines)
+            else:
+                summary_msg += "Noise correction: active (no corrections selected)"
+        else:
+            summary_msg += "Noise correction: not applied"
 
         self.status_manager.ready()
 
@@ -1111,7 +1142,7 @@ print(f"Relative error in c: {(delta_c/c):.4%}\\n")
         if method == 'A':
             code = """
 # Cumulant Method A: Extract cumulant data from ALV software
-from ade_dls.analysis.cumulants import extract_cumulants, analyze_diffusion_coefficient, calculate_cumulant_results_A
+from ade_dls.analysis.cumulants import extract_cumulants, analyze_diffusion_coefficient
 import glob
 import os
 
@@ -1165,10 +1196,21 @@ cumulant_method_A_data['polydispersity_3rd_order'] = (
 )
 polydispersity_method_A_3 = cumulant_method_A_data['polydispersity_3rd_order'].mean()
 
-# Calculate results
-method_a_results = calculate_cumulant_results_A(A_diff, cumulant_method_A_diff, 
-                                                 polydispersity_method_A_2, polydispersity_method_A_3, 
-                                                 c, delta_c)
+# Build results DataFrame (Rh calculation removed; report D and PDI directly)
+fit_names = ['Rh from 1st order cumulant fit', 'Rh from 2nd order cumulant fit', 'Rh from 3rd order cumulant fit']
+pdi_values = [None, polydispersity_method_A_2, polydispersity_method_A_3]
+result_rows = []
+for i in range(len(cumulant_method_A_diff)):
+    row = {
+        'Fit': fit_names[i] if i < len(fit_names) else f'Order {i+1}',
+        'D [m^2/s]': A_diff['D [m^2/s]'].iloc[i],
+        'std err D [m^2/s]': A_diff['std err D [m^2/s]'].iloc[i],
+        'R_squared': cumulant_method_A_diff['R_squared'].iloc[i],
+        'Residuals': cumulant_method_A_diff['Normality'].iloc[i],
+        'PDI': pdi_values[i] if i < len(pdi_values) else None,
+    }
+    result_rows.append(row)
+method_a_results = pd.DataFrame(result_rows)
 
 print("\\nCumulant Method A Results:")
 print(method_a_results)
@@ -1475,6 +1517,15 @@ print(method_c_results)
                 raw_correlations=raw_corr
             )
 
+            # Apply noise correction if parameters were set by CorrelationFilterDialog
+            if getattr(self, '_pending_noise_params', None) and \
+                    self.laplace_analyzer.processed_correlations is not None:
+                from ade_dls.analysis.noise import apply_noise_corrections
+                self.laplace_analyzer.processed_correlations = apply_noise_corrections(
+                    self.laplace_analyzer.processed_correlations,
+                    **self._pending_noise_params
+                )
+
             # Store processed correlations back for future use
             if processed_corr is None and self.laplace_analyzer.processed_correlations is not None:
                 working_data['processed_correlations'] = self.laplace_analyzer.processed_correlations
@@ -1677,6 +1728,15 @@ print(method_c_results)
                 delta_c=working_data['delta_c'],
                 raw_correlations=raw_corr
             )
+
+            # Apply noise correction if parameters were set by CorrelationFilterDialog
+            if getattr(self, '_pending_noise_params', None) and \
+                    self.laplace_analyzer.processed_correlations is not None:
+                from ade_dls.analysis.noise import apply_noise_corrections
+                self.laplace_analyzer.processed_correlations = apply_noise_corrections(
+                    self.laplace_analyzer.processed_correlations,
+                    **self._pending_noise_params
+                )
 
             # Store processed correlations back for future use
             if processed_corr is None and self.laplace_analyzer.processed_correlations is not None:

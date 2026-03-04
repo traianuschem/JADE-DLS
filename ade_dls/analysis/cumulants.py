@@ -143,57 +143,6 @@ def extract_cumulants(file_path, encodings=['Windows-1252', 'utf-8', 'latin1', '
     print(f"Failed to extract cumulants from {file_path} with any encoding")
     return None
 
-#calculation of cumulant results, specific for method A
-def calculate_cumulant_results_A(A_diff, cumulant_method_A_diff, polydispersity_method_A_2, polydispersity_method_A_3, c, delta_c):
-    results = []
-    orders = [1, 2, 3]
-    pdi_values = [None, polydispersity_method_A_2, polydispersity_method_A_3]
-
-    for i, order in enumerate(orders):
-        # Calculate values as scalars
-        rh_value = c * (1 / A_diff['D [m^2/s]'][i]) * 10**9
-        fractional_error_Rh = np.sqrt((delta_c / c)**2 + (A_diff['std err D [m^2/s]'][i] / A_diff['D [m^2/s]'][i])**2)
-        rh_error_value = fractional_error_Rh * rh_value
-        r2_value = cumulant_method_A_diff['R_squared'][i]
-        fit_name = f'Rh from {order}st order cumulant fit' if order == 1 else f'Rh from {order}nd order cumulant fit' if order == 2 else f'Rh from {order}rd order cumulant fit'
-        normality_value = cumulant_method_A_diff['Normality'][i]
-
-        # Create DataFrame with lists to ensure rows are created
-        result = pd.DataFrame({
-            'Rh [nm]': [rh_value],
-            'Rh error [nm]': [rh_error_value],
-            'R_squared': [r2_value],
-            'Fit': [fit_name],
-            'Residuals': [normality_value]
-        })
-
-        if i > 0:  # PDI is only for 2nd and 3rd order
-            result['PDI'] = [pdi_values[i]]
-
-        results.append(result)
-
-    df_cumulant_method_A_results = pd.concat(results, ignore_index=True)
-    return df_cumulant_method_A_results
-
-#create zero DataFrame directly, in case of not wanting to perform the cumulant fit mit method A
-def create_zero_cumulant_results_A():
-    results = []
-    orders = [1, 2, 3]
-    
-    for i, order in enumerate(orders):
-        result = pd.DataFrame({
-            'Rh [nm]': [0],
-            'Rh error [nm]': [0], 
-            'R_squared': [0],
-            'Fit': [f'Rh from {order}st order cumulant fit' if order == 1 else f'Rh from {order}nd order cumulant fit' if order == 2 else f'Rh from {order}rd order cumulant fit'],
-            'Residuals': [0]
-        })
-        if i > 0:
-            result['PDI'] = [0]
-        results.append(result)
-    
-    return pd.concat(results, ignore_index=True)
-
 #calculation of g2-values for cumulant-method-B
 def calculate_g2_B(dataframes_dict):
     processed_dataframes = {}
@@ -202,19 +151,19 @@ def calculate_g2_B(dataframes_dict):
         try:
             df_copy = df.copy(deep=True) 
 
-            g2_values = df_copy['g(2)']
-            
+            g2_values = df_copy['g(2)-1']
+
             #drop negative values
             neg_or_zero_mask = g2_values <= 0
             if neg_or_zero_mask.any():
                 num_neg_or_zero = neg_or_zero_mask.sum()
-                print(f"Warning: DataFrame '{name}' contains {num_neg_or_zero} non-positive g(2) values. These rows will be dropped.")
+                print(f"Warning: DataFrame '{name}' contains {num_neg_or_zero} non-positive g(2)-1 values. These rows will be dropped.")
 
             rows_to_keep = g2_values > 0
-            df_copy = df_copy[rows_to_keep]  
-            df_copy = df_copy.reset_index(drop=True) 
+            df_copy = df_copy[rows_to_keep]
+            df_copy = df_copy.reset_index(drop=True)
 
-            df_copy['g(2)_mod'] = np.sqrt(df_copy['g(2)'])
+            df_copy['g(2)_mod'] = 0.5 * np.log(df_copy['g(2)-1'])
 
             processed_dataframes[name] = df_copy  
 
@@ -260,7 +209,13 @@ def analyze_diffusion_coefficient(data_df, q_squared_col, gamma_cols, method_nam
         
         #Y-data (full dataset for plotting)
         Y_full = data_df[gamma_col]
-        
+
+        #filter out NaN values (e.g. in multimodal data where not all populations are found in all files)
+        valid_mask = Y_full.notna()
+        X_col_full = data_df[q_squared_col][valid_mask].reset_index(drop=True)
+        Y_full = Y_full[valid_mask].reset_index(drop=True)
+        X_full = X_col_full
+
         #filter data for fitting if x_range is specified
         if x_range is not None:
             if not isinstance(x_range, (tuple, list)) or len(x_range) != 2:
@@ -408,7 +363,7 @@ def plot_processed_correlations(dataframes_dict, fit_function, fit_x_limits):
             fit_result = {'filename': name}
 
             #main processing
-            x_data = df['t (s)']
+            x_data = df['t [s]']
             y_data = df['g(2)_mod']
             x_fit = x_data[(x_data >= fit_x_limits[0]) & (x_data <= fit_x_limits[1])]
             y_fit = y_data[(x_data >= fit_x_limits[0]) & (x_data <= fit_x_limits[1])]
@@ -438,32 +393,40 @@ def plot_processed_correlations(dataframes_dict, fit_function, fit_x_limits):
             r_squared = 1 - (ss_res / ss_tot)
             fit_result['R-squared'] = r_squared
                 
-            #create subplot layout
-            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
-                
+            #create subplot layout: data+fit | residuals | Q-Q
+            fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(20, 5))
+
             #left plot: original data and fit
             ax1.plot(x_data, y_data, marker='.', linestyle='', label='Data')
-            ax1.plot(x_data, y_fit_values, 'r-', label=f'Fit')
-            ax1.set_xlabel('lag time (s)')
-            ax1.set_ylabel(r"$\sqrt{g(2)-1}$")
-            ax1.set_title(f'[{plot_number}]: g(2)-1 vs. lag time for {name}')
+            ax1.plot(x_data, y_fit_values, 'r-', label='Fit')
+            ax1.set_xlabel(r'lag time τ [s]')
+            ax1.set_ylabel(r'$\ln\sqrt{g^{(2)}(\tau)-1}$')
+            ax1.set_title(f'[{plot_number}]: Method B — {name}')
             ax1.grid(True)
-            ax1.set_yscale('log')
-            ax1.set_xlim(0, 0.002)
+            ax1.set_xscale('log')
+            # Limit x-axis to fitting range + 10% extension on each side (log scale → factors)
+            ax1.set_xlim(fit_x_limits[0] / 1.10, fit_x_limits[1] * 1.10)
             ax1.legend()
-                
-            #right plot: Q-Q plot
-            stats.probplot(residuals, dist="norm", plot=ax2)
-            ax2.set_title(f'[{plot_number}]: Q-Q Plot of Residuals')
-            ax2.grid(True)
-                
+
             #add R^2 as text in the left plot
             param_text = f"R² = {r_squared:.4f}"
-                
-            #position the text in the upper right of the left plot
-            ax1.text(0.95, 0.95, param_text, transform=ax1.transAxes, 
+            ax1.text(0.95, 0.95, param_text, transform=ax1.transAxes,
                 verticalalignment='top', horizontalalignment='right',
                 bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
+
+            #middle plot: residuals
+            ax2.plot(x_fit, residuals, marker='.', linestyle='', color='steelblue')
+            ax2.axhline(0, color='r', linestyle='--', linewidth=1)
+            ax2.set_xlabel(r'lag time τ [s]')
+            ax2.set_ylabel('Residuals')
+            ax2.set_title(f'[{plot_number}]: Residuals')
+            ax2.set_xscale('log')
+            ax2.grid(True)
+
+            #right plot: Q-Q plot
+            stats.probplot(residuals, dist="norm", plot=ax3)
+            ax3.set_title(f'[{plot_number}]: Q-Q Plot of Residuals')
+            ax3.grid(True)
                 
             plt.tight_layout()
             plt.show()
