@@ -5,7 +5,12 @@
       "Bash(find:*)",
       "Bash(git -C \"C:\\\\Users\\\\traja\\\\Documents\\\\GitHub\\\\JADE-DLS\" log --oneline -20)",
       "Bash(git -C \"C:\\\\Users\\\\traja\\\\Documents\\\\GitHub\\\\JADE-DLS\" diff HEAD --name-only)",
-      "Bash(git -C \"C:\\\\Users\\\\traja\\\\Documents\\\\GitHub\\\\JADE-DLS\" status)"
+      "Bash(git -C \"C:\\\\Users\\\\traja\\\\Documents\\\\GitHub\\\\JADE-DLS\" status)",
+      "Bash(wc:*)",
+      "Bash(grep:*)",
+      "Bash(python -m py_compile:*)",
+      "Bash(python -c:*)",
+      "Bash(ls -la /c/Users/traja/Documents/GitHub/JADE-DLS/JADE-DLS-2.0/*.py)"
     ]
   }
 }

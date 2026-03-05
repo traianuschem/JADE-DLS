@@ -80,7 +80,7 @@ class LaplaceAnalyzer:
         Returns:
             Dictionary with processed correlation data {filename: df with 't (s)' and 'g(2)'}
         """
-        from preprocessing import process_correlation_data
+        from ade_dls.core.preprocessing import process_correlation_data
 
         # Columns to drop (keep only time and mean correlation)
         columns_to_drop = ['time [ms]', 'correlation 1', 'correlation 2',
@@ -430,7 +430,7 @@ class LaplaceAnalyzer:
                 show_plots=False  # Don't show plots - they're displayed in GUI
             )
         else:
-            from cumulants import analyze_diffusion_coefficient
+            from ade_dls.analysis.cumulants import analyze_diffusion_coefficient
             self.nnls_diff_results = analyze_diffusion_coefficient(
                 data_df=self.nnls_data,
                 q_squared_col='q^2',
@@ -451,7 +451,7 @@ class LaplaceAnalyzer:
 
     def _create_nnls_summary_plot(self):
         """Create summary plot for NNLS diffusion analysis (Gamma vs q²)"""
-        from gui.analysis.cumulant_plotting import create_summary_plot
+        from ade_dls.gui.analysis.cumulant_plotting import create_summary_plot
 
         # Get gamma columns
         gamma_cols = [col for col in self.nnls_data.columns if col.startswith('gamma_')]
@@ -899,7 +899,7 @@ class LaplaceAnalyzer:
                 show_plots=False  # Don't show plots - they're displayed in GUI
             )
         else:
-            from cumulants import analyze_diffusion_coefficient
+            from ade_dls.analysis.cumulants import analyze_diffusion_coefficient
             self.regularized_diff_results = analyze_diffusion_coefficient(
                 data_df=self.regularized_data,
                 q_squared_col='q^2',
@@ -920,7 +920,7 @@ class LaplaceAnalyzer:
 
     def _create_regularized_summary_plot(self):
         """Create summary plot for regularized diffusion analysis (Gamma vs q²)"""
-        from gui.analysis.cumulant_plotting import create_summary_plot
+        from ade_dls.gui.analysis.cumulant_plotting import create_summary_plot
 
         # Get gamma columns
         gamma_cols = [col for col in self.regularized_data.columns if col.startswith('gamma_')]

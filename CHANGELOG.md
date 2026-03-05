@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-03-05
+
+### Added
+
+#### Analysis – Cumulant Methods
+- **Method B & C – Extended output**: Results now include `D [m²/s]`, `D error [m²/s]`, `Residuals` (normality assessment) and `Skewness` (3rd/4th order fits only), matching JADE 2.0 output
+- **Normality assessment** (`_normality_status`): New module-level helper using Jarque–Bera and D'Agostino–Omnibus tests plus skewness/kurtosis thresholds; classifies residuals as *Normally distributed*, *Possibly not normally distributed* or *Not normally distributed*
+- **Method A – Individual order plots**: Three separate Γ vs q² scatter plots (1st / 2nd / 3rd order) with linear fit, R², D and normality status in the title; generated alongside the existing multi-order summary plot
+- **Method C – Order label**: The cumulant fit order (2nd / 3rd / 4th order) is now shown in the `Fit` column of every Method C result row (fresh run and post-refinement)
+
+#### Plots Tab
+- **Method filter dropdown**: A second filter combo-box ("All Methods / Method A / Method B / Method C / NNLS") has been added next to the existing plot-type filter; both filters are combined when rebuilding the plot list
+- **3-panel per-dataset plots** (Methods B & C): Each dataset plot now shows three panels — *Correlation fit*, *Residuals time-series*, *Q-Q plot* — at 20 × 5 in figure size (previously 2-panel 14 × 5)
+- **Method-tagged plot keys**: Plots are keyed as `"B: <filename>"` / `"C: <filename>"` to prevent collision when both methods are active simultaneously
+
+#### Results Tab (UI)
+- **Results Overview**: The results panel is renamed from "Current Results" to "Results Overview" and shows a compact summary table
+- **Row-click → Detailed Results**: Clicking any row in Results Overview loads the full HTML analysis detail for that run into the Detailed Results panel (stored per-row using `Qt.UserRole`)
+- **Per-method replace / append logic**: Methods A and B replace their own result row on re-run; Method C always appends a new row (enabling comparison of different fit orders)
+- **Method tag per row**: Each row stores its method name in `Qt.UserRole+1` for reliable identification during replacement and refinement
+
+#### Post-fit Refinement
+- **Full refinement history chain**: After refinement the Detailed Results panel of the refined row shows the *original* analysis HTML verbatim, followed by a styled divider ("▶ Post-fit Refinement") and the new refined results — applies to Methods A, B and C
+- **Post-fit Refinement Details block** (Method C): The refined row's Detailed Results includes a summary table with *files included / excluded*, *q-range applied*, a list of excluded files and an *Original vs. Refined* comparison table (Rh, D, R²)
+- **"Open Refinement" button driven by row selection**: The method-selection dropdown has been removed; instead the button is enabled only when a row is selected in Results Overview and is scoped to that row's method automatically
+
+### Changed
+- **Cumulant Analysis menu**: Split the single "Cumulant Analysis" menu entry into a sub-menu with separate actions for *Method A – ALV Cumulant Data*, *Method B – Linear Fit* and *Method C – Iterative Non-Linear Fit*
+- **`run_cumulant_analysis()`**: Refactored into three focused methods (`run_cumulant_a`, `run_cumulant_b`, `run_cumulant_c`) with a shared `_prepare_cumulant_analyzer()` helper
+- **`_recompute_method_c()`**: Now delegates entirely to `analyzer.recompute_method_c_diffusion()` instead of performing a manual OLS regression; returns a `(result_df, refinement_stats)` tuple
+- **Plot list rebuild no longer clears on re-run**: `clear_results()` is no longer called before `_display_cumulant_results()`; plots and results from previous methods are preserved when a new method runs
+
+### Fixed
+- **3-panel plot display**: `_show_plot_by_item()` now correctly handles `n == 3` axes (previously fell through to a single subplot, stacking all three axes on top of each other)
+- **Method B per-dataset plots missing**: Broadened the exception handler in `plot_processed_correlations_no_show()` from `(KeyError, TypeError, RuntimeError)` to `Exception` so that `ValueError` from `scipy.stats.probplot` no longer aborts the entire plot loop
+- **Import paths**: Fixed stale module references in `cumulant_analyzer.py` (`preprocessing`, `cumulants`) to use fully-qualified `ade_dls.*` package paths
+- **Column name alignment**: `cumulant_plotting.py` now reads `t [s]` and `g(2)-1` to match the column names produced by the preprocessing pipeline (previously `t (s)` / `g(2)`)
+- **Fit curve not clipped to fit window**: Method B fit curve is now plotted only within `fit_x_limits` (restricts the log-quadratic fit line to the valid region)
+- **Post-fit Refinement Details safe for Methods A/B**: The "Files included / excluded" rows are suppressed when `n_total` is `None` (Methods A and B do not have per-file exclusion)
+
+---
+
 ## [2.0.0] - 2025-01-16
 
 ### Changed
@@ -100,5 +142,6 @@ All functionality remains the same; only import paths have changed.
 
 ---
 
+[2.1.0]: https://github.com/traianuschem/JADE-DLS/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/traianuschem/JADE-DLS/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/traianuschem/JADE-DLS/releases/tag/v1.0.0

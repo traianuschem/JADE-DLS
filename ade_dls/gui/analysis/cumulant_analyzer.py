@@ -6,8 +6,31 @@ Executes the three cumulant analysis methods and manages results
 import pandas as pd
 import numpy as np
 from scipy.constants import k as boltzmann_constant
+from scipy.stats import jarque_bera, normaltest, skew, kurtosis
 from typing import Dict, List, Tuple, Any
 import os
+
+
+def _normality_status(resid) -> str:
+    """
+    Assess normality of OLS residuals using Jarque-Bera and D'Agostino tests.
+    Matches JADE 2.0 logic exactly.
+    """
+    try:
+        jb_p = jarque_bera(resid).pvalue
+        omnibus_p = normaltest(resid).pvalue
+        sk = skew(resid)
+        ku = kurtosis(resid)
+        conditions_met = [jb_p >= 0.05, omnibus_p >= 0.05, sk <= 1, ku <= 0]
+        conditions_not_met = [jb_p < 0.05, omnibus_p < 0.05, sk > 1, ku > 0]
+        if all(conditions_met):
+            return "Normally distributed"
+        elif all(conditions_not_met):
+            return "Not normally distributed"
+        else:
+            return "Possibly not normally distributed"
+    except Exception:
+        return "N/A"
 
 
 class CumulantAnalyzer:
@@ -51,7 +74,7 @@ class CumulantAnalyzer:
 
         This is required for all cumulant methods
         """
-        from preprocessing import extract_data
+        from ade_dls.core.preprocessing import extract_data
 
         # Get list of files from correlations (these are the filtered ones)
         filtered_files = list(self.loaded_data['correlations'].keys())
@@ -117,7 +140,7 @@ class CumulantAnalyzer:
         - 't (s)': time in seconds
         - 'g(2)': mean of correlation detectors
         """
-        from preprocessing import process_correlation_data
+        from ade_dls.core.preprocessing import process_correlation_data
 
         columns_to_drop = ['time [ms]', 'correlation 1', 'correlation 2',
                           'correlation 3', 'correlation 4']
@@ -149,9 +172,11 @@ class CumulantAnalyzer:
         Returns:
             DataFrame with results (Rh, errors, R^2, PDI)
         """
-        from cumulants import extract_cumulants
-        from gui.analysis.cumulant_plotting import create_summary_plot
+        from ade_dls.analysis.cumulants import extract_cumulants
+        from ade_dls.gui.analysis.cumulant_plotting import create_summary_plot
         import statsmodels.api as sm
+        import matplotlib.pyplot as plt
+        from scipy import stats as scipy_stats
 
         print("\n" + "="*60)
         print("CUMULANT METHOD A - ALV SOFTWARE CUMULANT DATA")
@@ -212,13 +237,14 @@ class CumulantAnalyzer:
             print(f"            Applied q² range filter: {min_q:.4e} - {max_q:.4e} nm⁻²")
             print(f"            {len(cumulant_method_A_data)} data points remaining")
 
-        # Perform linear regression for each gamma column without showing plots
-        print("[Step 3/4] Performing linear regression for each order...")
+        # Perform linear regression for each gamma column (Jarque-Bera normality test)
+        print("[Step 3/5] Performing linear regression for each order...")
         gamma_cols = ['1st order frequency [1/ms]',
                      '2nd order frequency [1/ms]',
                      '3rd order frequency [1/ms]']
 
         results_list = []
+        models_list  = []  # keep models for individual plots
         for i, gamma_col in enumerate(gamma_cols, 1):
             print(f"            Order {i}: {gamma_col}")
             if gamma_col in cumulant_method_A_data.columns:
@@ -226,18 +252,53 @@ class CumulantAnalyzer:
                 Y = cumulant_method_A_data[gamma_col]
                 X_with_const = sm.add_constant(X)
                 model = sm.OLS(Y, X_with_const).fit()
+                models_list.append(model)
+
+                # Full normality test – identical to JADE 2.0 / analyze_diffusion_coefficient()
+                residuals    = model.resid
+                resid_skew   = scipy_stats.skew(residuals)
+                resid_kurt   = scipy_stats.kurtosis(residuals)
+                try:
+                    jb_p_value      = float(model.summary().tables[2].data[2][3])
+                    omnibus_p_value = float(model.summary().tables[2].data[1][1])
+                except Exception:
+                    jb_p_value, omnibus_p_value = 1.0, 1.0  # fallback
+
+                conditions_met = [
+                    jb_p_value >= 0.05,
+                    omnibus_p_value >= 0.05,
+                    resid_skew <= 1,
+                    resid_kurt <= 0,
+                ]
+                conditions_not_met = [
+                    jb_p_value < 0.05,
+                    omnibus_p_value < 0.05,
+                    resid_skew > 1,
+                    resid_kurt > 0,
+                ]
+                if all(conditions_met):
+                    normality_status = "Normally distributed"
+                elif all(conditions_not_met):
+                    normality_status = "Not normally distributed"
+                else:
+                    normality_status = "Possibly not normally distributed"
 
                 results_list.append({
-                    'gamma_col': gamma_col,
-                    'q^2_coef': model.params.iloc[1],
-                    'q^2_se': model.bse.iloc[1],
-                    'R_squared': model.rsquared,
-                    'Normality': 'Normal' if model.rsquared > 0.9 else 'Check'
+                    'gamma_col':         gamma_col,
+                    'intercept':         model.params.iloc[0],
+                    'q^2_coef':          model.params.iloc[1],
+                    'q^2_se':            model.bse.iloc[1],
+                    'R_squared':         model.rsquared,
+                    'Normality':         normality_status,
+                    'JB_p_value':        jb_p_value,
+                    'Omnibus_p_value':   omnibus_p_value,
+                    'Skewness_resid':    resid_skew,
+                    'Kurtosis_resid':    resid_kurt,
                 })
 
         cumulant_method_A_diff = pd.DataFrame(results_list)
 
-        # Create summary plot (without showing)
+        # Create summary plot (all 3 orders overlaid)
         self.method_a_summary_plot = create_summary_plot(
             cumulant_method_A_data,
             'q^2',
@@ -246,12 +307,44 @@ class CumulantAnalyzer:
             '1/ms'
         )
 
+        # Create 3 individual order plots (one per Cumulant order)
+        print("[Step 4/5] Creating individual order plots...")
+        order_labels = ['1st Order', '2nd Order', '3rd Order']
+        self.method_a_order_plots = {}
+        for idx, (gamma_col, order_label, reg) in enumerate(
+                zip(gamma_cols, order_labels, results_list)):
+            if gamma_col not in cumulant_method_A_data.columns:
+                continue
+            X = cumulant_method_A_data['q^2']
+            Y = cumulant_method_A_data[gamma_col]
+
+            fig, ax = plt.subplots(figsize=(8, 5))
+            ax.scatter(X, Y, alpha=0.7, color='steelblue', label='Data points', zorder=3)
+
+            X_line = np.linspace(float(X.min()), float(X.max()), 100)
+            Y_line = reg['intercept'] + reg['q^2_coef'] * X_line
+            ax.plot(X_line, Y_line, color='crimson', linewidth=2,
+                    label=f"Linear fit  R² = {reg['R_squared']:.4f}")
+
+            ax.set_xlabel('q² [nm⁻²]')
+            ax.set_ylabel('Γ [ms⁻¹]')
+            ax.set_title(
+                f'Method A – {order_label}: Γ vs q²\n'
+                f'D = {reg["q^2_coef"] * 1e-15:.4e} m²/s  |  '
+                f'{reg["Normality"]}'
+            )
+            ax.legend()
+            ax.grid(True, alpha=0.4)
+            plt.tight_layout()
+            plt.close(fig)
+            self.method_a_order_plots[f'Method A – {order_label}'] = (fig, {})
+
         # Create DataFrame with diffusion coefficients
         A_diff = pd.DataFrame()
-        A_diff['D [m^2/s]'] = cumulant_method_A_diff['q^2_coef'] * 10**(-15)
-        A_diff['std err D [m^2/s]'] = cumulant_method_A_diff['q^2_se'] * 10**(-15)
+        A_diff['D [m^2/s]']         = cumulant_method_A_diff['q^2_coef'] * 10**(-15)
+        A_diff['std err D [m^2/s]'] = cumulant_method_A_diff['q^2_se']   * 10**(-15)
 
-        # Calculate polydispersity indices
+        # Polydispersity indices (PDI = µ₂ / Γ²)
         cumulant_method_A_data['polydispersity_2nd_order'] = (
             cumulant_method_A_data['2nd order frequency exp param [ms^2]'] /
             (cumulant_method_A_data['2nd order frequency [1/ms]'])**2
@@ -264,31 +357,63 @@ class CumulantAnalyzer:
         )
         polydispersity_method_A_3 = cumulant_method_A_data['polydispersity_3rd_order'].mean()
 
-        # Build results DataFrame (Rh calculation removed; report D and PDI directly)
+        # Skewness from 3rd order expansion parameter (µ₃ / Γ³) – same as JADE 2.0
+        cumulant_method_A_data['Skewness_3rd'] = (
+            cumulant_method_A_data['3rd order frequency exp param [ms^2]'] /
+            (cumulant_method_A_data['3rd order frequency [1/ms]'])**3
+        )
+        skewness_method_A_3 = cumulant_method_A_data['Skewness_3rd'].mean()
+
+        # Stokes-Einstein: Rh = (kT / 6πη) / D  [nm]
+        print("[Step 5/5] Calculating hydrodynamic radii (Stokes-Einstein)...")
+        rh_values = []
+        rh_errors = []
+        for i in range(len(A_diff)):
+            D_val = A_diff['D [m^2/s]'].iloc[i]
+            D_err = A_diff['std err D [m^2/s]'].iloc[i]
+            if D_val > 0:
+                rh = self.c_value / D_val * 1e9
+                rh_err = np.sqrt(
+                    (self.delta_c / self.c_value)**2 +
+                    (D_err / D_val)**2
+                ) * rh
+            else:
+                rh, rh_err = 0.0, 0.0
+            rh_values.append(rh)
+            rh_errors.append(rh_err)
+            print(f"            Order {i+1}: Rh = {rh:.2f} ± {rh_err:.2f} nm  "
+                  f"(D = {D_val:.4e} m²/s)")
+
+        # Build results DataFrame
         fit_names = [
             'Rh from 1st order cumulant fit',
             'Rh from 2nd order cumulant fit',
             'Rh from 3rd order cumulant fit',
         ]
-        pdi_values = [None, polydispersity_method_A_2, polydispersity_method_A_3]
+        pdi_values      = [np.nan, polydispersity_method_A_2, polydispersity_method_A_3]
+        skewness_values = [np.nan, np.nan, skewness_method_A_3]
+
         result_rows = []
         for i in range(len(cumulant_method_A_diff)):
             row = {
-                'Fit': fit_names[i] if i < len(fit_names) else f'Order {i+1}',
-                'D [m^2/s]': A_diff['D [m^2/s]'].iloc[i],
+                'Fit':               fit_names[i] if i < len(fit_names) else f'Order {i+1}',
+                'Rh [nm]':           rh_values[i],
+                'Rh error [nm]':     rh_errors[i],
+                'D [m^2/s]':         A_diff['D [m^2/s]'].iloc[i],
                 'std err D [m^2/s]': A_diff['std err D [m^2/s]'].iloc[i],
-                'R_squared': cumulant_method_A_diff['R_squared'].iloc[i],
-                'Residuals': cumulant_method_A_diff['Normality'].iloc[i],
-                'PDI': pdi_values[i] if i < len(pdi_values) else None,
+                'R_squared':         cumulant_method_A_diff['R_squared'].iloc[i],
+                'Residuals':         cumulant_method_A_diff['Normality'].iloc[i],
+                'PDI':               pdi_values[i]      if i < len(pdi_values)      else np.nan,
+                'Skewness':          skewness_values[i] if i < len(skewness_values) else np.nan,
             }
             result_rows.append(row)
         self.method_a_results = pd.DataFrame(result_rows)
 
         # Store regression statistics for detailed output
         self.method_a_regression_stats = {
-            'gamma_cols': gamma_cols,
+            'gamma_cols':         gamma_cols,
             'regression_results': results_list,
-            'diffusion_data': A_diff
+            'diffusion_data':     A_diff,
         }
 
         return self.method_a_results
@@ -306,8 +431,8 @@ class CumulantAnalyzer:
         Returns:
             DataFrame with results (Rh, errors, R^2, PDI)
         """
-        from cumulants import calculate_g2_B, analyze_diffusion_coefficient
-        from gui.analysis.cumulant_plotting import plot_processed_correlations_no_show, create_summary_plot
+        from ade_dls.analysis.cumulants import calculate_g2_B, analyze_diffusion_coefficient
+        from ade_dls.gui.analysis.cumulant_plotting import plot_processed_correlations_no_show, create_summary_plot
 
         # Store fit_limits for post-fit refinement
         self.method_b_fit_limits = fit_limits
@@ -423,14 +548,19 @@ class CumulantAnalyzer:
         )
         rh_error_value = fractional_error_Rh_B * rh_value
 
+        # Normality test on Γ vs q² regression residuals (matches JADE 2.0)
+        normality_b = _normality_status(model.resid)
+
         # Create DataFrame with lists to ensure rows are created
         self.method_b_results = pd.DataFrame({
-            'Rh [nm]': [rh_value],
-            'Rh error [nm]': [rh_error_value],
-            'R_squared': [model.rsquared],
-            'Fit': ['Rh from linear cumulant fit'],
-            'Residuals': ['N/A'],
-            'PDI': [polydispersity_method_B]
+            'Rh [nm]':        [rh_value],
+            'Rh error [nm]':  [rh_error_value],
+            'D [m²/s]':       [B_diff['D [m^2/s]'][0]],
+            'D error [m²/s]': [B_diff['std err D [m^2/s]'][0]],
+            'R_squared':      [model.rsquared],
+            'Fit':            ['Rh from linear cumulant fit'],
+            'Residuals':      [normality_b],
+            'PDI':            [polydispersity_method_B]
         })
 
         print(f"\nFINAL RESULTS:")
@@ -474,8 +604,8 @@ class CumulantAnalyzer:
         Returns:
             DataFrame with results (Rh, errors, R^2, PDI)
         """
-        from cumulants_C import get_adaptive_initial_parameters, get_meaningful_parameters
-        from gui.analysis.cumulant_plotting import plot_processed_correlations_iterative_no_show, create_summary_plot
+        from ade_dls.analysis.cumulants_C import get_adaptive_initial_parameters, get_meaningful_parameters
+        from ade_dls.gui.analysis.cumulant_plotting import plot_processed_correlations_iterative_no_show, create_summary_plot
 
         # Ensure data is prepared
         if self.df_basedata is None:
@@ -636,10 +766,23 @@ class CumulantAnalyzer:
         print(f"  Calculated Rh error: {rh_error}")
 
         self.method_c_results['Rh error [nm]'] = [rh_error]
+        self.method_c_results['D [m²/s]'] = [C_diff['D [m^2/s]'][0]]
+        self.method_c_results['D error [m²/s]'] = [C_diff['std err D [m^2/s]'][0]]
         self.method_c_results['R_squared'] = [model.rsquared]
-        self.method_c_results['Fit'] = ['Rh from iterative non-linear cumulant fit']
-        self.method_c_results['Residuals'] = ['N/A']
+        fit_func_name = params['fit_function']
+        _order_label = {'fit_function2': '2nd order', 'fit_function3': '3rd order',
+                        'fit_function4': '4th order'}.get(fit_func_name, fit_func_name)
+        self.method_c_fit_label = _order_label  # store for recompute
+        self.method_c_results['Fit'] = [f'Rh from iterative non-linear cumulant fit ({_order_label})']
+        normality_c = _normality_status(model.resid)
+        self.method_c_results['Residuals'] = [normality_c]
         self.method_c_results['PDI'] = [polydispersity_method_C]
+        if fit_func_name in ('fit_function3', 'fit_function4'):
+            skewness_c = (cumulant_method_C_data['best_d'] /
+                          cumulant_method_C_data['best_c']**(3/2)).mean()
+        else:
+            skewness_c = np.nan
+        self.method_c_results['Skewness'] = [skewness_c]
 
         print(f"[CUMULANT METHOD C DEBUG] Final DataFrame:")
         print(self.method_c_results)
@@ -674,7 +817,7 @@ class CumulantAnalyzer:
             DataFrame with recomputed results (Rh, errors, R^2, PDI)
         """
         import statsmodels.api as sm
-        from gui.analysis.cumulant_plotting import create_summary_plot
+        from ade_dls.gui.analysis.cumulant_plotting import create_summary_plot
 
         # Check if Method C data exists
         if not hasattr(self, 'method_c_fit') or self.method_c_fit is None:
@@ -736,10 +879,21 @@ class CumulantAnalyzer:
         )
         rh_error = fractional_error_Rh_C * rh_value
         recomputed_results['Rh error [nm]'] = [rh_error]
+        recomputed_results['D [m²/s]'] = [C_diff['D [m^2/s]'][0]]
+        recomputed_results['D error [m²/s]'] = [C_diff['std err D [m^2/s]'][0]]
         recomputed_results['R_squared'] = [model.rsquared]
-        recomputed_results['Fit'] = [f'Method C filtered (N={len(included_files)})']
-        recomputed_results['Residuals'] = ['N/A']
+        _rc_label = getattr(self, 'method_c_fit_label', '')
+        _rc_suffix = f', {_rc_label}' if _rc_label else ''
+        recomputed_results['Fit'] = [f'Method C filtered (N={len(included_files)}{_rc_suffix})']
+        normality_recompute = _normality_status(model.resid)
+        recomputed_results['Residuals'] = [normality_recompute]
         recomputed_results['PDI'] = [polydispersity_method_C]
+        if 'best_d' in cumulant_method_C_data.columns:
+            skewness_rc = (cumulant_method_C_data['best_d'] /
+                           cumulant_method_C_data['best_c']**(3/2)).mean()
+        else:
+            skewness_rc = np.nan
+        recomputed_results['Skewness'] = [skewness_rc]
 
         print(f"[METHOD C RECOMPUTE] Recomputed Rh: {rh_value:.2f} ± {rh_error:.2f} nm")
         print(f"[METHOD C RECOMPUTE] R²: {model.rsquared:.4f}")

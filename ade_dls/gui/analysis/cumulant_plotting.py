@@ -30,7 +30,7 @@ def plot_processed_correlations_no_show(dataframes_dict, fit_function, fit_x_lim
             fit_result = {'filename': name}
 
             # Main processing
-            x_data = df['t (s)']
+            x_data = df['t [s]']
             y_data = df['g(2)_mod']
             x_fit = x_data[(x_data >= fit_x_limits[0]) & (x_data <= fit_x_limits[1])]
             y_fit = y_data[(x_data >= fit_x_limits[0]) & (x_data <= fit_x_limits[1])]
@@ -40,9 +40,6 @@ def plot_processed_correlations_no_show(dataframes_dict, fit_function, fit_x_lim
 
             # Calculate parameter errors
             perr = np.sqrt(np.diag(pcov))
-
-            # Generate fit curve
-            y_fit_values = fit_function(x_data, *popt)
 
             # Calculate residuals
             residuals = y_fit - fit_function(x_fit, *popt)
@@ -60,27 +57,41 @@ def plot_processed_correlations_no_show(dataframes_dict, fit_function, fit_x_lim
             r_squared = 1 - (ss_res / ss_tot)
             fit_result['R-squared'] = r_squared
 
+            # Fit curve restricted to fit window only (quadratic diverges outside it)
+            x_fit_line = np.linspace(fit_x_limits[0], fit_x_limits[1], 500)
+            y_fit_line = fit_function(x_fit_line, *popt)
+
             # Create figure (but don't show it)
             # Use Figure() instead of plt.subplots() to avoid memory leak
             from matplotlib.figure import Figure
-            fig = Figure(figsize=(14, 5))
-            ax1, ax2 = fig.subplots(1, 2)
+            fig = Figure(figsize=(20, 5))
+            ax1, ax2, ax3 = fig.subplots(1, 3)
 
-            # Left plot: original data and fit
-            ax1.plot(x_data, y_data, marker='.', linestyle='', label='Data')
-            ax1.plot(x_data, y_fit_values, 'r-', label=f'Fit')
-            ax1.set_xlabel('lag time (s)')
-            ax1.set_ylabel(r"$\sqrt{g(2)-1}$")
-            ax1.set_title(f'[{plot_number}]: g(2)-1 vs. lag time for {name}')
+            # Left plot: full correlation data + fit restricted to fit window
+            ax1.plot(x_data, y_data, marker='.', linestyle='', markersize=3,
+                     alpha=0.7, label='Data')
+            ax1.plot(x_fit_line, y_fit_line, 'r-', linewidth=2, label='Fit (cumulant)')
+            ax1.axvline(fit_x_limits[1], color='gray', linestyle='--', linewidth=1,
+                        alpha=0.6, label=f'Fit limit ({fit_x_limits[1]*1e6:.0f} µs)')
+            ax1.set_xlabel(r'lag time τ [s]')
+            ax1.set_ylabel(r'ln$\sqrt{g^{(2)}(\tau)-1}$')
+            ax1.set_title(f'[{plot_number}]: Method B — {name}')
             ax1.grid(True)
-            ax1.set_yscale('log')
-            ax1.set_xlim(0, 0.002)
+            ax1.set_xscale('log')
             ax1.legend()
 
-            # Right plot: Q-Q plot
-            stats.probplot(residuals, dist="norm", plot=ax2)
-            ax2.set_title(f'[{plot_number}]: Q-Q Plot of Residuals')
+            # Middle plot: residuals timeseries
+            ax2.plot(np.arange(len(residuals)), residuals, marker='.', linestyle='-', markersize=4)
+            ax2.axhline(0, color='r', linestyle='--', linewidth=1)
+            ax2.set_xlabel('Sample Index')
+            ax2.set_ylabel('Residuals')
+            ax2.set_title(f'[{plot_number}]: Residuals')
             ax2.grid(True)
+
+            # Right plot: Q-Q plot
+            stats.probplot(residuals, dist="norm", plot=ax3)
+            ax3.set_title(f'[{plot_number}]: Q-Q Plot of Residuals')
+            ax3.grid(True)
 
             # Add R^2 as text
             param_text = f"R² = {r_squared:.4f}"
@@ -103,12 +114,8 @@ def plot_processed_correlations_no_show(dataframes_dict, fit_function, fit_x_lim
             # Store all results
             all_fit_results.append(fit_result)
 
-        except (KeyError, TypeError) as e:
-            print(f"Error processing DataFrame '{name}': {e}")
-            fit_result['Error'] = str(e)
-            all_fit_results.append(fit_result)
-        except RuntimeError as e:
-            print(f"Fit error for DataFrame '{name}': {e}")
+        except Exception as e:
+            print(f"Error processing DataFrame '{name}': {type(e).__name__}: {e}")
             fit_result['Error'] = str(e)
             all_fit_results.append(fit_result)
 
@@ -145,8 +152,8 @@ def _fit_single_dataset_method_c(name, df, fit_function, fit_limits, initial_par
 
     try:
         # Get data
-        x_data = df['t (s)'].values
-        y_data = df['g(2)'].values
+        x_data = df['t [s]'].values
+        y_data = df['g(2)-1'].values
 
         # Filter data by fit limits
         mask = (x_data >= fit_limits[0]) & (x_data <= fit_limits[1])
@@ -268,8 +275,8 @@ def _fit_single_dataset_method_c(name, df, fit_function, fit_limits, initial_par
         fit_result['AIC'] = aic
 
         # Create figure
-        fig = Figure(figsize=(14, 5))
-        ax1, ax2 = fig.subplots(1, 2)
+        fig = Figure(figsize=(20, 5))
+        ax1, ax2, ax3 = fig.subplots(1, 3)
 
         # Left plot: Data and fits
         ax1.plot(x_data, y_data, marker='.', linestyle='', label='Data')
@@ -299,10 +306,18 @@ def _fit_single_dataset_method_c(name, df, fit_function, fit_limits, initial_par
                 va='top', ha='right',
                 bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
 
-        # Right plot: Q-Q plot
-        stats.probplot(residuals, dist="norm", plot=ax2)
-        ax2.set_title(f'[{plot_number}]: Q-Q Plot of Residuals (Best Fit: Iter {best_iteration})')
+        # Middle plot: residuals timeseries
+        ax2.plot(np.arange(len(residuals)), residuals, marker='.', linestyle='-', markersize=4)
+        ax2.axhline(0, color='r', linestyle='--', linewidth=1)
+        ax2.set_xlabel('Sample Index')
+        ax2.set_ylabel('Residuals')
+        ax2.set_title(f'[{plot_number}]: Residuals (Best Fit: Iter {best_iteration})')
         ax2.grid(True)
+
+        # Right plot: Q-Q plot
+        stats.probplot(residuals, dist="norm", plot=ax3)
+        ax3.set_title(f'[{plot_number}]: Q-Q Plot of Residuals (Best Fit: Iter {best_iteration})')
+        ax3.grid(True)
 
         fig.tight_layout()
 
@@ -410,8 +425,8 @@ def plot_processed_correlations_iterative_no_show(dataframes_dict, fit_function,
                 fit_result = {'filename': name}
 
                 # Get data
-                x_data = df['t (s)'].values
-                y_data = df['g(2)'].values
+                x_data = df['t [s]'].values
+                y_data = df['g(2)-1'].values
 
                 # Filter data by fit limits
                 mask = (x_data >= fit_limits[0]) & (x_data <= fit_limits[1])
@@ -545,11 +560,11 @@ def plot_processed_correlations_iterative_no_show(dataframes_dict, fit_function,
                     all_fit_results.append(fit_result)
                     continue
 
-                # Create figure (2x1 layout like original notebook)
+                # Create figure (3x1 layout: fit | residuals | Q-Q)
                 # Use Figure() instead of plt.subplots() to avoid memory leak
                 from matplotlib.figure import Figure
-                fig = Figure(figsize=(14, 5))
-                ax1, ax2 = fig.subplots(1, 2)
+                fig = Figure(figsize=(20, 5))
+                ax1, ax2, ax3 = fig.subplots(1, 3)
 
                 # Left plot: Data and all fit iterations
                 ax1.plot(x_data, y_data, marker='.', linestyle='', label='Data')
@@ -583,10 +598,18 @@ def plot_processed_correlations_iterative_no_show(dataframes_dict, fit_function,
                         va='top', ha='right',
                         bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
 
-                # Right plot: Q-Q plot for the best fit
-                stats.probplot(residuals, dist="norm", plot=ax2)
-                ax2.set_title(f'[{plot_number}]: Q-Q Plot of Residuals (Best Fit: Iter {best_iteration})')
+                # Middle plot: residuals timeseries
+                ax2.plot(np.arange(len(residuals)), residuals, marker='.', linestyle='-', markersize=4)
+                ax2.axhline(0, color='r', linestyle='--', linewidth=1)
+                ax2.set_xlabel('Sample Index')
+                ax2.set_ylabel('Residuals')
+                ax2.set_title(f'[{plot_number}]: Residuals (Best Fit: Iter {best_iteration})')
                 ax2.grid(True)
+
+                # Right plot: Q-Q plot for the best fit
+                stats.probplot(residuals, dist="norm", plot=ax3)
+                ax3.set_title(f'[{plot_number}]: Q-Q Plot of Residuals (Best Fit: Iter {best_iteration})')
+                ax3.grid(True)
 
                 fig.tight_layout()
 

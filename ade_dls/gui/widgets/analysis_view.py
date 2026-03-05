@@ -108,6 +108,14 @@ class AnalysisView(QWidget):
         self.plot_filter_combo.currentTextChanged.connect(self._on_plot_filter_changed)
         filter_layout.addWidget(filter_label)
         filter_layout.addWidget(self.plot_filter_combo)
+
+        method_label = QLabel("Method:")
+        self.plot_method_combo = QComboBox()
+        self.plot_method_combo.addItems(["All Methods", "Method A", "Method B", "Method C", "NNLS"])
+        self.plot_method_combo.currentTextChanged.connect(self._on_method_filter_changed)
+        filter_layout.addWidget(method_label)
+        filter_layout.addWidget(self.plot_method_combo)
+
         filter_layout.addStretch()
         nav_layout.addLayout(filter_layout)
 
@@ -128,7 +136,30 @@ class AnalysisView(QWidget):
         nav_buttons.addWidget(self.next_plot_btn)
         nav_buttons.addStretch()
 
+        # ScatterForge export button (only visible when ScatterForge is available)
+        from ade_dls.gui.export.scatterforge_bridge import is_available as _sf_available
+        if _sf_available():
+            self.sf_gamma_btn = QPushButton("📤 Γ vs q² → ScatterForge")
+            self.sf_gamma_btn.setToolTip(
+                "Γ vs q² Datensätze (Messpunkte + Fit) in ScatterForge-Plot öffnen"
+            )
+            self.sf_gamma_btn.clicked.connect(
+                lambda: self._on_send_to_scatterforge('gamma')
+            )
+            self.sf_diffusion_btn = QPushButton("📤 D vs q² → ScatterForge")
+            self.sf_diffusion_btn.setToolTip(
+                "Diffusionskoeffizient D = Γ/q² je Messwinkel in ScatterForge-Plot öffnen"
+            )
+            self.sf_diffusion_btn.clicked.connect(
+                lambda: self._on_send_to_scatterforge('diffusion')
+            )
+            nav_buttons.addWidget(self.sf_gamma_btn)
+            nav_buttons.addWidget(self.sf_diffusion_btn)
+
         nav_layout.addLayout(nav_buttons)
+
+        # Analyzer reference (set by main_window after analysis completes)
+        self.cumulant_analyzer = None
 
         # Plot container
         plot_group = QGroupBox("Current Plot")
@@ -179,6 +210,7 @@ class AnalysisView(QWidget):
         # Store current plots and all plots for filtering
         self.current_plots = {}
         self.all_plots = {}  # Store all plots before filtering
+        self.all_plot_methods = {}  # filename → method_name tag
         self.current_plot_index = 0
 
         return widget
@@ -194,13 +226,13 @@ class AnalysisView(QWidget):
         layout.addWidget(title)
 
         # Results table
-        results_group = QGroupBox("Current Results")
+        results_group = QGroupBox("Results Overview")
         results_layout = QVBoxLayout()
 
         self.results_table = QTableWidget()
-        self.results_table.setColumnCount(5)
+        self.results_table.setColumnCount(8)
         self.results_table.setHorizontalHeaderLabels([
-            "Method", "Rh (nm)", "Error (nm)", "R²", "PDI"
+            "Method", "Rh (nm)", "Error (nm)", "D (m²/s)", "D err (m²/s)", "R²", "PDI", "Residuals"
         ])
         # Enable sorting and better column sizing
         self.results_table.setSortingEnabled(True)
@@ -209,6 +241,9 @@ class AnalysisView(QWidget):
         # Enable context menu
         self.results_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.results_table.customContextMenuRequested.connect(self._show_results_context_menu)
+        self.results_table.currentCellChanged.connect(
+            lambda cur_row, cur_col, prev_row, prev_col: self._on_result_row_selected(cur_row)
+        )
         results_layout.addWidget(self.results_table)
 
         results_group.setLayout(results_layout)
@@ -236,12 +271,6 @@ class AnalysisView(QWidget):
         refine_label.setStyleSheet("font-weight: bold;")
         refinement_layout.addWidget(refine_label)
 
-        # Method selection dropdown
-        self.refinement_method_combo = QComboBox()
-        self.refinement_method_combo.setToolTip("Select which analysis method to refine")
-        self.refinement_method_combo.setMinimumWidth(200)
-        refinement_layout.addWidget(self.refinement_method_combo)
-
         # Global refinement button
         self.refinement_btn = QPushButton("⚙️ Open Refinement")
         self.refinement_btn.setToolTip(
@@ -263,6 +292,7 @@ class AnalysisView(QWidget):
                 background-color: #BDBDBD;
             }
         """)
+        self.refinement_btn.setEnabled(False)  # Enabled when a row is selected
         self.refinement_btn.clicked.connect(self._open_selected_refinement)
         refinement_layout.addWidget(self.refinement_btn)
 
@@ -428,12 +458,27 @@ class AnalysisView(QWidget):
         # Show post-fit refinement button if any analyzer is available
         if (hasattr(self, 'cumulant_analyzer') and self.cumulant_analyzer is not None) or \
            (hasattr(self, 'laplace_analyzer') and self.laplace_analyzer is not None):
-            self._update_refinement_dropdown()
             self.refinement_widget.show()
 
     def show_results_tab(self):
         """Switch to Results tab"""
         self.tabs.setCurrentIndex(2)
+
+    def _on_result_row_selected(self, row):
+        """Show detailed HTML for the selected result row"""
+        if row < 0:
+            return
+        item = self.results_table.item(row, 0)
+        if item:
+            html = item.data(Qt.UserRole)
+            if html:
+                self.details_text.setHtml(html)
+
+        # Enable refinement button only for methods that support it
+        _REFINABLE = {'Method A', 'Method B', 'Method C', 'NNLS', 'Regularized NNLS'}
+        method_name = item.data(Qt.UserRole + 1) if item else None
+        if hasattr(self, 'refinement_btn'):
+            self.refinement_btn.setEnabled(method_name in _REFINABLE)
 
     def _update_results_table(self, method_name, results_df, regression_stats=None):
         """Update results table with new results"""
@@ -446,6 +491,22 @@ class AnalysisView(QWidget):
         if results_df.empty:
             print(f"[ANALYSIS VIEW WARNING] results_df is empty for {method_name}!")
             return
+
+        # Capture prior detail HTML before any row removal (for refinement history chain)
+        prior_html = None
+        for r in range(self.results_table.rowCount()):
+            cell = self.results_table.item(r, 0)
+            if cell and cell.data(Qt.UserRole + 1) == method_name:
+                h = cell.data(Qt.UserRole)
+                if h:
+                    prior_html = h  # keep the most recent one found
+
+        # Method A and B replace their own row on re-run; Method C always appends
+        if 'Method A' in method_name or 'Method B' in method_name:
+            for r in reversed(range(self.results_table.rowCount())):
+                cell = self.results_table.item(r, 0)
+                if cell and cell.data(Qt.UserRole + 1) == method_name:
+                    self.results_table.removeRow(r)
 
         # Get existing row count
         current_rows = self.results_table.rowCount()
@@ -484,6 +545,7 @@ class AnalysisView(QWidget):
                 else:
                     method_item.setBackground(QColor(255, 240, 230))  # Light orange
 
+            method_item.setData(Qt.UserRole + 1, method_name)  # tag for future replacement
             self.results_table.setItem(current_rows + i, 0, method_item)
 
             # Rh
@@ -502,13 +564,35 @@ class AnalysisView(QWidget):
             error_item.setData(0x0100, float(error_val))
             self.results_table.setItem(current_rows + i, 2, error_item)
 
+            # D [m²/s]
+            d_val = row.get('D [m²/s]', float('nan'))
+            if isinstance(d_val, (list, pd.Series)):
+                d_val = d_val[0] if len(d_val) > 0 else float('nan')
+            try:
+                d_item = QTableWidgetItem(f"{float(d_val):.3e}")
+                d_item.setData(0x0100, float(d_val))
+            except (TypeError, ValueError):
+                d_item = QTableWidgetItem('N/A')
+            self.results_table.setItem(current_rows + i, 3, d_item)
+
+            # D error [m²/s]
+            d_err_val = row.get('D error [m²/s]', float('nan'))
+            if isinstance(d_err_val, (list, pd.Series)):
+                d_err_val = d_err_val[0] if len(d_err_val) > 0 else float('nan')
+            try:
+                d_err_item = QTableWidgetItem(f"{float(d_err_val):.3e}")
+                d_err_item.setData(0x0100, float(d_err_val))
+            except (TypeError, ValueError):
+                d_err_item = QTableWidgetItem('N/A')
+            self.results_table.setItem(current_rows + i, 4, d_err_item)
+
             # R²
             r2_val = row.get('R_squared', row.get('R-squared', 0))
             if isinstance(r2_val, (list, pd.Series)):
                 r2_val = r2_val[0] if len(r2_val) > 0 else 0
             r2_item = QTableWidgetItem(f"{r2_val:.4f}")
             r2_item.setData(0x0100, float(r2_val))
-            self.results_table.setItem(current_rows + i, 3, r2_item)
+            self.results_table.setItem(current_rows + i, 5, r2_item)
 
             # PDI
             pdi_val = row.get('PDI', 'N/A')
@@ -525,15 +609,18 @@ class AnalysisView(QWidget):
             else:
                 pdi_str = 'N/A'
                 pdi_item = QTableWidgetItem(pdi_str)
-            self.results_table.setItem(current_rows + i, 4, pdi_item)
+            self.results_table.setItem(current_rows + i, 6, pdi_item)
+
+            # Residuals (normality)
+            res_val = str(row.get('Residuals', 'N/A'))
+            res_item = QTableWidgetItem(res_val)
+            self.results_table.setItem(current_rows + i, 7, res_item)
 
         new_row_count = self.results_table.rowCount()
         print(f"[ANALYSIS VIEW] Finished adding rows. New row count: {new_row_count}")
         self.results_table.resizeColumnsToContents()
 
-        # Update details text with formatted output
-        # Get current HTML content
-        current_html = self.details_text.toHtml()
+        # Build detail HTML for this method run (stored per-row, shown on click)
 
         # Detect dark mode for HTML styling
         from PyQt5.QtWidgets import QApplication
@@ -586,6 +673,63 @@ class AnalysisView(QWidget):
                 new_section += f"<td style='padding: 8px;'>{cell_text}</td>"
             new_section += "</tr>"
         new_section += "</table>"
+
+        # --- Post-fit Refinement Details section (only for refined rows) ---
+        if regression_stats and 'refinement_info' in regression_stats:
+            ri = regression_stats['refinement_info']
+            new_section += f"<h4 style='color:{title_color};'>Post-fit Refinement Details</h4>"
+
+            # Summary: files and q-range
+            new_section += (
+                f"<table border='1' cellpadding='5' cellspacing='0' "
+                f"style='border-collapse:collapse; width:100%; color:{text_color};'>"
+                f"<tr style='background-color:{header_bg}; font-weight:bold;'>"
+                f"<th>Parameter</th><th>Value</th></tr>"
+            )
+            if ri.get('n_total') is not None:
+                new_section += (
+                    f"<tr><td>Files included</td><td>{ri['n_included']} / {ri['n_total']}</td></tr>"
+                    f"<tr><td>Files excluded</td><td>{ri['n_excluded']}</td></tr>"
+                )
+            new_section += (
+                f"<tr><td>q-range applied</td><td>{ri['q_range_str']}</td></tr>"
+                f"</table>"
+            )
+
+            # Excluded files list
+            if ri['excluded_files']:
+                new_section += "<p><b>Excluded files:</b><br>"
+                new_section += "<br>".join(f"&nbsp;&nbsp;• {f}" for f in ri['excluded_files'])
+                new_section += "</p>"
+
+            # Comparison table: Original vs Refined
+            if ri.get('original_rh') is not None:
+                orig_rh = ri['original_rh']
+                orig_d  = ri.get('original_d')
+                orig_r2 = ri.get('original_r2')
+                ref_rh  = results_df['Rh [nm]'].iloc[0] if 'Rh [nm]' in results_df.columns else None
+                ref_d   = results_df['D [m²/s]'].iloc[0] if 'D [m²/s]' in results_df.columns else None
+                ref_r2  = results_df['R_squared'].iloc[0] if 'R_squared' in results_df.columns else None
+
+                new_section += (
+                    f"<h4>Original vs. Refined:</h4>"
+                    f"<table border='1' cellpadding='5' cellspacing='0' "
+                    f"style='border-collapse:collapse; width:100%; color:{text_color};'>"
+                    f"<tr style='background-color:{header_bg}; font-weight:bold;'>"
+                    f"<th>Quantity</th><th>Original</th><th>Refined</th></tr>"
+                )
+                cmp_rows = [
+                    ("Rh [nm]",  f"{orig_rh:.3f}" if orig_rh is not None else "N/A",
+                                 f"{ref_rh:.3f}"  if ref_rh  is not None else "N/A"),
+                    ("D [m²/s]", f"{orig_d:.3e}"  if orig_d  is not None else "N/A",
+                                 f"{ref_d:.3e}"   if ref_d   is not None else "N/A"),
+                    ("R²",       f"{orig_r2:.4f}" if orig_r2 is not None else "N/A",
+                                 f"{ref_r2:.4f}"  if ref_r2  is not None else "N/A"),
+                ]
+                for label, orig_val, ref_val in cmp_rows:
+                    new_section += (f"<tr><td><b>{label}</b></td>"
+                                    f"<td>{orig_val}</td><td>{ref_val}</td></tr>")
+                new_section += "</table>"
 
         # Add detailed fit statistics for Gamma vs q² linear regression
         if regression_stats and 'regression_results' in regression_stats:
@@ -758,19 +902,29 @@ class AnalysisView(QWidget):
 
             new_section += "<p style='font-size: 9pt; color: gray;'><i>Note: AIC and BIC are informational. Lower values indicate better fit when comparing models, but absolute values don't have universal thresholds.</i></p>"
 
-        # Append to existing HTML or create new
-        if current_html and "<body" in current_html:
-            # Extract body content and append
-            import re
-            body_match = re.search(r'<body[^>]*>(.*)</body>', current_html, re.DOTALL)
-            if body_match:
-                body_content = body_match.group(1)
-                new_html = current_html.replace(body_match.group(1), body_content + new_section)
-                self.details_text.setHtml(new_html)
-            else:
-                self.details_text.setHtml(current_html + new_section)
-        else:
-            self.details_text.setHtml(new_section)
+        # Store detail HTML in each newly-added row's col-0 item
+        # (displayed when user clicks the row, not automatically)
+        # Chain prior HTML when this is a refinement (regression_stats is not None)
+        if regression_stats is not None and prior_html:
+            new_section = (
+                prior_html
+                + f"<hr style='border:2px solid {title_color}; margin:20px 0;'>"
+                + f"<h3 style='color:{title_color}; margin-top:0;'>&#9658; Post-fit Refinement</h3>"
+                + new_section
+            )
+        detail_html = new_section
+        new_start = self.results_table.rowCount() - len(results_df)
+        for r in range(new_start, self.results_table.rowCount()):
+            cell = self.results_table.item(r, 0)
+            if cell:
+                cell.setData(Qt.UserRole, detail_html)
+
+        # Auto-select the first new row so details appear immediately
+        if 0 <= new_start < self.results_table.rowCount():
+            self.results_table.blockSignals(True)
+            self.results_table.setCurrentCell(new_start, 0)
+            self.results_table.blockSignals(False)
+            self.details_text.setHtml(detail_html)
 
     def _load_plots(self, method_name, plots_dict, fit_quality, replace_method=False):
         """
@@ -782,38 +936,44 @@ class AnalysisView(QWidget):
             fit_quality: Dictionary of fit quality info
             replace_method: If True, replace all plots for this method (used for post-refinement)
         """
-        print(f"[ANALYSIS VIEW] Loading {len(plots_dict)} plots for {method_name} (replace_method={replace_method})")
+        print(f"[ANALYSIS VIEW] Loading {len(plots_dict)} plots for {method_name}")
 
         # Add to existing plots instead of replacing
         if not hasattr(self, 'current_plots'):
             self.current_plots = {}
         if not hasattr(self, 'current_fit_quality'):
             self.current_fit_quality = {}
+        if not hasattr(self, 'all_plots'):
+            self.all_plots = {}
+        if not hasattr(self, 'all_plot_methods'):
+            self.all_plot_methods = {}
 
-        # If replacing method, remove all plots for this method from the list
-        if replace_method:
-            items_to_remove = []
-            for row in range(self.plot_list.count()):
-                item = self.plot_list.item(row)
-                filename = item.data(Qt.UserRole)
-                if filename and filename in plots_dict:
-                    items_to_remove.append(row)
-                # Also remove method separators
-                elif item and method_name in item.text() and "───" in item.text():
-                    items_to_remove.append(row)
+        # Always replace plots for the same method (mirrors results table behavior)
+        old_keys = [k for k, m in self.all_plot_methods.items() if m == method_name]
+        for k in old_keys:
+            self.all_plots.pop(k, None)
+            self.current_plots.pop(k, None)
+            self.all_plot_methods.pop(k, None)
 
-            # Remove items in reverse order to maintain indices
-            for row in reversed(items_to_remove):
-                self.plot_list.takeItem(row)
-
-            print(f"[ANALYSIS VIEW] Removed {len(items_to_remove)} existing items for {method_name}")
+        # Remove matching list items (plots tagged with this method + its separator)
+        items_to_remove = []
+        for row in range(self.plot_list.count()):
+            item = self.plot_list.item(row)
+            filename = item.data(Qt.UserRole)
+            if filename and filename in old_keys:
+                items_to_remove.append(row)
+            elif item and method_name in item.text() and "───" in item.text():
+                items_to_remove.append(row)
+        for row in reversed(items_to_remove):
+            self.plot_list.takeItem(row)
+        if items_to_remove:
+            print(f"[ANALYSIS VIEW] Replaced {len(items_to_remove)} existing items for {method_name}")
 
         # Merge new plots with existing ones
         self.current_plots.update(plots_dict)
-        # Also update all_plots to include new plots
-        if not hasattr(self, 'all_plots'):
-            self.all_plots = {}
         self.all_plots.update(plots_dict)
+        for filename in plots_dict:
+            self.all_plot_methods[filename] = method_name
 
         if fit_quality:
             self.current_fit_quality.update(fit_quality)
@@ -894,14 +1054,17 @@ class AnalysisView(QWidget):
 
                 for ax_idx, source_ax in enumerate(source_axes):
                     # Create subplot in same position
-                    if len(source_axes) == 1:
+                    n = len(source_axes)
+                    if n == 1:
                         ax = self.figure.add_subplot(111)
-                    elif len(source_axes) == 2:
+                    elif n == 2:
                         ax = self.figure.add_subplot(1, 2, ax_idx + 1)
-                    elif len(source_axes) == 4:
+                    elif n == 3:
+                        ax = self.figure.add_subplot(1, 3, ax_idx + 1)
+                    elif n == 4:
                         ax = self.figure.add_subplot(2, 2, ax_idx + 1)
                     else:
-                        ax = self.figure.add_subplot(111)
+                        ax = self.figure.add_subplot(1, n, ax_idx + 1)
 
                     # Copy scatter plots (collections) - MUST come before lines for proper z-order
                     for collection in source_ax.collections:
@@ -1020,30 +1183,36 @@ class AnalysisView(QWidget):
                 self._show_plot_by_item(item)
                 break
 
-    def _on_plot_filter_changed(self, filter_text):
-        """Handle plot filter change"""
-        # Save current all plots if not already saved
-        if not self.all_plots and self.current_plots:
-            self.all_plots = self.current_plots.copy()
+    def _on_plot_filter_changed(self, _):
+        """Handle plot type filter change"""
+        self._apply_plot_filters()
 
-        # If we have no plots saved, nothing to filter
+    def _on_method_filter_changed(self, _):
+        """Handle plot method filter change"""
+        self._apply_plot_filters()
+
+    def _apply_plot_filters(self):
+        """Apply both type and method filters to the plot list"""
         if not self.all_plots:
             return
+        type_filter = self.plot_filter_combo.currentText()
+        method_filter = self.plot_method_combo.currentText() if hasattr(self, 'plot_method_combo') else "All Methods"
 
-        # Apply filter
-        if filter_text == "All Plots":
-            # Show all plots
-            self.current_plots = self.all_plots.copy()
-        elif filter_text == "Diffusion Analysis Plots":
-            # Show only summary/diffusion plots (keys ending with "Summary")
-            self.current_plots = {k: v for k, v in self.all_plots.items()
-                                 if "Summary" in k or "Diffusion" in k}
-        elif filter_text == "Fit Plots":
-            # Show only fit plots (keys NOT ending with "Summary")
-            self.current_plots = {k: v for k, v in self.all_plots.items()
-                                 if "Summary" not in k and "Diffusion" not in k}
+        filtered = self.all_plots.copy()
 
-        # Rebuild plot list
+        # Apply type filter
+        if type_filter == "Diffusion Analysis Plots":
+            filtered = {k: v for k, v in filtered.items() if "Summary" in k or "Diffusion" in k}
+        elif type_filter == "Fit Plots":
+            filtered = {k: v for k, v in filtered.items() if "Summary" not in k and "Diffusion" not in k}
+
+        # Apply method filter
+        if method_filter != "All Methods":
+            all_methods = getattr(self, 'all_plot_methods', {})
+            filtered = {k: v for k, v in filtered.items()
+                        if all_methods.get(k, "").startswith(method_filter)}
+
+        self.current_plots = filtered
         self._rebuild_plot_list()
 
     def _rebuild_plot_list(self):
@@ -1081,15 +1250,65 @@ class AnalysisView(QWidget):
         self.plot_list.clear()
         self.nav_widget.hide()
         self.plot_placeholder.show()
-        # Reset filter to "All Plots"
+        # Reset filters
         if hasattr(self, 'plot_filter_combo'):
             self.plot_filter_combo.setCurrentText("All Plots")
+        if hasattr(self, 'plot_method_combo'):
+            self.plot_method_combo.setCurrentText("All Methods")
+        self.all_plot_methods = {}
         # Hide refinement button
         if hasattr(self, 'refinement_widget'):
             self.refinement_widget.hide()
         # Clear stored analyzer
-        if hasattr(self, 'cumulant_analyzer'):
-            self.cumulant_analyzer = None
+        self.cumulant_analyzer = None
+
+    def set_cumulant_analyzer(self, analyzer):
+        """
+        Store the CumulantAnalyzer instance so the ScatterForge export
+        buttons can access the analysis data.
+
+        Called by main_window after cumulant analysis completes.
+        """
+        self.cumulant_analyzer = analyzer
+
+    def _on_send_to_scatterforge(self, export_type: str):
+        """
+        Export the current cumulant Method A results to ScatterForge-Plot.
+
+        Args:
+            export_type: 'gamma' for Γ vs q², 'diffusion' for D vs q²
+        """
+        from ade_dls.gui.export.scatterforge_bridge import (
+            from_cumulant_method_a,
+            from_diffusion_vs_q2,
+            send_to_scatterforge,
+        )
+        from PyQt5.QtWidgets import QMessageBox
+
+        if self.cumulant_analyzer is None:
+            QMessageBox.warning(
+                self,
+                "No Analyzer",
+                "Please run Cumulants Method A first.",
+            )
+            return
+
+        try:
+            if export_type == 'gamma':
+                groups = from_cumulant_method_a(self.cumulant_analyzer)
+                plot_type = 'DLS - \u0393 vs q\u00b2'
+            else:
+                groups = from_diffusion_vs_q2(self.cumulant_analyzer)
+                plot_type = 'DLS - D vs q\u00b2'
+
+            send_to_scatterforge(groups, plot_type=plot_type)
+
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                "ScatterForge Export Failed",
+                f"Export error:\n{exc}",
+            )
 
     def _show_results_context_menu(self, position):
         """Show context menu for results table"""
@@ -1370,62 +1589,34 @@ class AnalysisView(QWidget):
         except Exception as e:
             print(f"Could not reset plot style: {e}")
 
-    def _update_refinement_dropdown(self):
-        """Update the refinement method dropdown with available analyses"""
-        # Clear existing items
-        self.refinement_method_combo.clear()
-
-        # Collect all available analysis methods
-        available_methods = []
-
-        # Check for Cumulant methods
-        if hasattr(self, 'cumulant_analyzer') and self.cumulant_analyzer is not None:
-            if hasattr(self.cumulant_analyzer, 'method_a_results') and self.cumulant_analyzer.method_a_results is not None:
-                available_methods.append(('Cumulant Method A', 'cumulant_a'))
-            if hasattr(self.cumulant_analyzer, 'method_b_results') and self.cumulant_analyzer.method_b_results is not None:
-                available_methods.append(('Cumulant Method B', 'cumulant_b'))
-            if hasattr(self.cumulant_analyzer, 'method_c_results') and self.cumulant_analyzer.method_c_results is not None:
-                available_methods.append(('Cumulant Method C', 'cumulant_c'))
-
-        # Check for Laplace methods
-        if hasattr(self, 'laplace_analyzer') and self.laplace_analyzer is not None:
-            if hasattr(self.laplace_analyzer, 'nnls_final_results') and self.laplace_analyzer.nnls_final_results is not None:
-                available_methods.append(('NNLS', 'nnls'))
-            if hasattr(self.laplace_analyzer, 'regularized_final_results') and self.laplace_analyzer.regularized_final_results is not None:
-                available_methods.append(('Regularized NNLS', 'regularized'))
-
-        # Populate dropdown
-        for display_name, method_type in available_methods:
-            self.refinement_method_combo.addItem(display_name, method_type)
-
-        # Enable/disable button based on availability
-        self.refinement_btn.setEnabled(len(available_methods) > 0)
-
     def _open_selected_refinement(self):
-        """Open refinement for the currently selected method in dropdown"""
+        """Open refinement for the method of the currently selected Results Overview row"""
         from PyQt5.QtWidgets import QMessageBox
+        from PyQt5.QtCore import Qt
 
-        if self.refinement_method_combo.count() == 0:
-            QMessageBox.warning(
-                self,
-                "No Analysis Results",
-                "No analysis results available for refinement.\n"
-                "Please run an analysis first."
-            )
+        selected_row = self.results_table.currentRow()
+        if selected_row < 0:
+            QMessageBox.warning(self, "No Row Selected",
+                                "Please select a row in Results Overview first.")
             return
 
-        # Get selected method
-        selected_method = self.refinement_method_combo.currentData()
+        item = self.results_table.item(selected_row, 0)
+        method_name = item.data(Qt.UserRole + 1) if item else None
+
+        method_map = {
+            'Method A': 'cumulant_a',
+            'Method B': 'cumulant_b',
+            'Method C': 'cumulant_c',
+            'NNLS':     'nnls',
+            'Regularized NNLS': 'regularized',
+        }
+        selected_method = method_map.get(method_name)
 
         if selected_method is None:
-            QMessageBox.warning(
-                self,
-                "No Selection",
-                "Please select a method to refine."
-            )
+            QMessageBox.warning(self, "Not Supported",
+                                f"Refinement is not available for '{method_name}'.")
             return
 
-        # Open refinement for selected method
         self._open_refinement_for_method(selected_method)
 
     def _open_refinement_dialog(self):
@@ -1568,7 +1759,19 @@ class AnalysisView(QWidget):
                     result_a = self.cumulant_analyzer.run_method_a(q_range=params['q_ranges']['A'])
                     if result_a is not None:
                         results_updated.append(('Method A', result_a))
-                        self._update_results_table('Method A', result_a)
+                        q_range_a = params['q_ranges']['A']
+                        q_str_a = (f"{q_range_a[0]:.3e} \u2013 {q_range_a[1]:.3e} nm\u207b\u00b2"
+                                   if q_range_a is not None else "Full range")
+                        refinement_stats_a = {
+                            'refinement_info': {
+                                'q_range_str': q_str_a,
+                                'q_range': q_range_a,
+                                'excluded_files': [],
+                                'n_total': None, 'n_included': None, 'n_excluded': 0,
+                            }
+                        }
+                        self._update_results_table('Method A', result_a,
+                                                   regression_stats=refinement_stats_a)
 
                 # Method B
                 if 'B' in available_methods and params['q_ranges']['B'] is not None:
@@ -1584,7 +1787,19 @@ class AnalysisView(QWidget):
                     )
                     if result_b is not None:
                         results_updated.append(('Method B', result_b))
-                        self._update_results_table('Method B', result_b)
+                        q_range_b = params['q_ranges']['B']
+                        q_str_b = (f"{q_range_b[0]:.3e} \u2013 {q_range_b[1]:.3e} nm\u207b\u00b2"
+                                   if q_range_b is not None else "Full range")
+                        refinement_stats_b = {
+                            'refinement_info': {
+                                'q_range_str': q_str_b,
+                                'q_range': q_range_b,
+                                'excluded_files': [],
+                                'n_total': None, 'n_included': None, 'n_excluded': 0,
+                            }
+                        }
+                        self._update_results_table('Method B', result_b,
+                                                   regression_stats=refinement_stats_b)
 
                 # Method C
                 if 'C' in available_methods:
@@ -1600,10 +1815,12 @@ class AnalysisView(QWidget):
                             print(f"  Excluded fits: {len(excluded_fits)}")
 
                         # For Method C, we need to recompute with filtered data
-                        result_c = self._recompute_method_c(q_range, excluded_fits)
-                        if result_c is not None:
+                        recompute_output = self._recompute_method_c(q_range, excluded_fits)
+                        if recompute_output is not None:
+                            result_c, refinement_stats = recompute_output
                             results_updated.append(('Method C', result_c))
-                            self._update_results_table('Method C', result_c)
+                            self._update_results_table('Method C', result_c,
+                                                       regression_stats=refinement_stats)
 
                             # Add post-refinement step to pipeline
                             from gui.main_window import JADEDLSMainWindow
@@ -1790,81 +2007,69 @@ class AnalysisView(QWidget):
 
     def _recompute_method_c(self, q_range, excluded_fits):
         """
-        Re-compute Method C with filtered data
-
-        Args:
-            q_range: Tuple (min_q, max_q) or None
-            excluded_fits: List of filenames to exclude
+        Re-compute Method C with filtered data.
 
         Returns:
-            DataFrame with updated results
+            Tuple (result_df, refinement_stats) or None on error.
         """
-        import pandas as pd
         import numpy as np
-        import statsmodels.api as sm
 
-        # Get the fit data
-        if not hasattr(self.cumulant_analyzer, 'method_c_data'):
+        analyzer = self.cumulant_analyzer
+        if not hasattr(analyzer, 'method_c_fit') or analyzer.method_c_fit is None:
             print("[ERROR] No Method C data available")
             return None
 
-        cumulant_method_C_data = self.cumulant_analyzer.method_c_data.copy()
+        # Build included_files (complement of excluded)
+        all_files = analyzer.method_c_fit['filename'].unique().tolist()
+        included_files = [f for f in all_files if f not in (excluded_fits or [])]
 
-        # Exclude fits if specified
-        if excluded_fits:
-            mask = ~cumulant_method_C_data['filename'].isin(excluded_fits)
-            cumulant_method_C_data = cumulant_method_C_data[mask].reset_index(drop=True)
-            cumulant_method_C_data.index = cumulant_method_C_data.index + 1
-            print(f"  Excluded {len(excluded_fits)} fits, {len(cumulant_method_C_data)} remaining")
-
-        # Apply q-range filter if specified
-        if q_range is not None:
-            min_q, max_q = q_range
-            mask = (cumulant_method_C_data['q^2'] >= min_q) & (cumulant_method_C_data['q^2'] <= max_q)
-            cumulant_method_C_data = cumulant_method_C_data[mask].reset_index(drop=True)
-            cumulant_method_C_data.index = cumulant_method_C_data.index + 1
-            print(f"  Applied q² range filter: {len(cumulant_method_C_data)} points remaining")
-
-        if cumulant_method_C_data.empty:
-            print("[ERROR] No data remaining after filtering")
+        if len(included_files) < 2:
+            print("[ERROR] Too few files remaining after exclusion")
             return None
 
-        # Re-compute diffusion coefficient
-        X = cumulant_method_C_data['q^2']
-        Y = cumulant_method_C_data['best_b']
-        X_with_const = sm.add_constant(X)
-        model = sm.OLS(Y, X_with_const).fit()
+        try:
+            result = analyzer.recompute_method_c_diffusion(included_files, q_range)
+        except Exception as e:
+            print(f"[ERROR] recompute_method_c_diffusion failed: {e}")
+            return None
 
-        print(f"  New D: {model.params.iloc[1]:.4e} s⁻¹·nm²")
-        print(f"  New R²: {model.rsquared:.6f}")
+        # --- Add refinement metadata columns ---
+        n_total    = len(all_files)
+        n_included = len(included_files)
+        n_excluded = n_total - n_included
+        result['N files (total)']    = [n_total]
+        result['N files (included)'] = [n_included]
+        result['N files (excluded)'] = [n_excluded]
+        q_str = (f"{q_range[0]:.3e} – {q_range[1]:.3e} nm⁻²"
+                 if q_range is not None else "Full range")
+        result['q-range applied'] = [q_str]
 
-        # Calculate diffusion coefficient
-        C_diff = pd.DataFrame()
-        C_diff['D [m^2/s]'] = [model.params.iloc[1] * 10**(-18)]
-        C_diff['std err D [m^2/s]'] = [model.bse.iloc[1] * 10**(-18)]
+        # --- Add original results for comparison ---
+        orig = getattr(analyzer, 'method_c_results', None)
+        if orig is not None and not orig.empty:
+            result['Original Rh [nm]']  = [orig['Rh [nm]'].iloc[0]
+                                            if 'Rh [nm]' in orig.columns else np.nan]
+            result['Original D [m²/s]'] = [orig['D [m²/s]'].iloc[0]
+                                            if 'D [m²/s]' in orig.columns else np.nan]
+            result['Original R²']       = [orig['R_squared'].iloc[0]
+                                            if 'R_squared' in orig.columns else np.nan]
 
-        # Calculate polydispersity
-        cumulant_method_C_data['polydispersity'] = (
-            cumulant_method_C_data['best_c'] / (cumulant_method_C_data['best_b'])**2
-        )
-        polydispersity_method_C = cumulant_method_C_data['polydispersity'].mean()
+        # --- Build regression_stats dict for HTML detail ---
+        refinement_stats = dict(getattr(analyzer, 'method_c_regression_stats', {}) or {})
+        refinement_stats['refinement_info'] = {
+            'n_total':        n_total,
+            'n_included':     n_included,
+            'n_excluded':     n_excluded,
+            'excluded_files': excluded_fits or [],
+            'q_range':        q_range,
+            'q_range_str':    q_str,
+            'original_rh':    float(orig['Rh [nm]'].iloc[0])
+                              if orig is not None and 'Rh [nm]' in orig.columns else None,
+            'original_d':     float(orig['D [m²/s]'].iloc[0])
+                              if orig is not None and 'D [m²/s]' in orig.columns else None,
+            'original_r2':    float(orig['R_squared'].iloc[0])
+                              if orig is not None and 'R_squared' in orig.columns else None,
+        }
 
-        # Calculate results
-        c_value = self.cumulant_analyzer.c_value
-        delta_c = self.cumulant_analyzer.delta_c
-
-        method_c_results = pd.DataFrame()
-        method_c_results['Rh [nm]'] = [c_value * (1 / C_diff['D [m^2/s]'][0]) * 10**9]
-
-        fractional_error_Rh_C = np.sqrt(
-            (delta_c / c_value)**2 +
-            (C_diff['std err D [m^2/s]'][0] / C_diff['D [m^2/s]'][0])**2
-        )
-        method_c_results['Rh error [nm]'] = [fractional_error_Rh_C * method_c_results['Rh [nm]'][0]]
-        method_c_results['R_squared'] = [model.rsquared]
-        method_c_results['Fit'] = ['Rh from iterative non-linear cumulant fit (refined)']
-        method_c_results['Residuals'] = ['N/A']
-        method_c_results['PDI'] = [polydispersity_method_C]
-
-        return method_c_results
+        return result, refinement_stats
 

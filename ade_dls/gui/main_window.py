@@ -22,7 +22,7 @@ from .core.pipeline import TransparentPipeline
 from .core.status_manager import StatusManager, ProgressDialog
 from .core.data_loader import DataLoader
 from .dialogs.filtering_dialogs import CountrateFilterDialog, CorrelationFilterDialog
-from .dialogs.cumulant_dialog import CumulantAnalysisDialog
+from .dialogs.cumulant_dialog import CumulantADialog, CumulantBDialog, CumulantCDialog
 from .dialogs.nnls_dialog import NNLSDialog
 from .dialogs.nnls_results_dialog import NNLSResultsDialog
 from .dialogs.regularized_dialog import RegularizedDialog
@@ -176,10 +176,22 @@ class JADEDLSMainWindow(QMainWindow):
 
         analysis_menu.addSeparator()
 
-        cumulant_action = QAction('&Cumulant Analysis...', self)
-        cumulant_action.setStatusTip('Run cumulant fitting methods')
-        cumulant_action.triggered.connect(self.run_cumulant_analysis)
-        analysis_menu.addAction(cumulant_action)
+        cumulant_menu = analysis_menu.addMenu('&Cumulant Analysis')
+
+        cumulant_a_action = QAction('Method &A – ALV Cumulant Data', self)
+        cumulant_a_action.setStatusTip('Extract cumulant fit results from ALV software output')
+        cumulant_a_action.triggered.connect(self.run_cumulant_a)
+        cumulant_menu.addAction(cumulant_a_action)
+
+        cumulant_b_action = QAction('Method &B – Linear Fit', self)
+        cumulant_b_action.setStatusTip('Linear cumulant fit of ln(g²-1) vs time')
+        cumulant_b_action.triggered.connect(self.run_cumulant_b)
+        cumulant_menu.addAction(cumulant_b_action)
+
+        cumulant_c_action = QAction('Method &C – Iterative Non-Linear Fit', self)
+        cumulant_c_action.setStatusTip('Iterative non-linear least-squares cumulant fit')
+        cumulant_c_action.triggered.connect(self.run_cumulant_c)
+        cumulant_menu.addAction(cumulant_c_action)
 
         nnls_action = QAction('&NNLS Analysis...', self)
         nnls_action.setStatusTip('Run NNLS inverse Laplace transform')
@@ -346,147 +358,157 @@ class JADEDLSMainWindow(QMainWindow):
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Export failed: {str(e)}")
 
-    def run_cumulant_analysis(self):
-        """Run cumulant analysis"""
-        # Use filtered data from pipeline if available, otherwise use loaded_data
-        # This ensures that filtering is respected!
+    # ------------------------------------------------------------------
+    # Cumulant analysis – shared helper
+    # ------------------------------------------------------------------
+
+    def _prepare_cumulant_analyzer(self):
+        """
+        Validate that data is loaded and return a ready CumulantAnalyzer.
+
+        Returns CumulantAnalyzer on success, or None when data is missing
+        (a QMessageBox is already shown in that case).
+        """
         if hasattr(self.pipeline, 'data') and self.pipeline.data and 'correlations' in self.pipeline.data:
             working_data = self.pipeline.data
-            data_source = "filtered"
-            print(f"[Cumulant] Using filtered data from pipeline ({len(working_data.get('correlations', {}))} datasets)")
+            print(f"[Cumulant] Using filtered pipeline data "
+                  f"({len(working_data.get('correlations', {}))} datasets)")
         elif self.loaded_data and 'correlations' in self.loaded_data:
             working_data = self.loaded_data
-            data_source = "original"
-            print(f"[Cumulant] Using original loaded data ({len(working_data.get('correlations', {}))} datasets)")
+            print(f"[Cumulant] Using original loaded data "
+                  f"({len(working_data.get('correlations', {}))} datasets)")
         else:
             QMessageBox.warning(
                 self,
                 "No Data",
                 "Please load and preprocess data first (File > Load Data)"
             )
-            return
+            return None
 
-        # Check if data folder is available
         if 'data_folder' not in working_data:
             QMessageBox.warning(
                 self,
                 "Missing Information",
                 "Data folder information is missing. Please reload the data."
             )
+            return None
+
+        analyzer = CumulantAnalyzer(working_data, working_data['data_folder'])
+
+        if getattr(self, '_pending_noise_params', None):
+            analyzer.noise_params = self._pending_noise_params
+
+        self.status_manager.update("Preparing basedata...")
+        analyzer.prepare_basedata()
+
+        return analyzer
+
+    # ------------------------------------------------------------------
+    # Method A
+    # ------------------------------------------------------------------
+
+    def run_cumulant_a(self):
+        """Run Cumulant Method A (ALV Software Cumulant Data)."""
+        dialog = CumulantADialog(self)
+        if dialog.exec_() != dialog.Accepted:
             return
 
-        # Inform user about data source
-        if data_source == "filtered":
-            num_datasets = len(working_data.get('correlations', {}))
-            # Don't show dialog here - will be distracting before parameter dialog
-            print(f"[Cumulant] Will analyze {num_datasets} filtered datasets")
+        config = dialog.get_configuration()
+        self.status_manager.start_operation("Running Cumulant Method A...")
 
-        # Show configuration dialog
-        dialog = CumulantAnalysisDialog(self)
-        if dialog.exec_() == dialog.Accepted:
-            config = dialog.get_configuration()
+        try:
+            analyzer = self._prepare_cumulant_analyzer()
+            if analyzer is None:
+                self.status_manager.error("Cumulant Method A: no data available")
+                return
 
-            # Start analysis
-            self.status_manager.start_operation("Running cumulant analysis...")
+            result = analyzer.run_method_a(q_range=config['q_range'])
 
-            try:
-                # Create analyzer
-                analyzer = CumulantAnalyzer(
-                    working_data,
-                    working_data['data_folder']
-                )
+            self.status_manager.complete_operation("Cumulant Method A completed")
+            self._display_cumulant_results([('Method A', result)], analyzer)
+            self._add_cumulant_step_to_pipeline('A', {'q_range': config['q_range'],
+                                                       'methods': ['A'],
+                                                       'method_a_params': {},
+                                                       'method_b_params': {},
+                                                       'method_c_params': {}})
+            self.workflow_panel.mark_step_complete('cumulant_a')
 
-                # Pass pending noise correction parameters (set by CorrelationFilterDialog)
-                if getattr(self, '_pending_noise_params', None):
-                    analyzer.noise_params = self._pending_noise_params
+        except Exception as e:
+            self.status_manager.error(f"Cumulant Method A failed: {e}")
+            QMessageBox.critical(self, "Method A Error",
+                                 f"Cumulant Method A failed:\n\n{e}")
 
-                # Prepare basedata
-                self.status_manager.update("Preparing basedata...")
-                analyzer.prepare_basedata()
+    # ------------------------------------------------------------------
+    # Method B
+    # ------------------------------------------------------------------
 
-                results = []
+    def run_cumulant_b(self):
+        """Run Cumulant Method B (Linear Fit)."""
+        dialog = CumulantBDialog(self)
+        if dialog.exec_() != dialog.Accepted:
+            return
 
-                # Get q-range if specified
-                q_range = config.get('q_range', None)
+        config = dialog.get_configuration()
+        self.status_manager.start_operation("Running Cumulant Method B...")
 
-                # Run selected methods
-                if 'A' in config['methods']:
-                    self.status_manager.update("Running Cumulant Method A...")
-                    try:
-                        result_a = analyzer.run_method_a(q_range=q_range)
-                        results.append(('Method A', result_a))
+        try:
+            analyzer = self._prepare_cumulant_analyzer()
+            if analyzer is None:
+                self.status_manager.error("Cumulant Method B: no data available")
+                return
 
-                        # Add to pipeline
-                        self._add_cumulant_step_to_pipeline('A', config)
+            result = analyzer.run_method_b(config['fit_limits'],
+                                           q_range=config['q_range'])
 
-                    except Exception as e:
-                        QMessageBox.warning(
-                            self,
-                            "Method A Failed",
-                            f"Cumulant Method A failed:\n{str(e)}\n\nContinuing with other methods..."
-                        )
+            self.status_manager.complete_operation("Cumulant Method B completed")
+            self._display_cumulant_results([('Method B', result)], analyzer)
+            self._add_cumulant_step_to_pipeline('B', {'q_range': config['q_range'],
+                                                       'methods': ['B'],
+                                                       'method_a_params': {},
+                                                       'method_b_params': {'fit_limits': config['fit_limits']},
+                                                       'method_c_params': {}})
+            self.workflow_panel.mark_step_complete('cumulant_b')
 
-                if 'B' in config['methods']:
-                    self.status_manager.update("Running Cumulant Method B...")
-                    try:
-                        result_b = analyzer.run_method_b(
-                            config['method_b_params']['fit_limits'],
-                            q_range=q_range
-                        )
-                        results.append(('Method B', result_b))
+        except Exception as e:
+            self.status_manager.error(f"Cumulant Method B failed: {e}")
+            QMessageBox.critical(self, "Method B Error",
+                                 f"Cumulant Method B failed:\n\n{e}")
 
-                        # Add to pipeline
-                        self._add_cumulant_step_to_pipeline('B', config)
+    # ------------------------------------------------------------------
+    # Method C
+    # ------------------------------------------------------------------
 
-                    except Exception as e:
-                        QMessageBox.warning(
-                            self,
-                            "Method B Failed",
-                            f"Cumulant Method B failed:\n{str(e)}\n\nContinuing with other methods..."
-                        )
+    def run_cumulant_c(self):
+        """Run Cumulant Method C (Iterative Non-Linear Fit)."""
+        dialog = CumulantCDialog(self)
+        if dialog.exec_() != dialog.Accepted:
+            return
 
-                if 'C' in config['methods']:
-                    self.status_manager.update("Running Cumulant Method C...")
-                    try:
-                        result_c = analyzer.run_method_c(config['method_c_params'], q_range=q_range)
-                        results.append(('Method C', result_c))
+        config = dialog.get_configuration()
+        self.status_manager.start_operation("Running Cumulant Method C...")
 
-                        # Add to pipeline
-                        self._add_cumulant_step_to_pipeline('C', config)
+        try:
+            analyzer = self._prepare_cumulant_analyzer()
+            if analyzer is None:
+                self.status_manager.error("Cumulant Method C: no data available")
+                return
 
-                    except Exception as e:
-                        QMessageBox.warning(
-                            self,
-                            "Method C Failed",
-                            f"Cumulant Method C failed:\n{str(e)}"
-                        )
+            result = analyzer.run_method_c(config['method_c_params'],
+                                           q_range=config['q_range'])
 
-                # Show results
-                if results:
-                    self.status_manager.complete_operation(
-                        f"Cumulant analysis completed ({len(results)} methods)"
-                    )
+            self.status_manager.complete_operation("Cumulant Method C completed")
+            self._display_cumulant_results([('Method C', result)], analyzer)
+            self._add_cumulant_step_to_pipeline('C', {'q_range': config['q_range'],
+                                                       'methods': ['C'],
+                                                       'method_a_params': {},
+                                                       'method_b_params': {},
+                                                       'method_c_params': config['method_c_params']})
+            self.workflow_panel.mark_step_complete('cumulant_c')
 
-                    # Display results
-                    self._display_cumulant_results(results, analyzer)
-
-                    # Mark workflow step complete
-                    self.workflow_panel.mark_step_complete('cumulant')
-
-                else:
-                    QMessageBox.warning(
-                        self,
-                        "Analysis Failed",
-                        "All cumulant methods failed. Please check your data and parameters."
-                    )
-
-            except Exception as e:
-                self.status_manager.error(f"Cumulant analysis failed: {str(e)}")
-                QMessageBox.critical(
-                    self,
-                    "Analysis Error",
-                    f"Cumulant analysis failed:\n\n{str(e)}"
-                )
+        except Exception as e:
+            self.status_manager.error(f"Cumulant Method C failed: {e}")
+            QMessageBox.critical(self, "Method C Error",
+                                 f"Cumulant Method C failed:\n\n{e}")
 
     def run_nnls_analysis(self):
         """Run NNLS analysis"""
@@ -550,9 +572,12 @@ class JADEDLSMainWindow(QMainWindow):
             self.load_data()
         elif analysis_type == 'preprocess':
             self.run_preprocessing()
-        elif analysis_type in ['cumulant_a', 'cumulant_b', 'cumulant_c']:
-            # All cumulant methods go through the same dialog
-            self.run_cumulant_analysis()
+        elif analysis_type == 'cumulant_a':
+            self.run_cumulant_a()
+        elif analysis_type == 'cumulant_b':
+            self.run_cumulant_b()
+        elif analysis_type == 'cumulant_c':
+            self.run_cumulant_c()
         elif analysis_type == 'nnls':
             self.run_nnls_analysis()
         elif analysis_type == 'regularized':
@@ -1373,8 +1398,8 @@ print(method_c_results)
         for method_name, result_df in results:
             print(f"[MAIN WINDOW]   - {method_name}: {result_df.shape[0]} rows")
 
-        # Clear previous results
-        self.analysis_view.clear_results()
+        # Set analyzer reference for ScatterForge bridge
+        self.analysis_view.set_cumulant_analyzer(analyzer)
 
         # Combine all results
         combined_results = analyzer.get_combined_results()
@@ -1393,11 +1418,14 @@ print(method_c_results)
             fit_quality = None
 
             if 'A' in method_name:
-                # Method A has a summary plot (Gamma vs q²)
-                plots_dict = None
+                # Method A: 3 individual order plots + combined summary plot
+                plots_dict = {}
+                if hasattr(analyzer, 'method_a_order_plots'):
+                    plots_dict.update(analyzer.method_a_order_plots)
                 if hasattr(analyzer, 'method_a_summary_plot'):
-                    # Wrap the summary plot as a single-item dict
-                    plots_dict = {'Method A Summary': (analyzer.method_a_summary_plot, {})}
+                    plots_dict['Method A Summary'] = (analyzer.method_a_summary_plot, {})
+                if not plots_dict:
+                    plots_dict = None
 
                 # Get regression statistics
                 regression_stats = None
@@ -1413,14 +1441,15 @@ print(method_c_results)
             elif 'B' in method_name:
                 plots_dict = {}
                 if hasattr(analyzer, 'method_b_plots'):
-                    plots_dict.update(analyzer.method_b_plots)
+                    for k, v in analyzer.method_b_plots.items():
+                        plots_dict[f"B: {k}"] = v
 
                 # Add summary plot (Gamma vs q²) if available
                 if hasattr(analyzer, 'method_b_summary_plot'):
                     plots_dict['Method B Summary'] = (analyzer.method_b_summary_plot, {})
 
                 if hasattr(analyzer, 'method_b_fit_quality'):
-                    fit_quality = analyzer.method_b_fit_quality
+                    fit_quality = {f"B: {k}": v for k, v in analyzer.method_b_fit_quality.items()}
 
                 # Get regression statistics (as dict, not model object)
                 regression_stats = None
@@ -1436,14 +1465,15 @@ print(method_c_results)
             elif 'C' in method_name:
                 plots_dict = {}
                 if hasattr(analyzer, 'method_c_plots'):
-                    plots_dict.update(analyzer.method_c_plots)
+                    for k, v in analyzer.method_c_plots.items():
+                        plots_dict[f"C: {k}"] = v
 
                 # Add summary plot (Gamma vs q²) if available
                 if hasattr(analyzer, 'method_c_summary_plot'):
                     plots_dict['Method C Summary'] = (analyzer.method_c_summary_plot, {})
 
                 if hasattr(analyzer, 'method_c_fit_quality'):
-                    fit_quality = analyzer.method_c_fit_quality
+                    fit_quality = {f"C: {k}": v for k, v in analyzer.method_c_fit_quality.items()}
 
                 # Get regression statistics (as dict, not model object)
                 regression_stats = None

@@ -261,7 +261,7 @@ print(f"No files excluded from {filter_type} filtering - {{len({filter_type}_dat
         """
         import glob
         import os
-        from preprocessing import extract_data, extract_correlation
+        from ade_dls.core.preprocessing import extract_data, extract_correlation
 
         # Find all .asc files
         datafiles = glob.glob(os.path.join(data_folder, "*.asc"))
