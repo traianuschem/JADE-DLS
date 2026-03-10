@@ -700,3 +700,99 @@ def create_summary_plot(data_df, q_squared_col, gamma_cols, method_names=None, g
     fig.tight_layout()
 
     return fig
+
+
+def create_clustering_overview_figure(clustered_df, cluster_info, q_squared_col='q^2'):
+    """
+    Create a 2-panel clustering overview figure:
+      Left:  D = Γ/q² vs q² scatter coloured by population
+      Right: log₁₀(D) histogram coloured by population
+
+    Returns a matplotlib.figure.Figure (safe for Qt embedding — no plt.show()).
+    """
+    from matplotlib.figure import Figure
+
+    fig = Figure(figsize=(10, 4))
+    ax1 = fig.add_subplot(1, 2, 1)
+    ax2 = fig.add_subplot(1, 2, 2)
+
+    COLORS = plt.cm.tab10.colors
+    reliable_pops = cluster_info.get('reliable_populations', [])
+    q2 = clustered_df[q_squared_col].values
+
+    for i, pop_num in enumerate(reliable_pops):
+        col = f'gamma_pop{pop_num}'
+        if col not in clustered_df.columns:
+            continue
+        gamma = clustered_df[col].values
+        mask  = ~np.isnan(gamma) & (q2 > 0)
+        if not mask.any():
+            continue
+        D_pm2  = (gamma[mask] / q2[mask]) * 1e12   # 10⁻¹² m²/s
+        log_D  = np.log10(gamma[mask] / q2[mask])
+        color  = COLORS[i % len(COLORS)]
+        label  = f'Population {pop_num}'
+        ax1.scatter(q2[mask], D_pm2, color=color, label=label, s=30, alpha=0.75)
+        ax2.hist(log_D, bins=15, color=color, alpha=0.6, label=label)
+
+    ax1.set_xlabel('q² [nm⁻²]')
+    ax1.set_ylabel('D [10⁻¹² m²/s]')
+    ax1.set_title('D vs q² by Population')
+    ax1.legend(fontsize=8)
+    ax1.grid(True, alpha=0.3)
+
+    ax2.set_xlabel('log₁₀(D [m²/s])')
+    ax2.set_ylabel('Count')
+    ax2.set_title('D Distribution by Population')
+    ax2.legend(fontsize=8)
+
+    fig.tight_layout()
+    return fig
+
+
+def create_population_ols_figure(clustered_df, cluster_info, q_squared_col='q^2'):
+    """
+    Create a Γ vs q² figure with one scatter+OLS line per reliable population.
+
+    Each population's NaN rows are excluded individually so populations with
+    sparse coverage don't affect each other's regression.
+
+    Returns a matplotlib.figure.Figure (safe for Qt embedding — no plt.show()).
+    """
+    import statsmodels.api as sm
+    from matplotlib.figure import Figure
+
+    fig = Figure(figsize=(10, 5))
+    ax  = fig.add_subplot(111)
+
+    COLORS = plt.cm.tab10.colors
+    reliable_pops = cluster_info.get('reliable_populations', [])
+    q2 = clustered_df[q_squared_col].values
+
+    for i, pop_num in enumerate(reliable_pops):
+        col = f'gamma_pop{pop_num}'
+        if col not in clustered_df.columns:
+            continue
+        gamma = clustered_df[col].values
+        mask  = ~np.isnan(gamma) & (q2 > 0)
+        if mask.sum() < 2:
+            continue
+        color = COLORS[i % len(COLORS)]
+        ax.scatter(q2[mask], gamma[mask], color=color,
+                   label=f'Pop {pop_num}', s=30, alpha=0.75)
+        # OLS line
+        X = sm.add_constant(q2[mask])
+        model = sm.OLS(gamma[mask], X).fit()
+        q2_line    = np.linspace(q2[mask].min(), q2[mask].max(), 100)
+        gamma_line = model.params[0] + model.params[1] * q2_line
+        ax.plot(q2_line, gamma_line, color=color, linewidth=1.5,
+                label=f'Pop {pop_num} OLS (R²={model.rsquared:.3f})')
+
+    ax.set_xlabel('q² [nm⁻²]')
+    ax.set_ylabel('Γ [1/s]')
+    ax.set_title('Γ vs q² per Population')
+    ax.legend(fontsize=8)
+    ax.grid(True, alpha=0.3)
+
+    fig.tight_layout()
+    return fig

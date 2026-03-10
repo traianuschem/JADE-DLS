@@ -22,7 +22,7 @@ from .core.pipeline import TransparentPipeline
 from .core.status_manager import StatusManager, ProgressDialog
 from .core.data_loader import DataLoader
 from .dialogs.filtering_dialogs import CountrateFilterDialog, CorrelationFilterDialog
-from .dialogs.cumulant_dialog import CumulantADialog, CumulantBDialog, CumulantCDialog
+from .dialogs.cumulant_dialog import CumulantADialog, CumulantBDialog, CumulantCDialog, CumulantDDialog
 from .dialogs.nnls_dialog import NNLSDialog
 from .dialogs.nnls_results_dialog import NNLSResultsDialog
 from .dialogs.regularized_dialog import RegularizedDialog
@@ -510,6 +510,42 @@ class JADEDLSMainWindow(QMainWindow):
             QMessageBox.critical(self, "Method C Error",
                                  f"Cumulant Method C failed:\n\n{e}")
 
+    # ------------------------------------------------------------------
+    # Method D
+    # ------------------------------------------------------------------
+
+    def run_cumulant_d(self):
+        """Run Cumulant Method D (Multi-Exponential Decomposition)."""
+        dialog = CumulantDDialog(self)
+        if dialog.exec_() != dialog.Accepted:
+            return
+
+        config = dialog.get_configuration()
+        self.status_manager.start_operation("Running Cumulant Method D...")
+
+        try:
+            analyzer = self._prepare_cumulant_analyzer()
+            if analyzer is None:
+                self.status_manager.error("Cumulant Method D: no data available")
+                return
+
+            result = analyzer.run_method_d(config['params'],
+                                           q_range=config['q_range'])
+
+            self.status_manager.complete_operation("Cumulant Method D completed")
+            self._display_cumulant_results([('Method D', result)], analyzer)
+            self._add_cumulant_step_to_pipeline('D', {
+                'q_range': config['q_range'],
+                'methods': ['D'],
+                'method_d_params': config['params'],
+            })
+            self.workflow_panel.mark_step_complete('cumulant_d')
+
+        except Exception as e:
+            self.status_manager.error(f"Cumulant Method D failed: {e}")
+            QMessageBox.critical(self, "Method D Error",
+                                 f"Cumulant Method D failed:\n\n{e}")
+
     def run_nnls_analysis(self):
         """Run NNLS analysis"""
         self.workflow_panel.activate_step('nnls')
@@ -583,9 +619,7 @@ class JADEDLSMainWindow(QMainWindow):
         elif analysis_type == 'regularized':
             self.run_regularized_analysis()
         elif analysis_type == 'cumulant_d':
-            from PyQt5.QtWidgets import QMessageBox
-            QMessageBox.information(self, "Method D",
-                                    "Method D dialog is not yet implemented.")
+            self.run_cumulant_d()
         elif analysis_type == 'compare':
             self.compare_results()
         elif analysis_type == 'all':
@@ -1373,6 +1407,57 @@ print("\\nCumulant Method C Results:")
 print(method_c_results)
 """
 
+        elif method == 'D':
+            d_params = config.get('method_d_params', {})
+            code = f"""
+# Cumulant Method D: Multi-Exponential Decomposition
+from ade_dls.analysis.cumulants_D import fit_correlations_method_D
+from ade_dls.core.preprocessing import process_correlation_data
+import statsmodels.api as sm
+
+# Process correlations
+columns_to_drop = ['time [ms]', 'correlation 1', 'correlation 2', 'correlation 3', 'correlation 4']
+processed_correlations = process_correlation_data(correlations_data, columns_to_drop)
+
+# Run Method D fitting (plot=False for non-interactive use)
+method_d_fit = fit_correlations_method_D(
+    processed_correlations,
+    x_col='t [s]',
+    y_col='g(2)-1',
+    n_max={d_params.get('n_max', 25)},
+    n_start={d_params.get('n_start', 1)},
+    gap_threshold={d_params.get('gap_threshold', 1.5)},
+    plot=False
+)
+
+# Merge with basedata
+method_d_data = pd.merge(df_basedata, method_d_fit, on='filename', how='outer')
+method_d_data = method_d_data.reset_index(drop=True)
+method_d_data.index = method_d_data.index + 1
+
+# Regression: gamma_mean vs q² → diffusion coefficient
+X = method_d_data['q^2']
+Y = method_d_data['gamma_mean']
+X_with_const = sm.add_constant(X)
+model = sm.OLS(Y, X_with_const).fit()
+
+D_val = model.params.iloc[1] * 1e-18   # m²/s
+D_err = model.bse.iloc[1] * 1e-18
+Rh = c * (1 / D_val) * 1e9
+mean_pdi = method_d_data['pdi'].mean()
+
+method_d_results = pd.DataFrame({{
+    'Rh [nm]': [Rh],
+    'D [m²/s]': [D_val],
+    'R_squared': [model.rsquared],
+    'Fit': ['Rh from multi-exponential fit (Method D)'],
+    'PDI': [mean_pdi],
+}})
+
+print("\\nCumulant Method D Results:")
+print(method_d_results)
+"""
+
         # Add step to pipeline
         step = AnalysisStep(
             name=f"Cumulant Analysis Method {method}",
@@ -1484,6 +1569,32 @@ print(method_c_results)
                 self.analysis_view.display_cumulant_results(
                     method_name, result_df, plots_dict, fit_quality, switch_tab=False,
                     regression_stats=regression_stats, analyzer=analyzer
+                )
+
+            elif 'D' in method_name:
+                plots_dict = {}
+                if hasattr(analyzer, 'method_d_plots'):
+                    plots_dict.update(analyzer.method_d_plots)
+
+                if hasattr(analyzer, 'method_d_summary_plot'):
+                    plots_dict['Method D Summary'] = (analyzer.method_d_summary_plot, {})
+
+                if hasattr(analyzer, 'method_d_clustering_plot'):
+                    plots_dict['Method D: Clustering Overview'] = (analyzer.method_d_clustering_plot, {})
+
+                if hasattr(analyzer, 'method_d_population_plot'):
+                    plots_dict['Method D: Population OLS'] = (analyzer.method_d_population_plot, {})
+
+                if hasattr(analyzer, 'method_d_fit_quality'):
+                    fit_quality = dict(analyzer.method_d_fit_quality)
+
+                regression_stats = None
+                if hasattr(analyzer, 'method_d_regression_stats'):
+                    regression_stats = analyzer.method_d_regression_stats
+
+                self.analysis_view.display_cumulant_results(
+                    method_name, result_df, plots_dict, fit_quality, switch_tab=False,
+                    regression_stats=regression_stats
                 )
 
         # After all methods are loaded, switch to Results tab to show the summary

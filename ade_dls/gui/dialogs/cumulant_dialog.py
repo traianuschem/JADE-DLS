@@ -5,7 +5,7 @@ One focused dialog per method (A, B, C)
 
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox,
                              QLabel, QPushButton, QComboBox, QDoubleSpinBox,
-                             QFormLayout, QWidget, QCheckBox, QMessageBox)
+                             QSpinBox, QFormLayout, QWidget, QCheckBox, QMessageBox)
 from PyQt5.QtCore import Qt
 
 
@@ -450,5 +450,193 @@ class CumulantCDialog(QDialog):
     def get_configuration(self):
         return {
             'method_c_params': self.params,
+            'q_range': self.q_range,
+        }
+
+
+# ---------------------------------------------------------------------------
+# Method D
+# ---------------------------------------------------------------------------
+
+class CumulantDDialog(QDialog):
+    """
+    Parameter dialog for Cumulant Method D (Multi-Exponential Decomposition).
+
+    Iteratively fits g²(τ) as a sum of N equally-weighted Dirac-delta
+    exponential decays, selecting the optimal number of modes via residual
+    convergence checks.  Fitted decay rates are clustered into distinct
+    populations (monomodal / bimodal / multimodal samples).
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Method D – Multi-Exponential Decomposition")
+        self.setMinimumWidth(520)
+
+        self.params = None   # filled in accept()
+        self.q_range = None
+        self._init_ui()
+
+    def _init_ui(self):
+        layout = QVBoxLayout()
+
+        info = QLabel(
+            "<b>Method D: Multi-Exponential Decomposition</b><br><br>"
+            "Fits g²(τ) as a sum of N equally-weighted exponential decays "
+            "(Dirac-delta relaxation modes). The number of modes N is increased "
+            "iteratively until convergence. Fitted decay rates Γᵢ are then "
+            "clustered into distinct populations, and distribution moments "
+            "(PDI, skewness, kurtosis) are calculated."
+        )
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        # --- Fitting parameters ---
+        fit_group = QGroupBox("Fitting Parameters")
+        fit_form = QFormLayout()
+
+        self.d_n_max = QSpinBox()
+        self.d_n_max.setRange(2, 100)
+        self.d_n_max.setValue(25)
+        self.d_n_max.setToolTip("Maximum number of exponential modes to try.")
+        fit_form.addRow("Max modes (n_max):", self.d_n_max)
+
+        self.d_n_start = QSpinBox()
+        self.d_n_start.setRange(1, 20)
+        self.d_n_start.setValue(1)
+        self.d_n_start.setToolTip("Starting number of modes.")
+        fit_form.addRow("Start modes (n_start):", self.d_n_start)
+
+        self.d_gap_threshold = QDoubleSpinBox()
+        self.d_gap_threshold.setRange(1.0, 10.0)
+        self.d_gap_threshold.setValue(1.5)
+        self.d_gap_threshold.setDecimals(2)
+        self.d_gap_threshold.setSingleStep(0.1)
+        self.d_gap_threshold.setToolTip(
+            "Ratio between consecutive decay rates that defines a cluster boundary.\n"
+            "Larger values → fewer populations detected."
+        )
+        fit_form.addRow("Clustering gap threshold:", self.d_gap_threshold)
+
+        hint = QLabel(
+            "<i>Default values work well for most samples.<br>"
+            "Increase n_max for highly polydisperse or multimodal samples.</i>"
+        )
+        hint.setWordWrap(True)
+        fit_form.addRow("", hint)
+
+        fit_group.setLayout(fit_form)
+        layout.addWidget(fit_group)
+
+        # --- Cross-File Clustering ---
+        cluster_group = QGroupBox("Cross-File Clustering")
+        cluster_form = QFormLayout()
+
+        self.d_cluster_method = QComboBox()
+        self.d_cluster_method.addItems([
+            "Hierarchical – Ward linkage",
+            "Simple – gap-based",
+        ])
+        self.d_cluster_method.setCurrentIndex(0)
+        cluster_form.addRow("Clustering method:", self.d_cluster_method)
+
+        self.d_n_clusters = QSpinBox()
+        self.d_n_clusters.setRange(0, 20)
+        self.d_n_clusters.setValue(0)
+        self.d_n_clusters.setSpecialValueText("Auto-detect")
+        self.d_n_clusters.setToolTip("0 = auto-detect number of populations")
+        cluster_form.addRow("Number of populations:", self.d_n_clusters)
+
+        self.d_distance_threshold = QDoubleSpinBox()
+        self.d_distance_threshold.setRange(0.01, 2.0)
+        self.d_distance_threshold.setValue(0.3)
+        self.d_distance_threshold.setDecimals(2)
+        self.d_distance_threshold.setSingleStep(0.05)
+        self.d_distance_threshold.setToolTip(
+            "Distance threshold in log-space. Lower values → more populations detected."
+        )
+        cluster_form.addRow("Distance threshold (log-space):", self.d_distance_threshold)
+
+        self.d_min_abundance = QDoubleSpinBox()
+        self.d_min_abundance.setRange(0.0, 1.0)
+        self.d_min_abundance.setValue(0.3)
+        self.d_min_abundance.setDecimals(2)
+        self.d_min_abundance.setSingleStep(0.05)
+        self.d_min_abundance.setToolTip(
+            "Minimum fraction of files in which a population must appear to be considered reliable."
+        )
+        cluster_form.addRow("Min. population abundance:", self.d_min_abundance)
+
+        self.d_silhouette = QCheckBox("Enable silhouette-based cluster refinement")
+        self.d_silhouette.setChecked(False)
+        self.d_silhouette.setToolTip(
+            "Optimize cluster assignment using silhouette scores (slower, more accurate)."
+        )
+        cluster_form.addRow("", self.d_silhouette)
+
+        cluster_hint = QLabel(
+            "<i>Clustering groups per-file decay rates Γᵢ across all angles into consistent "
+            "populations (e.g. gamma_pop1 = small particles, gamma_pop2 = aggregates).<br>"
+            "Each population yields its own Rh via a separate Γ vs q² regression.</i>"
+        )
+        cluster_hint.setWordWrap(True)
+        cluster_form.addRow("", cluster_hint)
+
+        cluster_group.setLayout(cluster_form)
+        layout.addWidget(cluster_group)
+
+        layout.addWidget(_build_q_range_group(self))
+        layout.addStretch()
+        layout.addLayout(self._button_row())
+        self.setLayout(layout)
+
+    def _button_row(self):
+        row = QHBoxLayout()
+        row.addStretch()
+        run_btn = QPushButton("Run Method D")
+        run_btn.setDefault(True)
+        run_btn.clicked.connect(self.accept)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        row.addWidget(run_btn)
+        row.addWidget(cancel_btn)
+        return row
+
+    def accept(self):
+        n_start = self.d_n_start.value()
+        n_max = self.d_n_max.value()
+        if n_start >= n_max:
+            QMessageBox.warning(
+                self,
+                "Invalid Parameters",
+                f"Start modes ({n_start}) must be less than max modes ({n_max})."
+            )
+            return
+
+        q = _collect_q_range(self)
+        if q is False:
+            return
+
+        n_clusters_val = self.d_n_clusters.value()
+        method_map = {0: 'hierarchical', 1: 'simple'}
+        strategy = 'silhouette_refined' if self.d_silhouette.isChecked() else 'simple'
+
+        self.params = {
+            'n_max': n_max,
+            'n_start': n_start,
+            'gap_threshold': self.d_gap_threshold.value(),
+            # Clustering params
+            'method': method_map[self.d_cluster_method.currentIndex()],
+            'n_clusters': 'auto' if n_clusters_val == 0 else n_clusters_val,
+            'distance_threshold': self.d_distance_threshold.value(),
+            'min_abundance': self.d_min_abundance.value(),
+            'clustering_strategy': strategy,
+        }
+        self.q_range = q
+        super().accept()
+
+    def get_configuration(self):
+        return {
+            'params': self.params,
             'q_range': self.q_range,
         }

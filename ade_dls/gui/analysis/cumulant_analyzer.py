@@ -61,6 +61,13 @@ class CumulantAnalyzer:
         self.method_a_results = None
         self.method_b_results = None
         self.method_c_results = None
+        self.method_d_results = None
+
+        # Per-order storage for Method C (enables per-order post-refinement)
+        self.method_c_fits_by_order = {}     # {'2nd order': df, '3rd order': df, ...}
+        self.method_c_results_by_order = {}  # {'2nd order': results_df, ...}
+        self.method_c_stats_by_order = {}    # {'2nd order': stats_dict, ...}
+        self.method_c_plots_by_order = {}    # {'2nd order': plots_dict, ...}
 
         # Intermediate data
         self.df_basedata = None
@@ -784,6 +791,13 @@ class CumulantAnalyzer:
             skewness_c = np.nan
         self.method_c_results['Skewness'] = [skewness_c]
 
+        if fit_func_name == 'fit_function4' and 'best_e' in cumulant_method_C_data.columns:
+            kurtosis_c = (cumulant_method_C_data['best_e'] /
+                          cumulant_method_C_data['best_c']**2).mean()
+        else:
+            kurtosis_c = np.nan
+        self.method_c_results['Kurtosis'] = [kurtosis_c]
+
         print(f"[CUMULANT METHOD C DEBUG] Final DataFrame:")
         print(self.method_c_results)
 
@@ -800,6 +814,12 @@ class CumulantAnalyzer:
             'aic': float(model.aic),
             'bic': float(model.bic)
         }
+
+        # Store per-order data for post-refinement linkage
+        self.method_c_fits_by_order[_order_label] = self.method_c_fit.copy()
+        self.method_c_results_by_order[_order_label] = self.method_c_results.copy()
+        self.method_c_stats_by_order[_order_label] = dict(self.method_c_regression_stats)
+        self.method_c_plots_by_order[_order_label] = self.method_c_plots
 
         return self.method_c_results
 
@@ -849,7 +869,12 @@ class CumulantAnalyzer:
             cumulant_method_C_data.index = cumulant_method_C_data.index + 1
             print(f"[METHOD C RECOMPUTE] Applied q² range filter: {min_q} - {max_q} nm⁻², {len(cumulant_method_C_data)} points remaining")
 
-        print(f"[METHOD C RECOMPUTE] Recomputing with {len(cumulant_method_C_data)} data points")
+        # Count actual data points and contributing files entering the regression (after all filtering)
+        n_data_points = len(cumulant_method_C_data)
+        n_files_in_range = cumulant_method_C_data['filename'].nunique() if 'filename' in cumulant_method_C_data.columns else n_data_points
+        self.method_c_recompute_n_points = n_data_points        # expose to view layer
+        self.method_c_recompute_n_files_in_range = n_files_in_range
+        print(f"[METHOD C RECOMPUTE] Recomputing with {n_data_points} data points from {n_files_in_range} files")
 
         # Linear regression for diffusion coefficient
         X = cumulant_method_C_data['q^2']
@@ -884,7 +909,7 @@ class CumulantAnalyzer:
         recomputed_results['R_squared'] = [model.rsquared]
         _rc_label = getattr(self, 'method_c_fit_label', '')
         _rc_suffix = f', {_rc_label}' if _rc_label else ''
-        recomputed_results['Fit'] = [f'Method C filtered (N={len(included_files)}{_rc_suffix})']
+        recomputed_results['Fit'] = [f'Method C filtered (N={n_data_points} pts{_rc_suffix})']
         normality_recompute = _normality_status(model.resid)
         recomputed_results['Residuals'] = [normality_recompute]
         recomputed_results['PDI'] = [polydispersity_method_C]
@@ -895,10 +920,476 @@ class CumulantAnalyzer:
             skewness_rc = np.nan
         recomputed_results['Skewness'] = [skewness_rc]
 
+        if 'best_e' in cumulant_method_C_data.columns:
+            kurtosis_rc = (cumulant_method_C_data['best_e'] /
+                           cumulant_method_C_data['best_c']**2).mean()
+        else:
+            kurtosis_rc = np.nan
+        recomputed_results['Kurtosis'] = [kurtosis_rc]
+
         print(f"[METHOD C RECOMPUTE] Recomputed Rh: {rh_value:.2f} ± {rh_error:.2f} nm")
         print(f"[METHOD C RECOMPUTE] R²: {model.rsquared:.4f}")
 
         return recomputed_results
+
+    def activate_method_c_order(self, order_label: str) -> bool:
+        """
+        Load stored per-order data for a specific fit order as the active data.
+
+        Used before opening post-refinement dialog so that the dialog operates
+        on the data of the selected order, not the last run order.
+
+        Args:
+            order_label: e.g. '2nd order', '3rd order', '4th order'
+
+        Returns:
+            True if the order was found and activated, False otherwise.
+        """
+        if order_label not in self.method_c_fits_by_order:
+            return False
+        self.method_c_fit = self.method_c_fits_by_order[order_label]
+        self.method_c_results = self.method_c_results_by_order[order_label]
+        self.method_c_regression_stats = self.method_c_stats_by_order[order_label]
+        self.method_c_fit_label = order_label
+        return True
+
+    def run_method_d(self, params: Dict[str, Any], q_range=None) -> pd.DataFrame:
+        """
+        Run Cumulant Method D
+
+        Multi-exponential Dirac-delta decomposition of g²(τ). Iteratively fits
+        increasing numbers of exponential modes, selects optimal model order via
+        convergence checks, clusters fitted decay rates into populations, and
+        computes distribution moments (PDI, skewness, kurtosis).
+
+        Args:
+            params: Dictionary with parameters:
+                - n_max: int, maximum number of modes (default 25)
+                - n_start: int, starting number of modes (default 1)
+                - gap_threshold: float, clustering gap ratio threshold (default 1.5)
+            q_range: Optional tuple (min_q, max_q) to restrict Diffusion Analysis
+
+        Returns:
+            DataFrame with results (Rh, D, PDI, Skewness, Kurtosis, R²)
+        """
+        from ade_dls.analysis.cumulants_D import (
+            fit_cumulant_D, calculate_moments_from_gammas, cluster_gammas
+        )
+        from ade_dls.gui.analysis.cumulant_plotting import create_summary_plot
+        import matplotlib.pyplot as plt
+        import statsmodels.api as sm
+        import scipy.stats as scipy_stats
+
+        n_max = params.get('n_max', 25)
+        n_start = params.get('n_start', 1)
+        gap_threshold = params.get('gap_threshold', 1.5)
+
+        print("\n" + "="*60)
+        print("CUMULANT METHOD D - MULTI-EXPONENTIAL DECOMPOSITION")
+        print("="*60)
+        print(f"Parameters: n_max={n_max}, n_start={n_start}, gap_threshold={gap_threshold}")
+        if q_range:
+            print(f"q² range restriction: {q_range[0]:.4e} - {q_range[1]:.4e} nm⁻²")
+
+        # Ensure data is prepared
+        if self.df_basedata is None:
+            print("[Step 1/6] Preparing basedata...")
+            self.prepare_basedata()
+
+        if self.processed_correlations is None:
+            print("[Step 2/6] Preparing processed correlations...")
+            self.prepare_processed_correlations()
+
+        print(f"[Step 3/6] Fitting {len(self.processed_correlations)} correlation functions...")
+        all_fit_results = []
+        method_d_plots = {}
+        method_d_fit_quality = {}
+
+        for idx, (name, df) in enumerate(self.processed_correlations.items()):
+            try:
+                print(f"  [{idx+1}/{len(self.processed_correlations)}] {name}")
+
+                # Extract data: t [s] and g(2)-1 = g²(τ)-1 (baseline-subtracted)
+                x_data = df['t [s]'].values
+                y_data = df['g(2)-1'].values
+
+                # Filter to positive values only (noise floor can cause negatives)
+                mask = y_data > 0
+                x_fit = x_data[mask]
+                y_fit = y_data[mask]
+
+                if len(x_fit) < 5:
+                    print(f"    Warning: Too few positive data points, skipping.")
+                    continue
+
+                # Iterative multi-exponential fit
+                result = fit_cumulant_D(x_fit, y_fit, n_max=n_max, n_start=n_start)
+
+                # Cluster fitted decay rates into populations
+                clusters, representatives, cluster_info = cluster_gammas(
+                    result['gammas'], gap_threshold=gap_threshold
+                )
+
+                # Calculate distribution moments
+                moments = calculate_moments_from_gammas(result['gammas'])
+
+                # R-squared (computed on positive-value subset)
+                ss_res = result['residual_ss']
+                ss_tot = np.sum((y_fit - np.mean(y_fit))**2)
+                r_squared = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0.0
+
+                fit_result = {
+                    'filename': name,
+                    'n_modes': result['n_modes'],
+                    'beta': result['beta'],
+                    'residual_ss': result['residual_ss'],
+                    'R-squared': r_squared,
+                    'n_populations': cluster_info['n_clusters'],
+                    'gamma_mean': moments['gamma_mean'],
+                    'pdi': moments['pdi'],
+                    'skewness': moments['skewness'],
+                    'kurtosis': moments['kurtosis'],
+                }
+                for i, rep_gamma in enumerate(representatives):
+                    fit_result[f'gamma_{i+1}'] = rep_gamma
+
+                all_fit_results.append(fit_result)
+
+                # Create 3-panel diagnostic figure (no show)
+                residuals = y_fit - result['g2_fit']
+                fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15, 4))
+                fig.suptitle(f'Method D — {name}', fontsize=11)
+
+                ax1.plot(x_fit, y_fit, 'o', alpha=0.6, markersize=3, label='Data')
+                ax1.plot(x_fit, result['g2_fit'], 'r-', linewidth=2,
+                         label=f'Fit (n={result["n_modes"]})')
+                ax1.set_xscale('log')
+                ax1.set_xlabel('lag time τ [s]')
+                ax1.set_ylabel('g²(τ) − 1')
+                ax1.set_title('Data & Fit')
+                ax1.legend(fontsize=8)
+                ax1.grid(True, alpha=0.3)
+                param_text = (f"n modes: {result['n_modes']}  |  "
+                              f"n populations: {cluster_info['n_clusters']}\n"
+                              f"R² = {r_squared:.4f}\n"
+                              f"⟨Γ⟩ = {moments['gamma_mean']:.3e} s⁻¹")
+                ax1.text(0.97, 0.97, param_text, transform=ax1.transAxes,
+                         va='top', ha='right', fontsize=7,
+                         bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
+
+                ax2.plot(residuals, 'o', markersize=3, alpha=0.6)
+                ax2.axhline(0, color='r', linestyle='--', linewidth=1)
+                ax2.set_xlabel('Sample Index')
+                ax2.set_ylabel('Residuals')
+                ax2.set_title('Residuals')
+                ax2.grid(True, alpha=0.3)
+
+                scipy_stats.probplot(residuals, dist="norm", plot=ax3)
+                ax3.set_title('Q-Q Plot')
+                ax3.grid(True, alpha=0.3)
+
+                plt.tight_layout()
+                plt.close(fig)
+                method_d_plots[f"D: {name}"] = (fig, {})
+                method_d_fit_quality[f"D: {name}"] = {'R2': r_squared, 'residuals': 'Normal'}
+
+            except Exception as e:
+                print(f"    Error: {e}")
+                continue
+
+        if not all_fit_results:
+            raise ValueError("Method D: no fits succeeded. Check input data quality.")
+
+        print(f"[Step 4/7] Fitted {len(all_fit_results)} datasets successfully.")
+        self.method_d_plots = method_d_plots
+        self.method_d_fit_quality = method_d_fit_quality
+
+        method_d_fit = pd.DataFrame(all_fit_results)
+        # Store raw per-file fit for use by refine_method_d()
+        self.method_d_fit = method_d_fit.copy()
+
+        # Merge with basedata to get q² values
+        method_d_data = pd.merge(
+            self.df_basedata,
+            method_d_fit,
+            on='filename',
+            how='outer'
+        )
+        method_d_data = method_d_data.reset_index(drop=True)
+        method_d_data.index = method_d_data.index + 1
+
+        # Store unfiltered for potential post-refinement
+        self.method_d_data = method_d_data.copy()
+
+        # Apply q-range filter if specified
+        if q_range is not None:
+            min_q, max_q = q_range
+            mask = (method_d_data['q^2'] >= min_q) & (method_d_data['q^2'] <= max_q)
+            method_d_data = method_d_data[mask].reset_index(drop=True)
+            method_d_data.index = method_d_data.index + 1
+            print(f"            Applied q² range filter: {min_q:.4e} - {max_q:.4e} nm⁻²")
+            print(f"            {len(method_d_data)} data points remaining")
+            # Update stored data to filtered version for consistent post-refinement
+            self.method_d_data = method_d_data.copy()
+
+        # ------------------------------------------------------------------
+        # Step 5: Cross-file population clustering
+        # ------------------------------------------------------------------
+        from ade_dls.analysis.clustering import cluster_all_gammas, get_reliable_gamma_cols
+
+        gamma_pop_cols = sorted([c for c in method_d_fit.columns
+                                 if c.startswith('gamma_') and c != 'gamma_mean'])
+
+        if gamma_pop_cols:
+            print(f"[Step 5/7] Cross-file clustering on {gamma_pop_cols}...")
+            n_clusters_param = params.get('n_clusters', 'auto')
+            clustered_df, cluster_info = cluster_all_gammas(
+                method_d_data,
+                gamma_cols=gamma_pop_cols,
+                q_squared_col='q^2',
+                method=params.get('method', 'hierarchical'),
+                n_clusters=n_clusters_param,
+                distance_threshold=params.get('distance_threshold', 0.3),
+                normalize_by_q2=True,  # always cluster on D = Γ/q² (angle-independent)
+                min_abundance=params.get('min_abundance', 0.3),
+                clustering_strategy=params.get('clustering_strategy', 'simple'),
+                uncertainty_flags=False,
+                plot=False,
+            )
+            self.method_d_clustered_df = clustered_df
+            self.method_d_cluster_info = cluster_info
+            reliable_cols = get_reliable_gamma_cols(cluster_info)
+            n_pops = cluster_info.get('n_populations', 0)
+            print(f"            Found {n_pops} populations, {len(reliable_cols)} reliable.")
+        else:
+            print("[Step 5/7] No per-file gamma columns found; skipping cross-file clustering.")
+            self.method_d_clustered_df = method_d_data
+            self.method_d_cluster_info = {'n_populations': 0, 'reliable_populations': []}
+            reliable_cols = []
+
+        # Clustering overview figure (D vs q² + log(D) histogram)
+        from ade_dls.gui.analysis.cumulant_plotting import (
+            create_clustering_overview_figure, create_population_ols_figure
+        )
+        self.method_d_clustering_plot = create_clustering_overview_figure(
+            self.method_d_clustered_df, self.method_d_cluster_info, q_squared_col='q^2'
+        )
+
+        # ------------------------------------------------------------------
+        # Step 6: Summary plot (⟨Γ⟩ vs q²)
+        # ------------------------------------------------------------------
+        print(f"[Step 6/7] Creating summary plot (⟨Γ⟩ vs q²)...")
+        self.method_d_summary_plot = create_summary_plot(
+            method_d_data,
+            'q^2',
+            ['gamma_mean'],
+            ['Method D'],
+            '1/s'
+        )
+
+        # ------------------------------------------------------------------
+        # Step 7: Per-population OLS + combined Rh
+        # ------------------------------------------------------------------
+        print(f"[Step 7/7] Computing Rh per population and combined (⟨Γ⟩ vs q²)...")
+        self.method_d_results = self._compute_method_d_results(
+            self.method_d_clustered_df, reliable_cols, method_d_data,
+            mode_params=None, combined_q_range=None
+        )
+
+        # Per-population Γ vs q² + OLS figure
+        self.method_d_population_plot = create_population_ols_figure(
+            self.method_d_clustered_df, self.method_d_cluster_info, q_squared_col='q^2'
+        )
+
+        print("\nFINAL RESULTS:")
+        for _, row in self.method_d_results.iterrows():
+            print(f"  {row['Fit']}: Rh = {row['Rh [nm]']:.2f} nm, "
+                  f"D = {row['D [m²/s]']:.4e} m²/s, R² = {row['R_squared']:.4f}")
+        print("="*60 + "\n")
+
+        return self.method_d_results
+
+    # ------------------------------------------------------------------
+    # Shared helper: compute per-population OLS rows + combined row
+    # ------------------------------------------------------------------
+
+    def _compute_method_d_results(self, clustered_df, reliable_cols, method_d_data,
+                                   mode_params=None, combined_q_range=None) -> pd.DataFrame:
+        """
+        Compute OLS regression for each reliable population and the combined row.
+
+        Args:
+            clustered_df: DataFrame with gamma_pop1, gamma_pop2, ... columns
+            reliable_cols: list of column names ['gamma_pop1', ...]
+            method_d_data: DataFrame with gamma_mean and q^2
+            mode_params: optional dict {pop_num: {'q_min', 'q_max', 'outlier_sigma', 'min_points'}}
+            combined_q_range: optional (min_q, max_q) for the gamma_mean regression
+
+        Returns:
+            DataFrame with one row per reliable population + one combined row
+        """
+        import statsmodels.api as sm
+
+        result_rows = []
+
+        # --- Per-population rows ---
+        for col in reliable_cols:
+            pop_num = int(col.replace('gamma_pop', ''))
+            mparams = (mode_params or {}).get(pop_num, {})
+
+            X = clustered_df['q^2']
+            Y = clustered_df[col]
+            valid = Y.notna() & X.notna()
+
+            q_min = mparams.get('q_min')
+            q_max = mparams.get('q_max')
+            if q_min is not None:
+                valid = valid & (X >= q_min)
+            if q_max is not None:
+                valid = valid & (X <= q_max)
+
+            min_pts = mparams.get('min_points', 2)
+            if valid.sum() < min_pts:
+                print(f"  Population {pop_num}: only {valid.sum()} points, skipping.")
+                continue
+
+            model = sm.OLS(Y[valid], sm.add_constant(X[valid])).fit()
+
+            # Optional outlier removal and re-fit
+            outlier_sigma = mparams.get('outlier_sigma')
+            if outlier_sigma:
+                resid_std = model.resid.std()
+                inliers = valid.copy()
+                inliers[valid] = np.abs(model.resid) <= outlier_sigma * resid_std
+                if inliers.sum() >= min_pts:
+                    model = sm.OLS(Y[inliers], sm.add_constant(X[inliers])).fit()
+
+            D_val = model.params.iloc[1] * 1e-18
+            D_err = model.bse.iloc[1] * 1e-18
+            Rh = self.c_value / D_val * 1e9
+            Rh_err = np.sqrt((self.delta_c / self.c_value)**2 + (D_err / D_val)**2) * Rh
+
+            result_rows.append({
+                'Rh [nm]':        Rh,
+                'Rh error [nm]':  Rh_err,
+                'D [m²/s]':       D_val,
+                'D error [m²/s]': D_err,
+                'R_squared':      model.rsquared,
+                'Fit':            f'Rh from Method D (Population {pop_num})',
+                'Residuals':      _normality_status(model.resid),
+                'PDI':            np.nan,
+                'Skewness':       np.nan,
+                'Kurtosis':       np.nan,
+                'n_modes_mean':   np.nan,
+                'n_populations_mean': len(reliable_cols),
+            })
+
+        # --- Combined row (gamma_mean → OLS) ---
+        X_comb = method_d_data['q^2']
+        Y_comb = method_d_data['gamma_mean']
+        valid_comb = Y_comb.notna() & X_comb.notna()
+        if combined_q_range is not None:
+            valid_comb = valid_comb & X_comb.between(*combined_q_range)
+
+        common = X_comb[valid_comb].index
+        model_total = sm.OLS(Y_comb.loc[common], sm.add_constant(X_comb.loc[common])).fit()
+
+        D_total = model_total.params.iloc[1] * 1e-18
+        D_total_err = model_total.bse.iloc[1] * 1e-18
+        Rh_total = self.c_value / D_total * 1e9
+        Rh_total_err = np.sqrt(
+            (self.delta_c / self.c_value)**2 + (D_total_err / D_total)**2
+        ) * Rh_total
+
+        mean_pdi = method_d_data['pdi'].mean() if 'pdi' in method_d_data.columns else np.nan
+        mean_skewness = method_d_data['skewness'].mean() if 'skewness' in method_d_data.columns else np.nan
+        mean_kurtosis = method_d_data['kurtosis'].mean() if 'kurtosis' in method_d_data.columns else np.nan
+        mean_n_modes = method_d_data['n_modes'].mean() if 'n_modes' in method_d_data.columns else np.nan
+
+        result_rows.append({
+            'Rh [nm]':        Rh_total,
+            'Rh error [nm]':  Rh_total_err,
+            'D [m²/s]':       D_total,
+            'D error [m²/s]': D_total_err,
+            'R_squared':      model_total.rsquared,
+            'Fit':            f'Rh from Method D (combined, {len(reliable_cols)} populations)',
+            'Residuals':      _normality_status(model_total.resid),
+            'PDI':            mean_pdi,
+            'Skewness':       mean_skewness,
+            'Kurtosis':       mean_kurtosis,
+            'n_modes_mean':   mean_n_modes,
+            'n_populations_mean': len(reliable_cols),
+        })
+
+        self.method_d_regression_stats = {
+            'summary':           str(model_total.summary()),
+            'params':            model_total.params.to_dict(),
+            'stderr_intercept':  float(model_total.bse.iloc[0]),
+            'stderr_slope':      float(model_total.bse.iloc[1]),
+            'rsquared':          float(model_total.rsquared),
+            'rsquared_adj':      float(model_total.rsquared_adj),
+            'fvalue':            float(model_total.fvalue),
+            'f_pvalue':          float(model_total.f_pvalue),
+            'aic':               float(model_total.aic),
+            'bic':               float(model_total.bic),
+        }
+
+        return pd.DataFrame(result_rows)
+
+    def refine_method_d(self, clustering_params=None, mode_params=None,
+                        combined_q_range=None) -> pd.DataFrame:
+        """
+        Re-run Steps 5 and 7 of Method D with updated parameters.
+
+        Requires run_method_d() to have been called first (method_d_fit,
+        method_d_data, method_d_clustered_df, method_d_cluster_info must exist).
+
+        Args:
+            clustering_params: dict with keys matching cluster_all_gammas kwargs,
+                               or None to skip re-clustering.
+            mode_params: dict {pop_num: {'q_min', 'q_max', 'outlier_sigma', 'min_points'}}
+            combined_q_range: (min_q, max_q) for the combined gamma_mean regression
+
+        Returns:
+            Updated method_d_results DataFrame
+        """
+        from ade_dls.analysis.clustering import cluster_all_gammas, get_reliable_gamma_cols
+
+        if clustering_params:
+            print("\n[Method D Refinement – Step 5] Re-running cross-file clustering...")
+            gamma_pop_cols = sorted([c for c in self.method_d_fit.columns
+                                     if c.startswith('gamma_') and c != 'gamma_mean'])
+            if gamma_pop_cols:
+                # Build kwargs: map our param keys to cluster_all_gammas args
+                cparams = dict(clustering_params)  # copy
+                cparams.pop('q_squared_col', None)   # we supply this ourselves
+                cparams['normalize_by_q2'] = True    # always cluster on D = Γ/q²
+                self.method_d_clustered_df, self.method_d_cluster_info = cluster_all_gammas(
+                    self.method_d_data,
+                    gamma_cols=gamma_pop_cols,
+                    q_squared_col='q^2',
+                    uncertainty_flags=False,
+                    plot=False,
+                    **cparams,
+                )
+                n_pops = self.method_d_cluster_info.get('n_populations', 0)
+                print(f"  Found {n_pops} populations after re-clustering.")
+            else:
+                print("  No per-file gamma columns found; cannot re-cluster.")
+
+        reliable_cols = get_reliable_gamma_cols(self.method_d_cluster_info)
+        print(f"[Method D Refinement – Step 7] Re-computing OLS for {len(reliable_cols)} populations...")
+
+        self.method_d_results = self._compute_method_d_results(
+            self.method_d_clustered_df, reliable_cols, self.method_d_data,
+            mode_params=mode_params, combined_q_range=combined_q_range,
+        )
+
+        print("Refinement complete.")
+        for _, row in self.method_d_results.iterrows():
+            print(f"  {row['Fit']}: Rh = {row['Rh [nm]']:.2f} nm, R² = {row['R_squared']:.4f}")
+
+        return self.method_d_results
 
     def get_combined_results(self) -> pd.DataFrame:
         """
@@ -917,6 +1408,9 @@ class CumulantAnalyzer:
 
         if self.method_c_results is not None:
             results.append(self.method_c_results)
+
+        if self.method_d_results is not None:
+            results.append(self.method_d_results)
 
         if results:
             return pd.concat(results, ignore_index=True)

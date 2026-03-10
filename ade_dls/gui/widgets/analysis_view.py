@@ -111,7 +111,7 @@ class AnalysisView(QWidget):
 
         method_label = QLabel("Method:")
         self.plot_method_combo = QComboBox()
-        self.plot_method_combo.addItems(["All Methods", "Method A", "Method B", "Method C", "NNLS"])
+        self.plot_method_combo.addItems(["All Methods", "Method A", "Method B", "Method C", "Method D", "NNLS"])
         self.plot_method_combo.currentTextChanged.connect(self._on_method_filter_changed)
         filter_layout.addWidget(method_label)
         filter_layout.addWidget(self.plot_method_combo)
@@ -475,7 +475,7 @@ class AnalysisView(QWidget):
                 self.details_text.setHtml(html)
 
         # Enable refinement button only for methods that support it
-        _REFINABLE = {'Method A', 'Method B', 'Method C', 'NNLS', 'Regularized NNLS'}
+        _REFINABLE = {'Method A', 'Method B', 'Method C', 'NNLS', 'Regularized NNLS', 'Method D'}
         method_name = item.data(Qt.UserRole + 1) if item else None
         if hasattr(self, 'refinement_btn'):
             self.refinement_btn.setEnabled(method_name in _REFINABLE)
@@ -494,18 +494,32 @@ class AnalysisView(QWidget):
 
         # Capture prior detail HTML before any row removal (for refinement history chain)
         prior_html = None
-        for r in range(self.results_table.rowCount()):
-            cell = self.results_table.item(r, 0)
-            if cell and cell.data(Qt.UserRole + 1) == method_name:
-                h = cell.data(Qt.UserRole)
-                if h:
-                    prior_html = h  # keep the most recent one found
 
-        # Method A and B replace their own row on re-run; Method C always appends
-        if 'Method A' in method_name or 'Method B' in method_name:
+        # For Method C, determine order-specific tag for row identity
+        _method_c_order_tag = None
+        if 'Method C' in method_name and not results_df.empty:
+            import re as _re
+            _fit_text = str(results_df['Fit'].iloc[0])
+            _m = _re.search(r'(2nd|3rd|4th) order', _fit_text)
+            _method_c_order_tag = f"Method C ({_m.group(1)} order)" if _m else "Method C (unknown)"
+
+        if 'Method C' in method_name and _method_c_order_tag:
+            # Replace existing row with the same order; append if new order
+            for r in reversed(range(self.results_table.rowCount())):
+                cell = self.results_table.item(r, 0)
+                if cell and cell.data(Qt.UserRole + 2) == _method_c_order_tag:
+                    h = cell.data(Qt.UserRole)
+                    if h:
+                        prior_html = h
+                    self.results_table.removeRow(r)
+        elif 'Method A' in method_name or 'Method B' in method_name:
+            # Method A and B replace their own row on re-run
             for r in reversed(range(self.results_table.rowCount())):
                 cell = self.results_table.item(r, 0)
                 if cell and cell.data(Qt.UserRole + 1) == method_name:
+                    h = cell.data(Qt.UserRole)
+                    if h:
+                        prior_html = h
                     self.results_table.removeRow(r)
 
         # Get existing row count
@@ -546,6 +560,8 @@ class AnalysisView(QWidget):
                     method_item.setBackground(QColor(255, 240, 230))  # Light orange
 
             method_item.setData(Qt.UserRole + 1, method_name)  # tag for future replacement
+            if _method_c_order_tag:
+                method_item.setData(Qt.UserRole + 2, _method_c_order_tag)  # order-specific tag
             self.results_table.setItem(current_rows + i, 0, method_item)
 
             # Rh
@@ -666,6 +682,8 @@ class AnalysisView(QWidget):
                 if isinstance(val, float):
                     if pd.isna(val):
                         cell_text = "N/A"
+                    elif val != 0 and abs(val) < 1e-3:
+                        cell_text = f"{val:.3e}"
                     else:
                         cell_text = f"{val:.4f}"
                 else:
@@ -686,15 +704,28 @@ class AnalysisView(QWidget):
                 f"<tr style='background-color:{header_bg}; font-weight:bold;'>"
                 f"<th>Parameter</th><th>Value</th></tr>"
             )
-            if ri.get('n_total') is not None:
+            _ri_n_total     = ri.get('n_total')
+            _ri_n_excluded  = ri.get('n_excluded', 0)
+            _ri_in_range    = ri.get('n_files_in_range')
+            _ri_n_pts       = ri.get('n_data_points')
+            if _ri_n_total is not None:
                 new_section += (
-                    f"<tr><td>Files included</td><td>{ri['n_included']} / {ri['n_total']}</td></tr>"
-                    f"<tr><td>Files excluded</td><td>{ri['n_excluded']}</td></tr>"
+                    f"<tr><td>Files manually excluded</td><td>{_ri_n_excluded}</td></tr>"
                 )
             new_section += (
                 f"<tr><td>q-range applied</td><td>{ri['q_range_str']}</td></tr>"
-                f"</table>"
             )
+            if _ri_in_range is not None and _ri_n_total is not None:
+                new_section += (
+                    f"<tr><td><b>Files in q-range</b></td>"
+                    f"<td><b>{_ri_in_range} / {_ri_n_total}</b></td></tr>"
+                )
+            if _ri_n_pts is not None:
+                new_section += (
+                    f"<tr><td><b>Data points in regression</b></td>"
+                    f"<td><b>{_ri_n_pts}</b></td></tr>"
+                )
+            new_section += "</table>"
 
             # Excluded files list
             if ri['excluded_files']:
@@ -902,6 +933,38 @@ class AnalysisView(QWidget):
 
             new_section += "<p style='font-size: 9pt; color: gray;'><i>Note: AIC and BIC are informational. Lower values indicate better fit when comparing models, but absolute values don't have universal thresholds.</i></p>"
 
+        # Distribution Moments section (Method C only – shows Skewness and Kurtosis)
+        if 'Method C' in method_name and not results_df.empty:
+            import math as _math
+            model_header_bg = "#5080A0" if is_dark else "#d0e0f0"
+            skewness_val = results_df['Skewness'].iloc[0] if 'Skewness' in results_df.columns else float('nan')
+            kurtosis_val = results_df['Kurtosis'].iloc[0] if 'Kurtosis' in results_df.columns else float('nan')
+
+            skewness_val = float(skewness_val) if not isinstance(skewness_val, float) else skewness_val
+            kurtosis_val = float(kurtosis_val) if not isinstance(kurtosis_val, float) else kurtosis_val
+
+            import pandas as _pd
+            sk_text = "N/A (requires 3rd or 4th order)" if _pd.isna(skewness_val) else f"{skewness_val:.4f}"
+            ku_text = "N/A (requires 4th order)" if _pd.isna(kurtosis_val) else f"{kurtosis_val:.4f}"
+
+            new_section += "<h4>Distribution Moments (Cumulant Parameters)</h4>"
+            new_section += (
+                f"<table border='1' cellpadding='8' cellspacing='0' "
+                f"style='border-collapse: collapse; width: 100%; color: {text_color};'>"
+                f"<tr style='background-color: {model_header_bg}; font-weight: bold;'>"
+                f"<th>Moment</th><th>Value</th><th>Formula</th><th>Available for</th></tr>"
+                f"<tr><td><b>Skewness</b></td><td>{sk_text}</td>"
+                f"<td>\u03ba\u2083 / \u03ba\u2082^(3/2)</td><td>3rd &amp; 4th order</td></tr>"
+                f"<tr><td><b>Kurtosis</b></td><td>{ku_text}</td>"
+                f"<td>\u03ba\u2084 / \u03ba\u2082\u00b2</td><td>4th order only</td></tr>"
+                f"</table>"
+                f"<p style='font-size: 9pt; color: gray;'><i>"
+                f"\u03ba\u2082 = 2nd cumulant (c parameter), "
+                f"\u03ba\u2083 = 3rd cumulant (d parameter), "
+                f"\u03ba\u2084 = 4th cumulant (e parameter)."
+                f"</i></p>"
+            )
+
         # Store detail HTML in each newly-added row's col-0 item
         # (displayed when user clicks the row, not automatically)
         # Chain prior HTML when this is a refinement (regression_stats is not None)
@@ -913,18 +976,60 @@ class AnalysisView(QWidget):
                 + new_section
             )
         detail_html = new_section
+
+        # --- Method D: build per-row HTML (population rows get compact view) ---
+        # Map from results_df index → html to store. Default to full detail_html.
+        _per_row_html = {}
+        if 'Method D' in method_name:
+            for idx, row in results_df.iterrows():
+                fit_str = str(row.get('Fit', ''))
+                if '(Population' in fit_str:
+                    pop_num = fit_str  # e.g. "Rh from Method D (Population 1)"
+                    rh   = row.get('Rh [nm]',    float('nan'))
+                    rh_e = row.get('Rh error [nm]', float('nan'))
+                    d    = row.get('D [m²/s]',   float('nan'))
+                    d_e  = row.get('D error [m²/s]', float('nan'))
+                    r2   = row.get('R_squared',  float('nan'))
+                    res  = str(row.get('Residuals', 'N/A'))
+                    model_header_bg = "#5080A0" if is_dark else "#d0e0f0"
+                    compact = (
+                        f"<h3 style='color:{title_color}; margin-top:15px;'>{fit_str}</h3>"
+                        f"<table border='1' cellpadding='8' cellspacing='0' "
+                        f"style='border-collapse:collapse; width:100%; color:{text_color};'>"
+                        f"<tr style='background-color:{model_header_bg}; font-weight:bold;'>"
+                        f"<th>Parameter</th><th>Value</th></tr>"
+                        f"<tr><td><b>Rh [nm]</b></td><td>{rh:.3f} ± {rh_e:.3f}</td></tr>"
+                        f"<tr><td><b>D [m²/s]</b></td><td>{d:.3e} ± {d_e:.3e}</td></tr>"
+                        f"<tr><td><b>R²</b></td><td>{r2:.4f}</td></tr>"
+                        f"<tr><td><b>Residuals</b></td><td>{res}</td></tr>"
+                        f"</table>"
+                        f"<p style='font-size:9pt; color:gray;'><i>"
+                        f"Population-specific OLS: D = &Gamma;/q&sup2;, then R<sub>h</sub> = k<sub>B</sub>T / (6&pi;&eta;D)."
+                        f"</i></p>"
+                    )
+                    _per_row_html[idx] = compact
+                else:
+                    _per_row_html[idx] = detail_html  # combined row gets full HTML
+
         new_start = self.results_table.rowCount() - len(results_df)
         for r in range(new_start, self.results_table.rowCount()):
             cell = self.results_table.item(r, 0)
             if cell:
-                cell.setData(Qt.UserRole, detail_html)
+                df_idx = r - new_start  # positional index in results_df
+                if _per_row_html:
+                    row_idx = results_df.index[df_idx]
+                    cell.setData(Qt.UserRole, _per_row_html.get(row_idx, detail_html))
+                else:
+                    cell.setData(Qt.UserRole, detail_html)
 
         # Auto-select the first new row so details appear immediately
         if 0 <= new_start < self.results_table.rowCount():
             self.results_table.blockSignals(True)
             self.results_table.setCurrentCell(new_start, 0)
             self.results_table.blockSignals(False)
-            self.details_text.setHtml(detail_html)
+            first_idx = results_df.index[0]
+            first_html = _per_row_html.get(first_idx, detail_html) if _per_row_html else detail_html
+            self.details_text.setHtml(first_html)
 
     def _load_plots(self, method_name, plots_dict, fit_quality, replace_method=False):
         """
@@ -1602,11 +1707,24 @@ class AnalysisView(QWidget):
 
         item = self.results_table.item(selected_row, 0)
         method_name = item.data(Qt.UserRole + 1) if item else None
+        order_tag   = item.data(Qt.UserRole + 2) if item else None  # e.g. 'Method C (3rd order)'
+
+        # For Method C: activate the correct per-order data before opening refinement
+        if method_name == 'Method C' and order_tag and hasattr(self, 'cumulant_analyzer') and self.cumulant_analyzer is not None:
+            import re as _re
+            _m = _re.search(r'\((.+?)\)', order_tag)
+            if _m:
+                order_label = _m.group(1)  # e.g. '3rd order'
+                self.cumulant_analyzer.activate_method_c_order(order_label)
+
+        # Store order_tag so _open_refinement_for_method can use it for in-place update
+        self._pending_method_c_order_tag = order_tag if method_name == 'Method C' else None
 
         method_map = {
             'Method A': 'cumulant_a',
             'Method B': 'cumulant_b',
             'Method C': 'cumulant_c',
+            'Method D': 'cumulant_d',
             'NNLS':     'nnls',
             'Regularized NNLS': 'regularized',
         }
@@ -1819,8 +1937,10 @@ class AnalysisView(QWidget):
                         if recompute_output is not None:
                             result_c, refinement_stats = recompute_output
                             results_updated.append(('Method C', result_c))
-                            self._update_results_table('Method C', result_c,
-                                                       regression_stats=refinement_stats)
+                            # Update the existing row in-place (values + appended HTML detail)
+                            _pending_tag = getattr(self, '_pending_method_c_order_tag', None)
+                            self._update_method_c_row_in_place(_pending_tag, result_c,
+                                                               refinement_stats)
 
                             # Add post-refinement step to pipeline
                             from gui.main_window import JADEDLSMainWindow
@@ -1859,6 +1979,67 @@ class AnalysisView(QWidget):
                     "Refinement Failed",
                     f"Failed to refine results:\n{str(e)}"
                 )
+                import traceback
+                traceback.print_exc()
+
+        elif method_type == 'cumulant_d':
+            # Method D two-stage refinement
+            from ade_dls.gui.dialogs import MethodDPostFitDialog
+
+            if not hasattr(self, 'cumulant_analyzer') or self.cumulant_analyzer is None:
+                QMessageBox.warning(self, "No Analyzer", "No cumulant analyzer available.")
+                return
+            if not hasattr(self.cumulant_analyzer, 'method_d_clustered_df') or \
+               self.cumulant_analyzer.method_d_clustered_df is None:
+                QMessageBox.warning(self, "No Method D Results",
+                                    "Please run Method D first before refining.")
+                return
+
+            dialog = MethodDPostFitDialog(self.cumulant_analyzer, self)
+            if dialog.exec_() != dialog.Accepted:
+                return
+
+            ref_params = dialog.get_refinement_params()
+
+            try:
+                print("\n" + "="*60)
+                print("POST-FIT REFINEMENT – METHOD D")
+                print("="*60)
+
+                result_d = self.cumulant_analyzer.refine_method_d(
+                    clustering_params=ref_params.get('clustering'),
+                    mode_params=ref_params.get('mode_params') or None,
+                    combined_q_range=ref_params.get('combined_q_range'),
+                )
+
+                self._update_results_table(
+                    'Method D', result_d,
+                    regression_stats=self.cumulant_analyzer.method_d_regression_stats
+                )
+
+                # Add post-refinement step to pipeline
+                try:
+                    from gui.main_window import JADEDLSMainWindow
+                    parent = self.parent()
+                    while parent and not isinstance(parent, JADEDLSMainWindow):
+                        parent = parent.parent()
+                    if parent and hasattr(parent, 'pipeline'):
+                        parent.pipeline.add_post_refinement_step(
+                            method_name="Method D",
+                            q_range=ref_params.get('combined_q_range'),
+                            excluded_files=[],
+                            is_laplace=False,
+                        )
+                except Exception:
+                    pass
+
+                print("="*60 + "\n")
+                QMessageBox.information(self, "Refinement Complete",
+                                        "Method D results have been updated.")
+
+            except Exception as e:
+                QMessageBox.critical(self, "Refinement Failed",
+                                     f"Failed to refine Method D results:\n{str(e)}")
                 import traceback
                 traceback.print_exc()
 
@@ -2005,6 +2186,185 @@ class AnalysisView(QWidget):
             import traceback
             traceback.print_exc()
 
+    def _update_method_c_row_in_place(self, order_tag, result_df, regression_stats):
+        """
+        Update an existing Method C row's numeric values and append refinement info to its HTML.
+
+        Used after post-refinement so the existing row is updated in-place rather than
+        a new row being appended.
+
+        Args:
+            order_tag: Qt.UserRole + 2 tag, e.g. 'Method C (3rd order)'. If None or row not
+                       found, falls back to appending a new row via _update_results_table.
+            result_df: DataFrame with recomputed results (one row).
+            regression_stats: Dict with regression stats and refinement_info.
+        """
+        import pandas as pd
+        from PyQt5.QtCore import Qt
+        from PyQt5.QtWidgets import QTableWidgetItem
+
+        # Find the target row
+        target_row = -1
+        if order_tag:
+            for r in range(self.results_table.rowCount()):
+                cell = self.results_table.item(r, 0)
+                if cell and cell.data(Qt.UserRole + 2) == order_tag:
+                    target_row = r
+                    break
+
+        if target_row < 0:
+            # Fallback: append new row (edge case – row not found)
+            print(f"[REFINEMENT] Row not found for tag '{order_tag}', appending new row.")
+            self._update_results_table('Method C', result_df, regression_stats)
+            return
+
+        row = result_df.iloc[0]
+
+        def _make_numeric_item(val, fmt):
+            if isinstance(val, (list, pd.Series)):
+                val = val[0] if len(val) > 0 else float('nan')
+            try:
+                fval = float(val)
+                item = QTableWidgetItem(fmt.format(fval))
+                item.setData(0x0100, fval)
+            except (TypeError, ValueError):
+                item = QTableWidgetItem('N/A')
+            return item
+
+        # Update numeric columns 1–7
+        self.results_table.setItem(target_row, 1, _make_numeric_item(row.get('Rh [nm]', 0), '{:.2f}'))
+        self.results_table.setItem(target_row, 2, _make_numeric_item(row.get('Rh error [nm]', 0), '{:.2f}'))
+        self.results_table.setItem(target_row, 3, _make_numeric_item(row.get('D [m²/s]', float('nan')), '{:.3e}'))
+        self.results_table.setItem(target_row, 4, _make_numeric_item(row.get('D error [m²/s]', float('nan')), '{:.3e}'))
+        self.results_table.setItem(target_row, 5, _make_numeric_item(
+            row.get('R_squared', row.get('R-squared', 0)), '{:.4f}'))
+        self.results_table.setItem(target_row, 6, _make_numeric_item(row.get('PDI', float('nan')), '{:.4f}'))
+        res_val = str(row.get('Residuals', 'N/A'))
+        self.results_table.setItem(target_row, 7, QTableWidgetItem(res_val))
+
+        # Build new HTML section for the refinement and append to existing detail HTML
+        # Re-use the HTML-building logic from _update_results_table by calling it with a
+        # temporary approach: build a minimal new section with refinement info.
+        from PyQt5.QtWidgets import QApplication
+        palette = QApplication.palette()
+        is_dark = palette.base().color().lightness() < 128
+        title_color = "#66B3FF" if is_dark else "#0066cc"
+        header_bg = "#2D2D2D" if is_dark else "#e0e0e0"
+        row_bg_1 = "#1E1E1E" if is_dark else "#f9f9f9"
+        row_bg_2 = "#252525" if is_dark else "#ffffff"
+        text_color = "#E0E0E0" if is_dark else "#000000"
+
+        # Only show core result columns – metadata columns (N files, Original *, q-range)
+        # are already shown in the Post-fit Refinement Details block below.
+        _CORE_COLS = {'Rh [nm]', 'Rh error [nm]', 'D [m²/s]', 'D error [m²/s]',
+                      'R_squared', 'Fit', 'Residuals', 'PDI', 'Skewness', 'Kurtosis'}
+        display_cols = [c for c in result_df.columns if c in _CORE_COLS]
+
+        def _fmt_cell(val):
+            """Format a cell value: scientific notation for very small/large numbers."""
+            if isinstance(val, (list, pd.Series)):
+                val = val[0] if len(val) > 0 else val
+            if isinstance(val, float):
+                if pd.isna(val):
+                    return "N/A"
+                if val != 0 and abs(val) < 1e-3:
+                    return f"{val:.3e}"
+                return f"{val:.4f}"
+            return str(val)
+
+        new_section = f"<h3 style='color: {title_color}; margin-top: 15px;'>Post-Refinement Update</h3>"
+        new_section += "<h4>Updated Results:</h4>"
+        new_section += (
+            f"<table border='1' cellpadding='5' cellspacing='0' "
+            f"style='border-collapse: collapse; width: 100%; color: {text_color};'>"
+            f"<tr style='background-color: {header_bg}; font-weight: bold;'>"
+        )
+        for col in display_cols:
+            new_section += f"<th style='padding: 8px; text-align: left;'>{col}</th>"
+        new_section += "</tr>"
+        for idx, df_row in result_df.iterrows():
+            bg_color = row_bg_1 if idx % 2 == 0 else row_bg_2
+            new_section += f"<tr style='background-color: {bg_color};'>"
+            for col in display_cols:
+                new_section += f"<td style='padding: 8px;'>{_fmt_cell(df_row[col])}</td>"
+            new_section += "</tr>"
+        new_section += "</table>"
+
+        # Add refinement details block
+        if regression_stats and 'refinement_info' in regression_stats:
+            ri = regression_stats['refinement_info']
+            new_section += f"<h4 style='color:{title_color};'>Post-fit Refinement Details</h4>"
+            new_section += (
+                f"<table border='1' cellpadding='5' cellspacing='0' "
+                f"style='border-collapse:collapse; width:100%; color:{text_color};'>"
+                f"<tr style='background-color:{header_bg}; font-weight:bold;'>"
+                f"<th>Parameter</th><th>Value</th></tr>"
+            )
+            _n_pts        = ri.get('n_data_points')
+            _n_in_range   = ri.get('n_files_in_range')
+            _n_total      = ri.get('n_total')
+            _n_included   = ri.get('n_included')  # manually selected (pre-q-filter)
+            _n_excluded   = ri.get('n_excluded')
+            if _n_total is not None:
+                new_section += (
+                    f"<tr><td>Files manually excluded</td><td>{_n_excluded}</td></tr>"
+                )
+            new_section += (
+                f"<tr><td>q-range applied</td><td>{ri['q_range_str']}</td></tr>"
+            )
+            if _n_in_range is not None and _n_total is not None:
+                new_section += (
+                    f"<tr><td><b>Files in q-range</b></td>"
+                    f"<td><b>{_n_in_range} / {_n_total}</b></td></tr>"
+                )
+            if _n_pts is not None:
+                new_section += (
+                    f"<tr><td><b>Data points in regression</b></td>"
+                    f"<td><b>{_n_pts}</b></td></tr>"
+                )
+            new_section += "</table>"
+            if ri['excluded_files']:
+                new_section += "<p><b>Excluded files:</b><br>"
+                new_section += "<br>".join(f"&nbsp;&nbsp;• {f}" for f in ri['excluded_files'])
+                new_section += "</p>"
+            if ri.get('original_rh') is not None:
+                orig_rh = ri['original_rh']
+                orig_d  = ri.get('original_d')
+                orig_r2 = ri.get('original_r2')
+                ref_rh  = result_df['Rh [nm]'].iloc[0] if 'Rh [nm]' in result_df.columns else None
+                ref_d   = result_df['D [m²/s]'].iloc[0] if 'D [m²/s]' in result_df.columns else None
+                ref_r2  = result_df['R_squared'].iloc[0] if 'R_squared' in result_df.columns else None
+                new_section += (
+                    f"<h4>Original vs. Refined:</h4>"
+                    f"<table border='1' cellpadding='5' cellspacing='0' "
+                    f"style='border-collapse:collapse; width:100%; color:{text_color};'>"
+                    f"<tr style='background-color:{header_bg}; font-weight:bold;'>"
+                    f"<th>Quantity</th><th>Original</th><th>Refined</th></tr>"
+                )
+                for label, orig_val, ref_val in [
+                    ("Rh [nm]",  f"{orig_rh:.3f}" if orig_rh is not None else "N/A",
+                                 f"{ref_rh:.3f}"  if ref_rh  is not None else "N/A"),
+                    ("D [m²/s]", f"{orig_d:.3e}"  if orig_d  is not None else "N/A",
+                                 f"{ref_d:.3e}"   if ref_d   is not None else "N/A"),
+                    ("R²",       f"{orig_r2:.4f}" if orig_r2 is not None else "N/A",
+                                 f"{ref_r2:.4f}"  if ref_r2  is not None else "N/A"),
+                ]:
+                    new_section += (f"<tr><td><b>{label}</b></td>"
+                                    f"<td>{orig_val}</td><td>{ref_val}</td></tr>")
+                new_section += "</table>"
+
+        # Append new section to existing HTML
+        existing_html = self.results_table.item(target_row, 0).data(Qt.UserRole) or ''
+        chained_html = existing_html + "<hr>" + new_section
+        self.results_table.item(target_row, 0).setData(Qt.UserRole, chained_html)
+
+        # Refresh detail panel if this row is currently selected
+        if self.results_table.currentRow() == target_row:
+            self.details_text.setHtml(chained_html)
+
+        self.results_table.resizeColumnsToContents()
+        print(f"[REFINEMENT] Updated row in-place for tag '{order_tag}'")
+
     def _recompute_method_c(self, q_range, excluded_fits):
         """
         Re-compute Method C with filtered data.
@@ -2033,6 +2393,10 @@ class AnalysisView(QWidget):
             print(f"[ERROR] recompute_method_c_diffusion failed: {e}")
             return None
 
+        # Read actual data points and contributing files (set by recompute_method_c_diffusion)
+        n_data_points     = getattr(analyzer, 'method_c_recompute_n_points', None)
+        n_files_in_range  = getattr(analyzer, 'method_c_recompute_n_files_in_range', None)
+
         # --- Add refinement metadata columns ---
         n_total    = len(all_files)
         n_included = len(included_files)
@@ -2060,6 +2424,8 @@ class AnalysisView(QWidget):
             'n_total':        n_total,
             'n_included':     n_included,
             'n_excluded':     n_excluded,
+            'n_data_points':    n_data_points,     # actual (q², Γ) pairs in OLS regression
+            'n_files_in_range': n_files_in_range,  # unique files with data within q-range
             'excluded_files': excluded_fits or [],
             'q_range':        q_range,
             'q_range_str':    q_str,

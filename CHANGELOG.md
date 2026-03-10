@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.3dev] - 2026-03-10
+
+### Added
+
+#### Analysis – Method D (Multi-Exponential / Multi-Population)
+
+- **Cross-file population clustering**: After the per-file multi-exponential decomposition, `cluster_all_gammas()` groups the fitted decay rates across all measurement angles/files into consistent populations. Uses hierarchical clustering (Ward linkage, default) or gap-based clustering. Clustering unconditionally operates on D = Γ/q² (angle-independent diffusion coefficient) — the only physically correct basis for angle-series DLS data.
+- **Multi-row results table**: The Results Overview now shows N+1 rows after a Method D run:
+  - One row per reliable population: `Rh from Method D (Population N)` — Rh, D, R², Residuals
+  - One combined row: `Rh from Method D (combined, N populations)` — Z-average equivalent from `⟨Γ⟩ → OLS → Rh`; also reports PDI, Skewness, Kurtosis from the per-file cumulant fits
+- **`MethodDPostFitDialog`** — new two-stage post-fit refinement dialog (opened via the existing refinement button):
+  - *Clustering tab*: Re-configure clustering method, number of populations, distance threshold, minimum population abundance, silhouette-based refinement
+  - *Population N tabs*: Per-population q² range filter, outlier σ-threshold (residual-based), minimum OLS points
+  - *Combined tab*: q² range for the `⟨Γ⟩ → Rh` regression
+- **Interactive clustering preview** in the Clustering tab: An embedded 2-panel plot (D vs q² scatter colored by population + log₁₀(D) histogram) is drawn immediately on dialog open and refreshes in-place when "↺ Refresh Clustering Preview" is clicked. A stats line below shows the number of populations found, silhouette score (if available), and per-population abundance.
+
+#### Plots Panel – Method D
+
+Two additional plots are now generated automatically after every Method D run and listed in the Plots panel alongside the existing per-file diagnostic plots:
+
+- **`Method D: Clustering Overview`** — D vs q² scatter (all files/angles, colored by population) + log₁₀(D) histogram. Horizontal bands in the scatter indicate angle-independent, well-separated populations.
+- **`Method D: Population OLS`** — Γ vs q² scatter per reliable population with OLS regression line and R² in the legend. Directly comparable to the summary plot but separated by population.
+
+### Fixed
+
+- **Refinement button grayed out after Method D**: `"Method D"` was missing from the `_REFINABLE` set in `analysis_view.py`; the post-fit refinement button is now correctly enabled after a Method D run.
+- **Detailed Results not population-specific**: All Method D rows previously showed the same detail HTML (the combined regression stats). Population rows now show a compact view (Rh ± error, D ± error, R², Residuals); the combined row retains the full regression statistics block (Model Statistics, Coefficients, Fit Quality Assessment).
+- **Clustering grouped by angle, not by population**: The `normalize_by_q2` option defaulted to `False`, causing the clustering algorithm to operate on raw Γ values. Because Γ = D·q² varies with angle, this grouped measurements by angle range rather than by particle population. The option has been removed; D = Γ/q² is now used unconditionally.
+
+### Changed
+
+- **`CumulantDDialog`**: Removed "Cluster on D = Γ/q² (angle-independent)" checkbox — D-based clustering is now the only supported mode and requires no user action.
+- **`MethodDPostFitDialog`** Clustering tab: Removed the same redundant checkbox.
+
+---
+
 ## [2.1.0] - 2026-03-05
 
 ### Added
@@ -142,6 +178,7 @@ All functionality remains the same; only import paths have changed.
 
 ---
 
+[2.0.3dev]: https://github.com/traianuschem/JADE-DLS/compare/v2.0.2dev...v2.0.3dev
 [2.1.0]: https://github.com/traianuschem/JADE-DLS/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/traianuschem/JADE-DLS/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/traianuschem/JADE-DLS/releases/tag/v1.0.0
