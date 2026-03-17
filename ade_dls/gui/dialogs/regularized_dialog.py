@@ -6,7 +6,8 @@ Allows users to configure Tikhonov-Phillips regularization parameters
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox,
                              QLabel, QLineEdit, QPushButton, QCheckBox,
                              QSlider, QSpinBox, QDoubleSpinBox, QTabWidget,
-                             QWidget, QMessageBox, QSizePolicy, QComboBox, QScrollArea)
+                             QWidget, QMessageBox, QSizePolicy, QComboBox, QScrollArea,
+                             QButtonGroup, QRadioButton)
 from PyQt5.QtCore import Qt, pyqtSignal
 import numpy as np
 import pandas as pd
@@ -43,8 +44,11 @@ class RegularizedDialog(QDialog):
             'sparsity_penalty': 0.0,
             'enforce_unimodality': False,
             'num_preview': 5,
-            'eps_factor': 0.3,  # Clustering parameter for automatic mode detection
-            'use_clustering': True  # Enable automatic peak clustering
+            'distance_threshold': 2.0,         # Ward clustering distance threshold (log-space)
+            'clustering_strategy': 'silhouette_refined',  # clustering strategy
+            'use_clustering': True,            # Enable automatic peak clustering
+            'peak_method': 'maximum',          # Peak position method: 'maximum' or 'centroid'
+            'use_centroid': False,             # Backward compat alias
         }
 
         # Storage for preview
@@ -321,9 +325,9 @@ class RegularizedDialog(QDialog):
         cluster_group = QGroupBox("Automatic Mode Clustering")
         cluster_layout = QVBoxLayout()
 
-        cluster_info = QLabel("Clustering groups similar peaks across different angles into modes.\n"
-                             "Lower eps_factor = stricter clustering (more modes)\n"
-                             "Higher eps_factor = looser clustering (fewer modes)")
+        cluster_info = QLabel("Hierarchical Ward clustering (JADE 2.0 method).\n"
+                             "Smaller distance threshold = more populations detected.\n"
+                             "Clustering is always performed on D = Γ/q² (angle-independent).")
         cluster_info.setWordWrap(True)
         cluster_info.setStyleSheet("color: #666; font-style: italic;")
         cluster_layout.addWidget(cluster_info)
@@ -334,29 +338,30 @@ class RegularizedDialog(QDialog):
         self.clustering_enabled_check.setToolTip("Groups peaks with similar diffusion coefficients across angles")
         cluster_layout.addWidget(self.clustering_enabled_check)
 
-        # eps_factor slider
-        eps_slider_layout = QHBoxLayout()
-        eps_slider_layout.addWidget(QLabel("eps_factor:"))
+        # Distance threshold
+        thresh_layout = QHBoxLayout()
+        thresh_layout.addWidget(QLabel("Distance threshold (log-space):"))
+        self.distance_threshold_input = QDoubleSpinBox()
+        self.distance_threshold_input.setDecimals(1)
+        self.distance_threshold_input.setRange(0.1, 3.0)
+        self.distance_threshold_input.setValue(2.0)
+        self.distance_threshold_input.setSingleStep(0.1)
+        self.distance_threshold_input.setMinimumWidth(80)
+        self.distance_threshold_input.setToolTip("Threshold in log₁₀-space; smaller = more populations")
+        thresh_layout.addWidget(self.distance_threshold_input)
+        cluster_layout.addLayout(thresh_layout)
 
-        self.eps_factor_slider = QSlider(Qt.Horizontal)
-        self.eps_factor_slider.setRange(5, 100)  # 0.05 to 1.0 (scaled by 100)
-        self.eps_factor_slider.setValue(30)  # 0.3
-        self.eps_factor_slider.setTickPosition(QSlider.TicksBelow)
-        self.eps_factor_slider.setTickInterval(10)
-        self.eps_factor_slider.valueChanged.connect(self.on_eps_factor_slider_changed)
-        eps_slider_layout.addWidget(self.eps_factor_slider)
-
-        # Manual input field
-        self.eps_factor_input = QDoubleSpinBox()
-        self.eps_factor_input.setDecimals(2)
-        self.eps_factor_input.setRange(0.05, 1.0)
-        self.eps_factor_input.setValue(0.3)
-        self.eps_factor_input.setSingleStep(0.05)
-        self.eps_factor_input.setMinimumWidth(80)
-        self.eps_factor_input.valueChanged.connect(self.on_eps_factor_input_changed)
-        eps_slider_layout.addWidget(self.eps_factor_input)
-
-        cluster_layout.addLayout(eps_slider_layout)
+        # Clustering strategy
+        strategy_layout = QHBoxLayout()
+        strategy_layout.addWidget(QLabel("Clustering strategy:"))
+        self.clustering_strategy_combo = QComboBox()
+        self.clustering_strategy_combo.addItems(['silhouette_refined', 'simple'])
+        self.clustering_strategy_combo.setCurrentText('silhouette_refined')
+        self.clustering_strategy_combo.setToolTip(
+            "silhouette_refined: iterative quality optimization (recommended)\n"
+            "simple: threshold-based cluster separation")
+        strategy_layout.addWidget(self.clustering_strategy_combo)
+        cluster_layout.addLayout(strategy_layout)
 
         # Mode detection info label
         self.detected_modes_label = QLabel("Detected modes: N/A (run preview to see)")
@@ -423,6 +428,26 @@ class RegularizedDialog(QDialog):
 
         reg_group.setLayout(reg_layout)
         layout.addWidget(reg_group)
+
+        # Peak Position Method
+        position_group = QGroupBox("Peak Position Method")
+        position_layout = QVBoxLayout()
+
+        self.peak_method_group = QButtonGroup(self)
+        self.peak_method_max = QRadioButton("Maximum (default)")
+        self.peak_method_max.setChecked(True)
+        self.peak_method_max.setToolTip("Tau value at the peak amplitude maximum (classical method)")
+        self.peak_method_centroid = QRadioButton("Centroid (center of mass in log-space)")
+        self.peak_method_centroid.setToolTip(
+            "Weighted center of the peak area in log-τ space.\n"
+            "Recommended for asymmetric or log-distorted distributions.")
+        self.peak_method_group.addButton(self.peak_method_max)
+        self.peak_method_group.addButton(self.peak_method_centroid)
+        position_layout.addWidget(self.peak_method_max)
+        position_layout.addWidget(self.peak_method_centroid)
+
+        position_group.setLayout(position_layout)
+        layout.addWidget(position_group)
 
         # Info box
         info_group = QGroupBox("Advanced Options Information")
@@ -542,22 +567,6 @@ class RegularizedDialog(QDialog):
         self.distance_slider.blockSignals(False)
         self.params['distance'] = value
 
-    def on_eps_factor_slider_changed(self, value):
-        """Handle eps_factor slider change"""
-        eps_factor = value / 100.0
-        self.eps_factor_input.blockSignals(True)
-        self.eps_factor_input.setValue(eps_factor)
-        self.eps_factor_input.blockSignals(False)
-        self.params['eps_factor'] = eps_factor
-
-    def on_eps_factor_input_changed(self, value):
-        """Handle eps_factor manual input change"""
-        slider_value = int(value * 100)
-        self.eps_factor_slider.blockSignals(True)
-        self.eps_factor_slider.setValue(slider_value)
-        self.eps_factor_slider.blockSignals(False)
-        self.params['eps_factor'] = value
-
     def apply_preset(self, preset_name):
         """Apply parameter preset"""
         presets = {
@@ -610,7 +619,7 @@ class RegularizedDialog(QDialog):
             self.preview_info_label.setStyleSheet("color: orange; font-weight: bold;")
 
             # Run preview
-            from regularized_optimized import nnls_preview_random
+            from ade_dls.analysis.regularized_optimized import nnls_preview_random
             import random
 
             # Select random datasets
@@ -651,7 +660,7 @@ class RegularizedDialog(QDialog):
 
     def _create_regularized_preview(self, selected_keys, params):
         """Create preview plots using regularized fit"""
-        from regularized import nnls_reg_simple
+        from ade_dls.analysis.regularized import nnls_reg_simple
         from matplotlib.gridspec import GridSpec
 
         decay_times = params['decay_times']
@@ -731,7 +740,7 @@ class RegularizedDialog(QDialog):
         self.canvas.figure.suptitle(
             f'Regularized NNLS Preview - Alpha: {params["alpha"]:.4f}, '
             f'Prominence: {params["prominence"]:.3f}, Distance: {params["distance"]}, '
-            f'eps_factor: {self.params["eps_factor"]:.2f}',
+            f'Distance threshold: {self.params["distance_threshold"]:.1f}',
             fontsize=12, fontweight='bold'
         )
         self.canvas.figure.tight_layout()
@@ -784,21 +793,35 @@ class RegularizedDialog(QDialog):
                 self.detected_modes_label.setStyleSheet("font-weight: bold; color: orange; padding: 5px;")
                 return
 
-            # Perform mock clustering
-            from peak_clustering import cluster_peaks_across_datasets
+            # Perform preview clustering — hierarchical Ward (same method as full analysis)
+            from ade_dls.analysis.regularized_optimized import calculate_decay_rates
+            from ade_dls.analysis.clustering import cluster_all_gammas
 
-            eps_factor = self.params.get('eps_factor', 0.3)
+            distance_threshold = self.params.get('distance_threshold', 2.0)
+            clustering_strategy = self.params.get('clustering_strategy', 'silhouette_refined')
 
-            clustered_df, cluster_info = cluster_peaks_across_datasets(
+            tau_cols = [c for c in preview_df.columns if c.startswith('tau_')]
+            if not tau_cols:
+                self.detected_modes_label.setText("Detected modes: N/A (no tau columns)")
+                return
+
+            preview_df = calculate_decay_rates(preview_df, tau_cols)
+            gamma_cols = [c.replace('tau', 'gamma') for c in tau_cols]
+
+            _, cluster_info = cluster_all_gammas(
                 preview_df,
-                tau_prefix='tau_',
-                method='dbscan',
-                eps_factor=eps_factor,
-                min_samples=max(2, int(0.2 * len(preview_df)))
+                gamma_cols=gamma_cols,
+                q_squared_col='q^2',
+                enable_clustering=True,
+                normalize_by_q2=True,
+                distance_threshold=distance_threshold,
+                clustering_strategy=clustering_strategy,
+                interactive=False,
+                plot=False,
             )
 
-            # Count modes
-            n_modes = len(cluster_info)
+            # Count reliable modes
+            n_modes = cluster_info.get('n_populations', 0)
 
             # Update label
             mode_text = f"Detected modes: {n_modes} mode{'s' if n_modes != 1 else ''}"
@@ -816,7 +839,7 @@ class RegularizedDialog(QDialog):
 
             self.detected_modes_label.setStyleSheet(f"font-weight: bold; color: {color}; padding: 5px;")
 
-            print(f"[Preview Clustering] Estimated {n_modes} modes with eps_factor={eps_factor:.2f}")
+            print(f"[Preview Clustering] Estimated {n_modes} modes with distance_threshold={distance_threshold:.1f}")
 
         except Exception as e:
             print(f"[Preview Clustering] Error estimating mode count: {e}")
@@ -867,7 +890,7 @@ class RegularizedDialog(QDialog):
 
             # Calculate Γ values from tau values
             # Γ = 1/τ
-            from regularized_optimized import calculate_decay_rates
+            from ade_dls.analysis.regularized_optimized import calculate_decay_rates
             preview_df = calculate_decay_rates(preview_df, tau_cols)
 
             # Get gamma columns
@@ -974,11 +997,13 @@ class RegularizedDialog(QDialog):
         # Advanced options
         self.params['normalize'] = self.normalize_check.isChecked()
         self.params['sparsity_penalty'] = self.sparsity_spin.value()
-        self.params['enforce_unimodality'] = self.unimodal_check.isChecked()
+        self.params['peak_method']  = 'centroid' if self.peak_method_centroid.isChecked() else 'maximum'
+        self.params['use_centroid'] = self.peak_method_centroid.isChecked()  # backward compat
 
         # Clustering parameters
         self.params['use_clustering'] = self.clustering_enabled_check.isChecked()
-        self.params['eps_factor'] = self.eps_factor_input.value()
+        self.params['distance_threshold'] = self.distance_threshold_input.value()
+        self.params['clustering_strategy'] = self.clustering_strategy_combo.currentText()
 
         # Processing options
         self.params['use_multiprocessing'] = self.multiprocessing_check.isChecked()

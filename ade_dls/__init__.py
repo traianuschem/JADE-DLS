@@ -11,9 +11,6 @@ __version__ = "2.0.3dev"
 __author__ = "Your Name"
 __license__ = "GPL-3.0-or-later"
 
-# Package-level imports for convenience
-from ade_dls import core, analysis, utils
-
 __all__ = [
     "__version__",
     "core",

@@ -153,14 +153,14 @@ class LaplaceAnalyzer:
             Tuple of (results DataFrame, plots dictionary)
         """
         import matplotlib.pyplot as plt
-        from regularized_optimized import nnls_optimized, create_exponential_matrix
+        from ade_dls.analysis.regularized_optimized import nnls_optimized, create_exponential_matrix
 
         all_results = []
         plots_dict = {}
         decay_times = params['decay_times']
 
         # Pre-compute T matrix once if all datasets have same time points
-        tau_arrays = [df['t (s)'].to_numpy() for df in self.processed_correlations.values()]
+        tau_arrays = [df['t [s]'].to_numpy() for df in self.processed_correlations.values()]
         all_same_tau = all(np.array_equal(tau_arrays[0], tau) for tau in tau_arrays[1:])
 
         T_matrix = None
@@ -347,27 +347,29 @@ class LaplaceAnalyzer:
         Returns:
             Tuple of (matplotlib Figure, list of selected dataset names, list of results dicts)
         """
-        from regularized_optimized import nnls_preview_random
+        from ade_dls.analysis.regularized_optimized import nnls_preview_random
         return nnls_preview_random(self.processed_correlations, params,
                                   num_datasets=num_datasets, seed=seed)
 
     def calculate_nnls_diffusion_coefficients(self, tau_columns: Optional[List[str]] = None,
                                               x_range: Optional[Tuple[float, float]] = None,
+                                              per_pop_ranges: Optional[dict] = None,
                                               use_clustering: bool = True,
-                                              clustering_method: str = 'dbscan',
-                                              clustering_eps: float = 0.3,
+                                              distance_threshold: float = 2.0,
+                                              clustering_strategy: str = 'silhouette_refined',
                                               use_robust_regression: bool = True,
                                               robust_method: str = 'ransac') -> pd.DataFrame:
         """
-        Calculate diffusion coefficients from NNLS tau values
+        Calculate diffusion coefficients from NNLS tau values using Ward hierarchical clustering.
 
         Args:
             tau_columns: List of tau column names (e.g., ['tau_1', 'tau_2'])
                         If None, auto-detects all tau columns
-            x_range: Optional q² range for fitting (min, max)
-            use_clustering: If True, cluster peaks across angles before regression
-            clustering_method: 'dbscan' or 'log_proximity'
-            clustering_eps: Clustering epsilon parameter (as fraction of data range)
+            x_range: Optional q² range for fitting (applied to all populations)
+            per_pop_ranges: Optional dict {pop_num: (q_min, q_max)} for per-population ranges
+            use_clustering: If True, cluster peaks across angles (Ward) before regression
+            distance_threshold: Log-space distance threshold for Ward clustering
+            clustering_strategy: 'simple', 'silhouette_refined', etc.
             use_robust_regression: If True, use robust regression (RANSAC, Theil-Sen, etc.)
             robust_method: 'ransac', 'theil-sen', or 'huber'
 
@@ -377,73 +379,98 @@ class LaplaceAnalyzer:
         if self.nnls_data is None:
             raise ValueError("Must run NNLS analysis first")
 
-        # Perform peak clustering if requested
-        if use_clustering:
-            print(f"\n[NNLS] Performing automatic peak clustering...")
-            from peak_clustering import cluster_peaks_across_datasets, plot_peak_clustering
-
-            self.nnls_data, cluster_info = cluster_peaks_across_datasets(
-                self.nnls_data,
-                tau_prefix='tau_',
-                method=clustering_method,
-                eps_factor=clustering_eps,
-                min_samples=max(2, int(0.2 * len(self.nnls_data)))
-            )
-
-            # Store clustering info
-            self.nnls_cluster_info = cluster_info
-
-            # Create clustering visualization plot
-            print(f"[NNLS] Creating peak clustering visualization...")
-            self.nnls_clustering_plot = plot_peak_clustering(
-                self.nnls_data,
-                tau_prefix='tau_',
-                cluster_info=cluster_info,
-                show_plot=False
-            )
-
-        # Auto-detect tau columns if not provided (after clustering)
+        # Step 1: Auto-detect tau columns
         if tau_columns is None:
             tau_columns = [col for col in self.nnls_data.columns if col.startswith('tau_')]
 
         print(f"\n[NNLS] Calculating diffusion coefficients for {len(tau_columns)} peaks...")
 
-        # Lazy imports
-        from regularized_optimized import calculate_decay_rates
-
-        # Calculate gamma from tau
+        # Step 2: Compute gamma from tau (required as input to cluster_all_gammas)
+        from ade_dls.analysis.regularized_optimized import calculate_decay_rates
         self.nnls_data = calculate_decay_rates(self.nnls_data, tau_columns)
-
-        # Get corresponding gamma columns
         gamma_columns = [col.replace('tau', 'gamma') for col in tau_columns]
 
-        # Analyze diffusion coefficient via Γ vs q² regression
-        if use_robust_regression:
-            from peak_clustering import analyze_diffusion_coefficient_robust
+        # Step 3: Ward hierarchical clustering (replaces DBSCAN)
+        if use_clustering:
+            print(f"\n[NNLS] Performing Ward hierarchical clustering...")
+            from ade_dls.analysis.clustering import cluster_all_gammas
+            self.nnls_data, cluster_info = cluster_all_gammas(
+                self.nnls_data,
+                gamma_cols=gamma_columns,
+                q_squared_col='q^2',
+                enable_clustering=True,
+                normalize_by_q2=True,
+                distance_threshold=distance_threshold,
+                clustering_strategy=clustering_strategy,
+                interactive=False,
+                plot=True,
+                experiment_name='NNLS'
+            )
+            self.nnls_cluster_info = cluster_info
+            self.nnls_clustering_plot = cluster_info.get('clustering_plot')
+            # Use Ward-assigned population columns for regression
+            pop_columns = sorted([c for c in self.nnls_data.columns if c.startswith('gamma_pop')])
+            if not pop_columns:
+                pop_columns = gamma_columns  # fallback
+        else:
+            pop_columns = gamma_columns
+
+        # Step 4: Analyze diffusion coefficient via Γ vs q² regression
+        # If per_pop_ranges is provided, fit each population individually with its own range
+        if per_pop_ranges:
+            all_results = []
+            if use_robust_regression:
+                from ade_dls.analysis.peak_clustering import analyze_diffusion_coefficient_robust
+                for i, col in enumerate(pop_columns):
+                    pop_range = per_pop_ranges.get(i + 1, x_range)
+                    res = analyze_diffusion_coefficient_robust(
+                        data_df=self.nnls_data,
+                        q_squared_col='q^2',
+                        gamma_cols=[col],
+                        x_range=pop_range,
+                        robust_method=robust_method,
+                        show_plots=False
+                    )
+                    all_results.append(res)
+            else:
+                from ade_dls.analysis.cumulants import analyze_diffusion_coefficient
+                for i, col in enumerate(pop_columns):
+                    pop_range = per_pop_ranges.get(i + 1, x_range)
+                    res = analyze_diffusion_coefficient(
+                        data_df=self.nnls_data,
+                        q_squared_col='q^2',
+                        gamma_cols=[col],
+                        x_range=pop_range,
+                        show_plots=False
+                    )
+                    all_results.append(res)
+            self.nnls_diff_results = pd.concat(all_results, ignore_index=True)
+        elif use_robust_regression:
+            from ade_dls.analysis.peak_clustering import analyze_diffusion_coefficient_robust
             print(f"[NNLS] Using robust regression: {robust_method.upper()}")
             self.nnls_diff_results = analyze_diffusion_coefficient_robust(
                 data_df=self.nnls_data,
                 q_squared_col='q^2',
-                gamma_cols=gamma_columns,
+                gamma_cols=pop_columns,
                 x_range=x_range,
                 robust_method=robust_method,
-                show_plots=False  # Don't show plots - they're displayed in GUI
+                show_plots=False
             )
         else:
             from ade_dls.analysis.cumulants import analyze_diffusion_coefficient
             self.nnls_diff_results = analyze_diffusion_coefficient(
                 data_df=self.nnls_data,
                 q_squared_col='q^2',
-                gamma_cols=gamma_columns,
+                gamma_cols=pop_columns,
                 x_range=x_range,
-                show_plots=False  # Don't show plots - they're displayed in GUI
+                show_plots=False
             )
 
-        # Create summary plot (Gamma vs q²)
+        # Step 5: Create summary plot (Gamma vs q²)
         print(f"[NNLS] Creating Gamma vs q² summary plot...")
         self._create_nnls_summary_plot()
 
-        # Calculate Rh for each peak
+        # Step 6: Calculate Rh for each peak
         self._calculate_nnls_final_results()
 
         print(f"[NNLS] Diffusion coefficient analysis complete.")
@@ -453,11 +480,14 @@ class LaplaceAnalyzer:
         """Create summary plot for NNLS diffusion analysis (Gamma vs q²)"""
         from ade_dls.gui.analysis.cumulant_plotting import create_summary_plot
 
-        # Get gamma columns
-        gamma_cols = [col for col in self.nnls_data.columns if col.startswith('gamma_')]
+        # Prefer Ward-clustered population columns; fall back to raw gamma columns
+        gamma_cols = sorted([c for c in self.nnls_data.columns if c.startswith('gamma_pop')])
+        if not gamma_cols:
+            gamma_cols = sorted([c for c in self.nnls_data.columns
+                                  if c.startswith('gamma_') and not c.startswith('gamma_pop')])
 
         # Create peak labels
-        peak_labels = [f'NNLS Peak {i+1}' for i in range(len(gamma_cols))]
+        peak_labels = [f'NNLS Pop {i+1}' for i in range(len(gamma_cols))]
 
         # Create the summary plot
         self.nnls_summary_plot = create_summary_plot(
@@ -503,14 +533,23 @@ class LaplaceAnalyzer:
             # Create label with optional suffix
             fit_label = f'NNLS Peak {i+1}{label_suffix}'
 
+            # Aggregate per-peak shape statistics from per-file data
+            peak_num = i + 1
+            def _col_mean(col):
+                return self.nnls_data[col].mean(skipna=True) if col in self.nnls_data.columns else np.nan
+
             result = pd.DataFrame({
-                'Rh [nm]': [Rh_nm],
-                'Rh error [nm]': [Rh_error_nm],
-                'D [m^2/s]': [D_m2s],
+                'Rh [nm]':         [Rh_nm],
+                'Rh error [nm]':   [Rh_error_nm],
+                'D [m^2/s]':       [D_m2s],
                 'D error [m^2/s]': [D_err_m2s],
-                'R_squared': [self.nnls_diff_results['R_squared'][i]],
-                'Fit': [fit_label],
-                'Residuals': [self.nnls_diff_results.get('Normality', [0])[i]]
+                'R_squared':       [self.nnls_diff_results['R_squared'][i]],
+                'Fit':             [fit_label],
+                'Residuals':       [np.nan],
+                'PDI':             [np.nan],
+                'Skewness':        [_col_mean(f'skewness_{peak_num}')],
+                'Kurtosis':        [_col_mean(f'kurtosis_{peak_num}')],
+                'Abundance [%]':   [_col_mean(f'normalized_area_percent_{peak_num}')],
             })
             temp_results.append(result)
 
@@ -519,7 +558,7 @@ class LaplaceAnalyzer:
             print("[NNLS] Warning: No valid results to finalize. Creating empty DataFrame.")
             new_results = pd.DataFrame(columns=[
                 'Rh [nm]', 'Rh error [nm]', 'D [m^2/s]', 'D error [m^2/s]',
-                'R_squared', 'Fit', 'Residuals'
+                'R_squared', 'Fit', 'Residuals', 'PDI', 'Skewness', 'Kurtosis', 'Abundance [%]'
             ])
         else:
             new_results = pd.concat(temp_results, ignore_index=True)
@@ -614,7 +653,7 @@ class LaplaceAnalyzer:
             Tuple of (results DataFrame, full_results dict, plots dictionary)
         """
         import matplotlib.pyplot as plt
-        from regularized_optimized import regularized_nnls_optimized, create_exponential_matrix
+        from ade_dls.analysis.regularized_optimized import regularized_nnls_optimized, create_exponential_matrix
 
         all_results = []
         plots_dict = {}
@@ -622,7 +661,7 @@ class LaplaceAnalyzer:
         decay_times = params['decay_times']
 
         # Pre-compute T matrix once if all datasets have same time points
-        tau_arrays = [df['t (s)'].to_numpy() for df in self.processed_correlations.values()]
+        tau_arrays = [df['t [s]'].to_numpy() for df in self.processed_correlations.values()]
         all_same_tau = all(np.array_equal(tau_arrays[0], tau) for tau in tau_arrays[1:])
 
         T_matrix = None
@@ -823,20 +862,22 @@ class LaplaceAnalyzer:
     def calculate_regularized_diffusion_coefficients(self,
                                                     tau_columns: Optional[List[str]] = None,
                                                     x_range: Optional[Tuple[float, float]] = None,
+                                                    per_pop_ranges: Optional[dict] = None,
                                                     use_clustering: bool = True,
-                                                    clustering_method: str = 'dbscan',
-                                                    clustering_eps: float = 0.3,
+                                                    distance_threshold: float = 2.0,
+                                                    clustering_strategy: str = 'silhouette_refined',
                                                     use_robust_regression: bool = True,
                                                     robust_method: str = 'ransac') -> pd.DataFrame:
         """
-        Calculate diffusion coefficients from regularized fit tau values
+        Calculate diffusion coefficients from regularized fit tau values using Ward hierarchical clustering.
 
         Args:
             tau_columns: List of tau column names
-            x_range: Optional q² range for fitting
-            use_clustering: If True, cluster peaks across angles before regression
-            clustering_method: 'dbscan' or 'log_proximity'
-            clustering_eps: Clustering epsilon parameter (as fraction of data range)
+            x_range: Optional q² range for fitting (applied to all populations)
+            per_pop_ranges: Optional dict {pop_num: (q_min, q_max)} for per-population ranges
+            use_clustering: If True, cluster peaks across angles (Ward) before regression
+            distance_threshold: Log-space distance threshold for Ward clustering
+            clustering_strategy: 'simple', 'silhouette_refined', etc.
             use_robust_regression: If True, use robust regression (RANSAC, Theil-Sen, etc.)
             robust_method: 'ransac', 'theil-sen', or 'huber'
 
@@ -846,73 +887,98 @@ class LaplaceAnalyzer:
         if self.regularized_data is None:
             raise ValueError("Must run regularized analysis first")
 
-        # Perform peak clustering if requested
-        if use_clustering:
-            print(f"\n[Regularized] Performing automatic peak clustering...")
-            from peak_clustering import cluster_peaks_across_datasets, plot_peak_clustering
-
-            self.regularized_data, cluster_info = cluster_peaks_across_datasets(
-                self.regularized_data,
-                tau_prefix='tau_',
-                method=clustering_method,
-                eps_factor=clustering_eps,
-                min_samples=max(2, int(0.2 * len(self.regularized_data)))
-            )
-
-            # Store clustering info
-            self.regularized_cluster_info = cluster_info
-
-            # Create clustering visualization plot
-            print(f"[Regularized] Creating peak clustering visualization...")
-            self.regularized_clustering_plot = plot_peak_clustering(
-                self.regularized_data,
-                tau_prefix='tau_',
-                cluster_info=cluster_info,
-                show_plot=False
-            )
-
-        # Auto-detect tau columns if not provided (after clustering)
+        # Step 1: Auto-detect tau columns
         if tau_columns is None:
             tau_columns = [col for col in self.regularized_data.columns if col.startswith('tau_')]
 
         print(f"\n[Regularized] Calculating diffusion coefficients for {len(tau_columns)} peaks...")
 
-        # Lazy imports
-        from regularized_optimized import calculate_decay_rates
-
-        # Calculate gamma from tau
+        # Step 2: Compute gamma from tau (required as input to cluster_all_gammas)
+        from ade_dls.analysis.regularized_optimized import calculate_decay_rates
         self.regularized_data = calculate_decay_rates(self.regularized_data, tau_columns)
-
-        # Get corresponding gamma columns
         gamma_columns = [col.replace('tau', 'gamma') for col in tau_columns]
 
-        # Analyze diffusion coefficient
-        if use_robust_regression:
-            from peak_clustering import analyze_diffusion_coefficient_robust
+        # Step 3: Ward hierarchical clustering (replaces DBSCAN)
+        if use_clustering:
+            print(f"\n[Regularized] Performing Ward hierarchical clustering...")
+            from ade_dls.analysis.clustering import cluster_all_gammas
+            self.regularized_data, cluster_info = cluster_all_gammas(
+                self.regularized_data,
+                gamma_cols=gamma_columns,
+                q_squared_col='q^2',
+                enable_clustering=True,
+                normalize_by_q2=True,
+                distance_threshold=distance_threshold,
+                clustering_strategy=clustering_strategy,
+                interactive=False,
+                plot=True,
+                experiment_name='Regularized'
+            )
+            self.regularized_cluster_info = cluster_info
+            self.regularized_clustering_plot = cluster_info.get('clustering_plot')
+            # Use Ward-assigned population columns for regression
+            pop_columns = sorted([c for c in self.regularized_data.columns if c.startswith('gamma_pop')])
+            if not pop_columns:
+                pop_columns = gamma_columns  # fallback
+        else:
+            pop_columns = gamma_columns
+
+        # Step 4: Analyze diffusion coefficient
+        # If per_pop_ranges is provided, fit each population individually with its own range
+        if per_pop_ranges:
+            all_results = []
+            if use_robust_regression:
+                from ade_dls.analysis.peak_clustering import analyze_diffusion_coefficient_robust
+                for i, col in enumerate(pop_columns):
+                    pop_range = per_pop_ranges.get(i + 1, x_range)
+                    res = analyze_diffusion_coefficient_robust(
+                        data_df=self.regularized_data,
+                        q_squared_col='q^2',
+                        gamma_cols=[col],
+                        x_range=pop_range,
+                        robust_method=robust_method,
+                        show_plots=False
+                    )
+                    all_results.append(res)
+            else:
+                from ade_dls.analysis.cumulants import analyze_diffusion_coefficient
+                for i, col in enumerate(pop_columns):
+                    pop_range = per_pop_ranges.get(i + 1, x_range)
+                    res = analyze_diffusion_coefficient(
+                        data_df=self.regularized_data,
+                        q_squared_col='q^2',
+                        gamma_cols=[col],
+                        x_range=pop_range,
+                        show_plots=False
+                    )
+                    all_results.append(res)
+            self.regularized_diff_results = pd.concat(all_results, ignore_index=True)
+        elif use_robust_regression:
+            from ade_dls.analysis.peak_clustering import analyze_diffusion_coefficient_robust
             print(f"[Regularized] Using robust regression: {robust_method.upper()}")
             self.regularized_diff_results = analyze_diffusion_coefficient_robust(
                 data_df=self.regularized_data,
                 q_squared_col='q^2',
-                gamma_cols=gamma_columns,
+                gamma_cols=pop_columns,
                 x_range=x_range,
                 robust_method=robust_method,
-                show_plots=False  # Don't show plots - they're displayed in GUI
+                show_plots=False
             )
         else:
             from ade_dls.analysis.cumulants import analyze_diffusion_coefficient
             self.regularized_diff_results = analyze_diffusion_coefficient(
                 data_df=self.regularized_data,
                 q_squared_col='q^2',
-                gamma_cols=gamma_columns,
+                gamma_cols=pop_columns,
                 x_range=x_range,
-                show_plots=False  # Don't show plots - they're displayed in GUI
+                show_plots=False
             )
 
-        # Create summary plot (Gamma vs q²)
+        # Step 5: Create summary plot (Gamma vs q²)
         print(f"[Regularized] Creating Gamma vs q² summary plot...")
         self._create_regularized_summary_plot()
 
-        # Calculate Rh for each peak
+        # Step 6: Calculate Rh for each peak
         self._calculate_regularized_final_results()
 
         print(f"[Regularized] Diffusion coefficient analysis complete.")
@@ -922,11 +988,14 @@ class LaplaceAnalyzer:
         """Create summary plot for regularized diffusion analysis (Gamma vs q²)"""
         from ade_dls.gui.analysis.cumulant_plotting import create_summary_plot
 
-        # Get gamma columns
-        gamma_cols = [col for col in self.regularized_data.columns if col.startswith('gamma_')]
+        # Prefer Ward-clustered population columns; fall back to raw gamma columns
+        gamma_cols = sorted([c for c in self.regularized_data.columns if c.startswith('gamma_pop')])
+        if not gamma_cols:
+            gamma_cols = sorted([c for c in self.regularized_data.columns
+                                  if c.startswith('gamma_') and not c.startswith('gamma_pop')])
 
         # Create peak labels
-        peak_labels = [f'Regularized Peak {i+1}' for i in range(len(gamma_cols))]
+        peak_labels = [f'Regularized Pop {i+1}' for i in range(len(gamma_cols))]
 
         # Create the summary plot
         self.regularized_summary_plot = create_summary_plot(
@@ -937,8 +1006,14 @@ class LaplaceAnalyzer:
             '1/s'
         )
 
-    def _calculate_regularized_final_results(self):
-        """Internal: Calculate final regularized results with Rh values"""
+    def _calculate_regularized_final_results(self, append_mode=False, label_suffix=""):
+        """
+        Internal: Calculate final regularized results with Rh values
+
+        Args:
+            append_mode: If True, append to existing results instead of replacing
+            label_suffix: Suffix to add to result labels (e.g., " (Post-Refined)")
+        """
         if self.regularized_diff_results is None:
             raise ValueError("Must calculate diffusion coefficients first")
 
@@ -969,8 +1044,8 @@ class LaplaceAnalyzer:
                 'D [m^2/s]': [D_m2s],
                 'D error [m^2/s]': [D_err_m2s],
                 'R_squared': [self.regularized_diff_results['R_squared'][i]],
-                'Fit': [f'Regularized Peak {i+1}'],
-                'Residuals': [self.regularized_diff_results.get('Normality', [0])[i]],
+                'Fit': [f'Regularized Peak {i+1}{label_suffix}'],
+                'Residuals': [np.nan],
                 'Alpha': [self.regularized_params.get('alpha', 0)]
             })
             temp_results.append(result)
@@ -978,12 +1053,19 @@ class LaplaceAnalyzer:
         # Check if we have valid results
         if len(temp_results) == 0:
             print("[Regularized] Warning: No valid results to finalize. Creating empty DataFrame.")
-            self.regularized_final_results = pd.DataFrame(columns=[
+            new_results = pd.DataFrame(columns=[
                 'Rh [nm]', 'Rh error [nm]', 'D [m^2/s]', 'D error [m^2/s]',
                 'R_squared', 'Fit', 'Residuals', 'Alpha'
             ])
         else:
-            self.regularized_final_results = pd.concat(temp_results, ignore_index=True)
+            new_results = pd.concat(temp_results, ignore_index=True)
+
+        # Append or replace based on mode
+        if append_mode and self.regularized_final_results is not None and not self.regularized_final_results.empty:
+            print(f"[Regularized] Appending {len(new_results)} new results to {len(self.regularized_final_results)} existing results")
+            self.regularized_final_results = pd.concat([self.regularized_final_results, new_results], ignore_index=True)
+        else:
+            self.regularized_final_results = new_results
 
     def plot_angle_comparison(self, angles: Optional[List[float]] = None,
                              measurement_mode: str = 'average',

@@ -11,7 +11,7 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
                              QLabel, QDoubleSpinBox, QFormLayout, QTabWidget,
                              QWidget, QGroupBox, QMessageBox, QSizePolicy,
                              QListWidget, QListWidgetItem, QCheckBox, QScrollArea,
-                             QSplitter, QSpinBox)
+                             QSplitter, QSpinBox, QComboBox)
 from PyQt5.QtCore import Qt
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -436,10 +436,26 @@ class LaplacePostFitRefinementDialog(QDialog):
         # Store refinement parameters
         self.q_range = None
         self.excluded_files = []
+        self._clustering_params = {}
+        self._per_pop_ranges = {}
+
+        # Pre-compute data and clustering metadata
+        if self.is_nnls:
+            self._data = getattr(analyzer, 'nnls_data', None)
+            self._cluster_info = getattr(analyzer, 'nnls_cluster_info', None)
+        else:
+            self._data = getattr(analyzer, 'regularized_data', None)
+            self._cluster_info = getattr(analyzer, 'regularized_cluster_info', None)
+
+        self._pop_cols = (
+            sorted([c for c in self._data.columns if c.startswith('gamma_pop')])
+            if self._data is not None else []
+        )
+        self._pop_widgets = {}   # pop_num -> dict of widget refs
 
         self.setWindowTitle(f"{method_name} Post-Fit Refinement")
         self.setModal(True)
-        self.resize(900, 700)
+        self.resize(950, 750)
 
         self.init_ui()
 
@@ -453,8 +469,8 @@ class LaplacePostFitRefinementDialog(QDialog):
         layout.addWidget(title)
 
         description = QLabel(
-            f"Refine your {self.method_name} analysis results by adjusting the q² range for "
-            "diffusion coefficient calculation and/or excluding individual distributions."
+            f"Refine your {self.method_name} analysis results: adjust the fitting q² range, "
+            "exclude distributions, re-configure clustering, or tune per-population q² ranges."
         )
         description.setWordWrap(True)
         layout.addWidget(description)
@@ -462,11 +478,19 @@ class LaplacePostFitRefinementDialog(QDialog):
         # Create tabs
         self.tabs = QTabWidget()
 
-        # Tab 1: Q² range adjustment
+        # Tab 1: Q² range adjustment (combined)
         self.tabs.addTab(self.create_q_range_tab(), "1. Fitting Range")
 
         # Tab 2: Distribution exclusion
         self.tabs.addTab(self.create_exclusion_tab(), "2. Distribution Selection")
+
+        # Tab 3: Clustering settings
+        self.tabs.addTab(self.create_clustering_tab(), "3. Clustering")
+
+        # Per-population tabs (one per detected population)
+        for i, col in enumerate(self._pop_cols):
+            pop_num = i + 1
+            self.tabs.addTab(self.create_population_tab(pop_num, col), f"Pop. {pop_num}")
 
         layout.addWidget(self.tabs)
 
@@ -511,10 +535,9 @@ class LaplacePostFitRefinementDialog(QDialog):
         # Get data for plotting
         if self.is_nnls:
             data = self.analyzer.nnls_data
-            gamma_cols = [col for col in data.columns if col.startswith('gamma_')]
         else:
             data = self.analyzer.regularized_data
-            gamma_cols = [col for col in data.columns if col.startswith('gamma_')]
+        gamma_cols = [col for col in data.columns if col.startswith('gamma_')] if data is not None else []
 
         # Add interactive Γ vs q² plot
         if data is not None and gamma_cols:
@@ -602,6 +625,242 @@ class LaplacePostFitRefinementDialog(QDialog):
         tab.setLayout(layout)
         return tab
 
+    # ------------------------------------------------------------------ #
+    #  Clustering tab                                                      #
+    # ------------------------------------------------------------------ #
+
+    def create_clustering_tab(self):
+        """Create clustering settings tab with live preview (mirrors Method D)."""
+        tab = QWidget()
+        layout = QVBoxLayout()
+
+        info = QLabel(
+            "<b>Adjust clustering parameters</b> to control how decay rates are grouped into "
+            "populations before diffusion coefficient fitting. "
+            "Click <i>Refresh Preview</i> to see the effect without applying."
+        )
+        info.setWordWrap(True)
+        info.setStyleSheet("padding: 8px; background-color: #e3f2fd; border-radius: 4px;")
+        layout.addWidget(info)
+
+        settings_group = QGroupBox("Clustering Settings")
+        form = QFormLayout()
+
+        self._cl_use = QCheckBox("Enable clustering")
+        current_use = self._cluster_info.get('enable_clustering', True) if self._cluster_info else True
+        self._cl_use.setChecked(current_use)
+        form.addRow("", self._cl_use)
+
+        self._cl_strategy = QComboBox()
+        self._cl_strategy.addItems(["Hierarchical – Ward linkage", "Simple – gap-based"])
+        current_strategy = self._cluster_info.get('clustering_strategy', 'silhouette_refined') if self._cluster_info else 'silhouette_refined'
+        if 'simple' in current_strategy.lower():
+            self._cl_strategy.setCurrentIndex(1)
+        form.addRow("Method:", self._cl_strategy)
+
+        self._cl_distance = QDoubleSpinBox()
+        self._cl_distance.setRange(0.01, 10.0)
+        self._cl_distance.setSingleStep(0.1)
+        self._cl_distance.setDecimals(3)
+        current_dist = self._cluster_info.get('distance_threshold', 2.0) if self._cluster_info else 2.0
+        self._cl_distance.setValue(current_dist)
+        self._cl_distance.setToolTip("Log-space distance threshold. Lower = more populations detected.")
+        form.addRow("Distance threshold:", self._cl_distance)
+
+        self._cl_silhouette = QCheckBox("Silhouette-based cluster refinement")
+        self._cl_silhouette.setChecked('silhouette' in current_strategy.lower())
+        form.addRow("", self._cl_silhouette)
+
+        settings_group.setLayout(form)
+        layout.addWidget(settings_group)
+
+        refresh_btn = QPushButton("↺  Refresh Clustering Preview")
+        refresh_btn.clicked.connect(self._refresh_clustering_preview)
+        layout.addWidget(refresh_btn)
+
+        self._cl_fig, self._cl_axes = plt.subplots(1, 2, figsize=(10, 4))
+        self._cl_canvas = FigureCanvas(self._cl_fig)
+        self._cl_canvas.setMinimumHeight(280)
+        layout.addWidget(self._cl_canvas)
+
+        self._cl_stats_label = QLabel(
+            "Click '↺ Refresh Clustering Preview' to preview the clustering result."
+        )
+        self._cl_stats_label.setWordWrap(True)
+        layout.addWidget(self._cl_stats_label)
+
+        tab.setLayout(layout)
+        return tab
+
+    def _refresh_clustering_preview(self):
+        """Re-run clustering with current dialog settings and update the preview plot."""
+        if self._data is None:
+            self._cl_stats_label.setText("No data available for preview.")
+            return
+
+        gamma_cols = sorted([
+            c for c in self._data.columns
+            if c.startswith('gamma_') and not c.startswith('gamma_pop')
+        ])
+        if not gamma_cols:
+            self._cl_stats_label.setText("No gamma columns found in data for clustering preview.")
+            return
+
+        strategy_text = self._cl_strategy.currentText()
+        if 'Ward' in strategy_text:
+            strategy = 'silhouette_refined' if self._cl_silhouette.isChecked() else 'hierarchical'
+        else:
+            strategy = 'simple'
+
+        try:
+            from ade_dls.analysis.clustering import cluster_all_gammas
+            preview_df, cluster_info = cluster_all_gammas(
+                self._data.copy(),
+                gamma_cols=gamma_cols,
+                q_squared_col='q^2',
+                enable_clustering=self._cl_use.isChecked(),
+                normalize_by_q2=True,
+                distance_threshold=self._cl_distance.value(),
+                clustering_strategy=strategy,
+                interactive=False,
+                plot=False,
+                experiment_name=self.method_name
+            )
+            self._draw_clustering_preview(preview_df, cluster_info)
+        except Exception as e:
+            self._cl_stats_label.setText(f"Preview failed: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _draw_clustering_preview(self, df, cluster_info):
+        """Draw the clustering preview on the embedded matplotlib figure."""
+        for ax in self._cl_axes:
+            ax.clear()
+
+        pop_cols = sorted([c for c in df.columns if c.startswith('gamma_pop')])
+        q2 = df['q^2'].values if 'q^2' in df.columns else None
+        colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+        stats_parts = []
+
+        for i, col in enumerate(pop_cols):
+            pop_num = i + 1
+            vals = df[col].values
+            if q2 is not None:
+                mask = ~np.isnan(vals) & ~np.isnan(q2) & (q2 > 0)
+                gv, q2v = vals[mask], q2[mask]
+            else:
+                mask = ~np.isnan(vals)
+                gv = vals[mask]
+                q2v = np.ones(mask.sum())
+
+            color = colors[i % len(colors)]
+            label = f"Pop. {pop_num}"
+
+            self._cl_axes[0].scatter(q2v, gv, color=color, alpha=0.7, s=30, label=label)
+
+            D_vals = gv / np.maximum(q2v, 1e-30)
+            log_D = np.log10(np.maximum(D_vals, 1e-30))
+            if len(log_D) > 1:
+                self._cl_axes[1].hist(log_D, bins=min(20, len(log_D)), color=color, alpha=0.5, label=label)
+
+            abundance = cluster_info.get(f'abundance_pop_{pop_num}', np.nan) if cluster_info else np.nan
+            if not np.isnan(abundance):
+                stats_parts.append(f"Pop. {pop_num}: {abundance*100:.1f}%")
+
+        self._cl_axes[0].set_xlabel("q² [nm⁻²]")
+        self._cl_axes[0].set_ylabel("Γ [s⁻¹]")
+        self._cl_axes[0].set_title("Γ vs q² by Population")
+        if pop_cols:
+            self._cl_axes[0].legend(fontsize=8)
+
+        self._cl_axes[1].set_xlabel("log₁₀(D [nm²/s])")
+        self._cl_axes[1].set_ylabel("Count")
+        self._cl_axes[1].set_title("D Distribution by Population")
+        if pop_cols:
+            self._cl_axes[1].legend(fontsize=8)
+
+        self._cl_fig.tight_layout()
+        self._cl_canvas.draw()
+
+        n_pops = len(pop_cols)
+        sil = cluster_info.get('silhouette_score', None) if cluster_info else None
+        stats_str = f"Populations found: {n_pops}"
+        if sil is not None and not (isinstance(sil, float) and np.isnan(sil)):
+            stats_str += f"  |  Silhouette score: {sil:.3f}"
+        if stats_parts:
+            stats_str += "  |  " + "  ".join(stats_parts)
+        self._cl_stats_label.setText(stats_str)
+
+    # ------------------------------------------------------------------ #
+    #  Per-population tabs                                                 #
+    # ------------------------------------------------------------------ #
+
+    def create_population_tab(self, pop_num, col):
+        """Create a per-population q² range tab (mirrors Method D population tabs)."""
+        tab = QWidget()
+        layout = QVBoxLayout()
+
+        if self._data is not None:
+            plot_widget = InteractivePlotWidget(
+                self._data, [col], 'q^2', f"Pop. {pop_num}", self
+            )
+            layout.addWidget(plot_widget)
+
+        q_group = QGroupBox(f"Q² Range for Population {pop_num}")
+        q_form = QFormLayout()
+
+        enable_q = QCheckBox("Apply custom q² range for this population")
+        q_form.addRow("", enable_q)
+
+        q_min_sb = QDoubleSpinBox()
+        q_min_sb.setRange(0, 1e9)
+        q_min_sb.setDecimals(6)
+        q_min_sb.setSuffix(" nm⁻²")
+
+        q_max_sb = QDoubleSpinBox()
+        q_max_sb.setRange(0, 1e9)
+        q_max_sb.setDecimals(6)
+        q_max_sb.setSuffix(" nm⁻²")
+
+        if self._data is not None and 'q^2' in self._data.columns:
+            q2_vals = self._data['q^2'].dropna()
+            if not q2_vals.empty:
+                q_min_sb.setValue(float(q2_vals.min()))
+                q_max_sb.setValue(float(q2_vals.max()))
+
+        q_min_sb.setEnabled(False)
+        q_max_sb.setEnabled(False)
+
+        def _toggle(checked, mn=q_min_sb, mx=q_max_sb):
+            mn.setEnabled(checked)
+            mx.setEnabled(checked)
+        enable_q.toggled.connect(_toggle)
+
+        q_form.addRow("Min q²:", q_min_sb)
+        q_form.addRow("Max q²:", q_max_sb)
+        q_group.setLayout(q_form)
+        layout.addWidget(q_group)
+
+        info = QLabel(
+            "<b>Effect:</b> Recalculates the diffusion coefficient for this population "
+            "using only data points within the specified q² range."
+        )
+        info.setWordWrap(True)
+        info.setStyleSheet("padding: 8px; background-color: #e3f2fd; border-radius: 4px;")
+        layout.addWidget(info)
+
+        layout.addStretch()
+        tab.setLayout(layout)
+
+        self._pop_widgets[pop_num] = {
+            'enable_q': enable_q,
+            'q_min': q_min_sb,
+            'q_max': q_max_sb,
+        }
+        return tab
+
+    # ------------------------------------------------------------------ #
+
     def update_q_range_from_plot(self, q_min, q_max):
         """
         Update spinboxes when user selects range in plot
@@ -647,7 +906,7 @@ class LaplacePostFitRefinementDialog(QDialog):
 
     def apply_refinement(self):
         """Apply refinement and recalculate results"""
-        # Validate inputs
+        # Validate combined q² range
         if self.q_min.value() >= self.q_max.value():
             QMessageBox.warning(
                 self,
@@ -662,7 +921,34 @@ class LaplacePostFitRefinementDialog(QDialog):
         if hasattr(self, 'exclusion_widget'):
             self.excluded_files = self.exclusion_widget.get_excluded_files()
 
-        # Accept dialog
+        # Collect clustering params
+        if hasattr(self, '_cl_use'):
+            strategy_text = self._cl_strategy.currentText()
+            if 'Ward' in strategy_text:
+                strategy = 'silhouette_refined' if self._cl_silhouette.isChecked() else 'hierarchical'
+            else:
+                strategy = 'simple'
+            self._clustering_params = {
+                'use_clustering': self._cl_use.isChecked(),
+                'clustering_strategy': strategy,
+                'distance_threshold': self._cl_distance.value(),
+            }
+
+        # Collect per-population q² ranges
+        self._per_pop_ranges = {}
+        for pop_num, refs in self._pop_widgets.items():
+            if refs['enable_q'].isChecked():
+                q_min = refs['q_min'].value()
+                q_max = refs['q_max'].value()
+                if q_min >= q_max:
+                    QMessageBox.warning(
+                        self,
+                        "Invalid Range",
+                        f"Population {pop_num}: Minimum q² must be less than maximum q²."
+                    )
+                    return
+                self._per_pop_ranges[pop_num] = (q_min, q_max)
+
         self.accept()
 
     def get_refinement_params(self):
@@ -670,9 +956,11 @@ class LaplacePostFitRefinementDialog(QDialog):
         Get refinement parameters
 
         Returns:
-            dict: Dictionary with refinement parameters
+            dict with keys: q_range, excluded_files, clustering, per_pop_ranges
         """
         return {
             'q_range': self.q_range,
-            'excluded_files': self.excluded_files
+            'excluded_files': self.excluded_files,
+            'clustering': self._clustering_params,
+            'per_pop_ranges': self._per_pop_ranges,
         }

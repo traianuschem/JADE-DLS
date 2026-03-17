@@ -23,11 +23,6 @@ from .core.status_manager import StatusManager, ProgressDialog
 from .core.data_loader import DataLoader
 from .dialogs.filtering_dialogs import CountrateFilterDialog, CorrelationFilterDialog
 from .dialogs.cumulant_dialog import CumulantADialog, CumulantBDialog, CumulantCDialog, CumulantDDialog
-from .dialogs.nnls_dialog import NNLSDialog
-from .dialogs.nnls_results_dialog import NNLSResultsDialog
-from .dialogs.regularized_dialog import RegularizedDialog
-from .analysis.cumulant_analyzer import CumulantAnalyzer
-from .analysis.laplace_analyzer import LaplaceAnalyzer
 
 
 class JADEDLSMainWindow(QMainWindow):
@@ -393,6 +388,7 @@ class JADEDLSMainWindow(QMainWindow):
             )
             return None
 
+        from .analysis.cumulant_analyzer import CumulantAnalyzer
         analyzer = CumulantAnalyzer(working_data, working_data['data_folder'])
 
         if getattr(self, '_pending_noise_params', None):
@@ -1650,6 +1646,7 @@ print(method_d_results)
             processed_corr = working_data.get('processed_correlations', None)
             raw_corr = working_data.get('correlations', None) if processed_corr is None else None
 
+            from .analysis.laplace_analyzer import LaplaceAnalyzer
             self.laplace_analyzer = LaplaceAnalyzer(
                 processed_correlations=processed_corr,
                 df_basedata=working_data['df_basedata'],
@@ -1657,6 +1654,7 @@ print(method_d_results)
                 delta_c=working_data['delta_c'],
                 raw_correlations=raw_corr
             )
+            self.laplace_analyzer_nnls = self.laplace_analyzer
 
             # Apply noise correction if parameters were set by CorrelationFilterDialog
             if getattr(self, '_pending_noise_params', None) and \
@@ -1684,6 +1682,7 @@ print(method_d_results)
                 )
 
             # Show NNLS dialog
+            from .dialogs.nnls_dialog import NNLSDialog
             dialog = NNLSDialog(self.laplace_analyzer, self)
             if dialog.exec_() == dialog.Accepted:
                 params = dialog.get_parameters()
@@ -1817,6 +1816,7 @@ print(method_d_results)
             )
             return
 
+        from .dialogs.nnls_results_dialog import NNLSResultsDialog
         dialog = NNLSResultsDialog(self.laplace_analyzer, self)
         dialog.exec_()
 
@@ -1862,6 +1862,7 @@ print(method_d_results)
             processed_corr = working_data.get('processed_correlations', None)
             raw_corr = working_data.get('correlations', None) if processed_corr is None else None
 
+            from .analysis.laplace_analyzer import LaplaceAnalyzer
             self.laplace_analyzer = LaplaceAnalyzer(
                 processed_correlations=processed_corr,
                 df_basedata=working_data['df_basedata'],
@@ -1869,6 +1870,7 @@ print(method_d_results)
                 delta_c=working_data['delta_c'],
                 raw_correlations=raw_corr
             )
+            self.laplace_analyzer_regularized = self.laplace_analyzer
 
             # Apply noise correction if parameters were set by CorrelationFilterDialog
             if getattr(self, '_pending_noise_params', None) and \
@@ -1896,6 +1898,7 @@ print(method_d_results)
                 )
 
             # Show Regularized dialog
+            from .dialogs.regularized_dialog import RegularizedDialog
             dialog = RegularizedDialog(self.laplace_analyzer, self)
             if dialog.exec_() == dialog.Accepted:
                 params = dialog.get_parameters()
@@ -1914,7 +1917,11 @@ print(method_d_results)
 
                     # Calculate diffusion coefficients
                     self.status_manager.update("Calculating diffusion coefficients...")
-                    self.laplace_analyzer.calculate_regularized_diffusion_coefficients()
+                    self.laplace_analyzer.calculate_regularized_diffusion_coefficients(
+                        use_clustering=params.get('use_clustering', True),
+                        distance_threshold=params.get('distance_threshold', 2.0),
+                        clustering_strategy=params.get('clustering_strategy', 'silhouette_refined'),
+                    )
 
                     # Add to pipeline
                     self._add_regularized_step_to_pipeline(params)
@@ -2230,18 +2237,21 @@ print(regularized_final_results_df)
         self.pipeline.steps.append(step)
         self.pipeline.step_added.emit(step.to_dict())
 
-def main():
+def main(app=None, splash=None):
     """Main entry point for ADE-DLS GUI application."""
-    import sys
     from PyQt5.QtWidgets import QApplication
-    
-    app = QApplication(sys.argv)
+
+    if app is None:
+        app = QApplication(sys.argv)
     app.setApplicationName("ADE-DLS")
     app.setOrganizationName("ADE-DLS")
-    
+
     window = JADEDLSMainWindow()
     window.show()
-    
+
+    if splash is not None:
+        splash.finish(window)
+
     sys.exit(app.exec_())
 
 

@@ -111,7 +111,7 @@ class AnalysisView(QWidget):
 
         method_label = QLabel("Method:")
         self.plot_method_combo = QComboBox()
-        self.plot_method_combo.addItems(["All Methods", "Method A", "Method B", "Method C", "Method D", "NNLS"])
+        self.plot_method_combo.addItems(["All Methods", "Method A", "Method B", "Method C", "Method D", "NNLS", "Regularized NNLS"])
         self.plot_method_combo.currentTextChanged.connect(self._on_method_filter_changed)
         filter_layout.addWidget(method_label)
         filter_layout.addWidget(self.plot_method_combo)
@@ -433,8 +433,12 @@ class AnalysisView(QWidget):
         # Store analyzer for all methods (used by post-fit refinement)
         if analyzer is not None:
             # Determine analyzer type and store appropriately
-            if 'NNLS' in method_name or 'Regularized' in method_name:
+            if 'Regularized' in method_name:
                 self.laplace_analyzer = analyzer
+                self.laplace_analyzer_regularized = analyzer
+            elif 'NNLS' in method_name:
+                self.laplace_analyzer = analyzer
+                self.laplace_analyzer_nnls = analyzer
             else:
                 self.cumulant_analyzer = analyzer
 
@@ -475,7 +479,7 @@ class AnalysisView(QWidget):
                 self.details_text.setHtml(html)
 
         # Enable refinement button only for methods that support it
-        _REFINABLE = {'Method A', 'Method B', 'Method C', 'NNLS', 'Regularized NNLS', 'Method D'}
+        _REFINABLE = {'Method A', 'Method B', 'Method C', 'NNLS', 'NNLS Analysis', 'Regularized NNLS', 'Method D'}
         method_name = item.data(Qt.UserRole + 1) if item else None
         if hasattr(self, 'refinement_btn'):
             self.refinement_btn.setEnabled(method_name in _REFINABLE)
@@ -1725,7 +1729,8 @@ class AnalysisView(QWidget):
             'Method B': 'cumulant_b',
             'Method C': 'cumulant_c',
             'Method D': 'cumulant_d',
-            'NNLS':     'nnls',
+            'NNLS':          'nnls',
+            'NNLS Analysis': 'nnls',
             'Regularized NNLS': 'regularized',
         }
         selected_method = method_map.get(method_name)
@@ -1755,12 +1760,13 @@ class AnalysisView(QWidget):
             if hasattr(self.cumulant_analyzer, 'method_c_results') and self.cumulant_analyzer.method_c_results is not None:
                 available_methods.append(('Cumulant Method C', 'cumulant_c'))
 
-        # Check for Laplace methods
-        if hasattr(self, 'laplace_analyzer') and self.laplace_analyzer is not None:
-            if hasattr(self.laplace_analyzer, 'nnls_final_results') and self.laplace_analyzer.nnls_final_results is not None:
-                available_methods.append(('NNLS', 'nnls'))
-            if hasattr(self.laplace_analyzer, 'regularized_final_results') and self.laplace_analyzer.regularized_final_results is not None:
-                available_methods.append(('Regularized NNLS', 'regularized'))
+        # Check for Laplace methods – use method-specific analyzers when available
+        _nnls_az = getattr(self, 'laplace_analyzer_nnls', None) or self.laplace_analyzer if hasattr(self, 'laplace_analyzer') else None
+        _reg_az  = getattr(self, 'laplace_analyzer_regularized', None) or self.laplace_analyzer if hasattr(self, 'laplace_analyzer') else None
+        if _nnls_az is not None and hasattr(_nnls_az, 'nnls_final_results') and _nnls_az.nnls_final_results is not None:
+            available_methods.append(('NNLS', 'nnls'))
+        if _reg_az is not None and hasattr(_reg_az, 'regularized_final_results') and _reg_az.regularized_final_results is not None:
+            available_methods.append(('Regularized NNLS', 'regularized'))
 
         if not available_methods:
             QMessageBox.warning(
@@ -2065,8 +2071,20 @@ class AnalysisView(QWidget):
         from PyQt5.QtWidgets import QMessageBox
         from gui.dialogs.laplace_postfit_dialog import LaplacePostFitRefinementDialog
 
+        # Select method-specific analyzer to avoid cross-contamination when both methods have been run
+        is_nnls = (method_name == "NNLS")
+        if is_nnls:
+            the_analyzer = getattr(self, 'laplace_analyzer_nnls', None) or self.laplace_analyzer
+        else:
+            the_analyzer = getattr(self, 'laplace_analyzer_regularized', None) or self.laplace_analyzer
+
+        if the_analyzer is None:
+            QMessageBox.warning(self, "No Data Available",
+                                f"No {method_name} analysis data available. Please run the analysis first.")
+            return
+
         # Open the refinement dialog
-        dialog = LaplacePostFitRefinementDialog(self.laplace_analyzer, method_name, self)
+        dialog = LaplacePostFitRefinementDialog(the_analyzer, method_name, self)
 
         if dialog.exec_() != dialog.Accepted:
             return
@@ -2075,9 +2093,11 @@ class AnalysisView(QWidget):
         params = dialog.get_refinement_params()
         q_range = params['q_range']
         excluded_files = params['excluded_files']
+        clustering_params = params.get('clustering', {})
+        per_pop_ranges = params.get('per_pop_ranges', {})
 
         # Check if any changes were made
-        if q_range is None and not excluded_files:
+        if q_range is None and not excluded_files and not clustering_params and not per_pop_ranges:
             QMessageBox.information(
                 self,
                 "No Changes",
@@ -2092,34 +2112,41 @@ class AnalysisView(QWidget):
 
         if excluded_files:
             print(f"Excluding {len(excluded_files)} distribution(s): {excluded_files}")
-
         if q_range:
-            print(f"Applying q² range: {q_range[0]:.4f} to {q_range[1]:.4f} nm⁻²")
+            print(f"Applying combined q² range: {q_range[0]:.4f} to {q_range[1]:.4f} nm⁻²")
+        if per_pop_ranges:
+            for pn, rng in per_pop_ranges.items():
+                print(f"  Pop. {pn} q² range: {rng[0]:.4f} to {rng[1]:.4f} nm⁻²")
+        if clustering_params:
+            print(f"  Clustering: {clustering_params}")
 
         try:
-            is_nnls = (method_name == "NNLS")
-
             # Filter data by excluded files if specified
             if excluded_files:
-                if is_nnls and hasattr(self.laplace_analyzer, 'nnls_data'):
+                if is_nnls and hasattr(the_analyzer, 'nnls_data'):
                     # Remove rows where filename is in excluded_files
-                    self.laplace_analyzer.nnls_data = self.laplace_analyzer.nnls_data[
-                        ~self.laplace_analyzer.nnls_data['filename'].isin(excluded_files)
+                    the_analyzer.nnls_data = the_analyzer.nnls_data[
+                        ~the_analyzer.nnls_data['filename'].isin(excluded_files)
                     ].reset_index(drop=True)
-                    self.laplace_analyzer.nnls_data.index = self.laplace_analyzer.nnls_data.index + 1
-                    print(f"  Removed {len(excluded_files)} datasets, {len(self.laplace_analyzer.nnls_data)} remaining")
+                    the_analyzer.nnls_data.index = the_analyzer.nnls_data.index + 1
+                    print(f"  Removed {len(excluded_files)} datasets, {len(the_analyzer.nnls_data)} remaining")
 
-                elif not is_nnls and hasattr(self.laplace_analyzer, 'regularized_data'):
-                    self.laplace_analyzer.regularized_data = self.laplace_analyzer.regularized_data[
-                        ~self.laplace_analyzer.regularized_data['filename'].isin(excluded_files)
+                elif not is_nnls and hasattr(the_analyzer, 'regularized_data'):
+                    the_analyzer.regularized_data = the_analyzer.regularized_data[
+                        ~the_analyzer.regularized_data['filename'].isin(excluded_files)
                     ].reset_index(drop=True)
-                    self.laplace_analyzer.regularized_data.index = self.laplace_analyzer.regularized_data.index + 1
-                    print(f"  Removed {len(excluded_files)} datasets, {len(self.laplace_analyzer.regularized_data)} remaining")
+                    the_analyzer.regularized_data.index = the_analyzer.regularized_data.index + 1
+                    print(f"  Removed {len(excluded_files)} datasets, {len(the_analyzer.regularized_data)} remaining")
 
-            # Recalculate diffusion coefficients with new q² range
+            # Recalculate diffusion coefficients, forwarding clustering + per-pop params
             if is_nnls:
-                self.laplace_analyzer.calculate_nnls_diffusion_coefficients(x_range=q_range)
-                self.laplace_analyzer._calculate_nnls_final_results(
+                the_analyzer.calculate_nnls_diffusion_coefficients(
+                    x_range=q_range,
+                    per_pop_ranges=per_pop_ranges or None,
+                    **{k: v for k, v in clustering_params.items()
+                       if k in ('use_clustering', 'clustering_strategy', 'distance_threshold')}
+                )
+                the_analyzer._calculate_nnls_final_results(
                     append_mode=True,
                     label_suffix=" (Post-Refined)"
                 )
@@ -2131,6 +2158,7 @@ class AnalysisView(QWidget):
                     parent = parent.parent()
 
                 if parent:
+                    parent.laplace_analyzer = the_analyzer
                     parent._display_nnls_results(replace_existing=False)
                     # Add post-refinement step to pipeline
                     if hasattr(parent, 'pipeline'):
@@ -2142,8 +2170,16 @@ class AnalysisView(QWidget):
                         )
 
             else:  # Regularized
-                self.laplace_analyzer.calculate_regularized_diffusion_coefficients(x_range=q_range)
-                self.laplace_analyzer._calculate_regularized_final_results()
+                the_analyzer.calculate_regularized_diffusion_coefficients(
+                    x_range=q_range,
+                    per_pop_ranges=per_pop_ranges or None,
+                    **{k: v for k, v in clustering_params.items()
+                       if k in ('use_clustering', 'clustering_strategy', 'distance_threshold')}
+                )
+                the_analyzer._calculate_regularized_final_results(
+                    append_mode=True,
+                    label_suffix=" (Post-Refined)"
+                )
 
                 # Update display with replace_existing=False to append plots
                 from gui.main_window import JADEDLSMainWindow
@@ -2152,6 +2188,7 @@ class AnalysisView(QWidget):
                     parent = parent.parent()
 
                 if parent:
+                    parent.laplace_analyzer = the_analyzer
                     parent._display_regularized_results(replace_existing=False)
                     # Add post-refinement step to pipeline
                     if hasattr(parent, 'pipeline'):
@@ -2168,7 +2205,11 @@ class AnalysisView(QWidget):
             if excluded_files:
                 success_msg += f"Excluded {len(excluded_files)} distribution(s).\n"
             if q_range:
-                success_msg += f"Applied q² range: {q_range[0]:.4f} to {q_range[1]:.4f} nm⁻².\n"
+                success_msg += f"Applied combined q² range: {q_range[0]:.4f} to {q_range[1]:.4f} nm⁻².\n"
+            if per_pop_ranges:
+                success_msg += f"Applied per-population q² ranges for {len(per_pop_ranges)} population(s).\n"
+            if clustering_params:
+                success_msg += "Applied new clustering settings.\n"
             success_msg += "\nDiffusion coefficients have been recalculated."
 
             QMessageBox.information(

@@ -46,6 +46,7 @@ Dependencies: numpy, pandas, scipy, sklearn, matplotlib
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
 from scipy.cluster.hierarchy import dendrogram, linkage, fcluster
 from scipy.spatial.distance import pdist
 from sklearn.metrics import silhouette_score
@@ -57,7 +58,7 @@ def cluster_all_gammas(data_df, gamma_cols, q_squared_col=None,
                        distance_threshold=0.3, min_abundance=0.3,
                        clustering_strategy='simple', silhouette_threshold=0.3,
                        uncertainty_flags=False, uncertainty_threshold=0.5,
-                       plot=True, experiment_name=''):
+                       plot=True, interactive=True, experiment_name=''):
     """
     Can operate in two modes:
     1. Clustering enabled: Groups gammas across files by similarity
@@ -260,13 +261,16 @@ def cluster_all_gammas(data_df, gamma_cols, q_squared_col=None,
                 _show_uncertainty_removal_preview(gammas_df_reliable, n_uncertain, normalize_by_q2)
                 if pct_uncertain > 30.0:
                     print("\nWARNING: >30% uncertain — consider adjusting distance_threshold.")
-                answer = input("\nRemove outlier points? (y/n): ").strip().lower()
-                if answer == 'y':
-                    gammas_df_reliable = gammas_df_reliable[
-                        ~gammas_df_reliable['uncertain']].copy()
-                    print(f"→ Removed {n_uncertain} outlier points.")
+                if interactive:
+                    answer = input("\nRemove outlier points? (y/n): ").strip().lower()
+                    if answer == 'y':
+                        gammas_df_reliable = gammas_df_reliable[
+                            ~gammas_df_reliable['uncertain']].copy()
+                        print(f"→ Removed {n_uncertain} outlier points.")
+                    else:
+                        print("\n→ Keeping all data (outliers flagged but not removed)")
                 else:
-                    print("\n→ Keeping all data (outliers flagged but not removed)")
+                    print("\n→ Non-interactive mode: keeping all data (outliers flagged but not removed)")
 
         else:
             # --- Multimodal case: silhouette uncertainty on reliable points ---
@@ -316,8 +320,12 @@ def cluster_all_gammas(data_df, gamma_cols, q_squared_col=None,
                 _show_uncertainty_removal_preview(gammas_df_reliable, n_uncertain, normalize_by_q2)
                 if pct_uncertain > 30.0:
                     print("\nWARNING: >30% uncertain — consider adjusting distance_threshold.")
-                answer = input("\nRemove uncertain points and re-cluster? (y/n): ").strip().lower()
-                remove_uncertain_points = (answer == 'y')
+                if interactive:
+                    answer = input("\nRemove uncertain points and re-cluster? (y/n): ").strip().lower()
+                    remove_uncertain_points = (answer == 'y')
+                else:
+                    print("\n→ Non-interactive mode: keeping uncertain points, skipping re-cluster")
+                    remove_uncertain_points = False
 
                 # Step 3.9: Re-cluster after removal
                 if remove_uncertain_points:
@@ -415,6 +423,32 @@ def cluster_all_gammas(data_df, gamma_cols, q_squared_col=None,
             if out_col in clustered_df.columns and pd.isna(clustered_df.loc[file_idx, out_col]):
                 clustered_df.loc[file_idx, out_col] = True
 
+    # Remap per-peak statistics columns to population-indexed columns (JADE 2.1 methodology)
+    # Maps tau_N, intensity_N, area_N, ... → tau_popM, intensity_popM, ...
+    # based on clustering assignment, so all peak statistics follow population numbering
+    _per_peak_prefixes = [
+        'tau', 'intensity', 'normalized_area_percent', 'normalized_sum_percent',
+        'area', 'fwhm', 'centroid', 'std_dev', 'skewness', 'kurtosis',
+    ]
+    for pop_num in cluster_id_to_pop.values():
+        for prefix in _per_peak_prefixes:
+            if any(c.startswith(f'{prefix}_') for c in clustered_df.columns):
+                clustered_df[f'{prefix}_pop{pop_num}'] = np.nan
+
+    for _, row in gammas_df_reliable.iterrows():
+        file_idx   = row['file_idx']
+        cluster_id = row['cluster']
+        if cluster_id not in cluster_id_to_pop:
+            continue
+        pop_num  = cluster_id_to_pop[cluster_id]
+        peak_idx = int(row['original_col'].split('_')[-1])  # e.g. 'gamma_3' → 3
+        for prefix in _per_peak_prefixes:
+            src_col = f'{prefix}_{peak_idx}'
+            dst_col = f'{prefix}_pop{pop_num}'
+            if src_col in clustered_df.columns and dst_col in clustered_df.columns:
+                if pd.isna(clustered_df.loc[file_idx, dst_col]):
+                    clustered_df.loc[file_idx, dst_col] = clustered_df.loc[file_idx, src_col]
+
     # Step 5: Overall silhouette score on reliable populations
     avg_silhouette = None
     if silhouette_scores is not None and n_reliable_populations > 1:
@@ -427,8 +461,11 @@ def cluster_all_gammas(data_df, gamma_cols, q_squared_col=None,
             avg_silhouette = None
 
     # Step 6: Plot population distribution
-    if plot:
-        _plot_population_distribution(gammas_df, stats_df, min_abundance, normalize_by_q2, experiment_name=experiment_name)
+    clustering_fig = (
+        _plot_population_distribution(gammas_df, stats_df, min_abundance, normalize_by_q2,
+                                      experiment_name=experiment_name)
+        if plot else None
+    )
 
     # Prepare cluster_info
     if stats_df_reliable.empty:
@@ -454,6 +491,7 @@ def cluster_all_gammas(data_df, gamma_cols, q_squared_col=None,
         'n_outlier_points'        : int(gammas_df['outlier'].sum()),
         'gammas_df'               : gammas_df_reliable,
         'cluster_id_to_pop'       : cluster_id_to_pop,
+        'clustering_plot'         : clustering_fig,
     }
 
     if normalize_by_q2 and not stats_df_reliable.empty and 'mean_D' in stats_df_reliable.columns:
@@ -499,38 +537,29 @@ def _hierarchical_clustering(gammas_df, n_clusters='auto',
 
     #plot dendrogram
     if plot:
-        plt.figure(figsize=(12, 5))
-
-        plt.subplot(1, 2, 1)
-        dendrogram(linkage_matrix, color_threshold=distance_threshold)
-        plt.axhline(y=distance_threshold, c='red', linestyle='--',
+        fig = Figure(figsize=(12, 5))
+        ax1 = fig.add_subplot(121)
+        dendrogram(linkage_matrix, color_threshold=distance_threshold, ax=ax1)
+        ax1.axhline(y=distance_threshold, c='red', linestyle='--',
                    label=f'Threshold={distance_threshold}')
-        plt.xlabel('Data point index')
-        plt.ylabel('Distance (log-space)')
-
-        if normalize_by_q2:
-            plt.title('Hierarchical Clustering Dendrogram (on D = Γ/q²)')
-        else:
-            plt.title('Hierarchical Clustering Dendrogram (on Γ)')
-        plt.legend()
-
-        plt.subplot(1, 2, 2)
+        ax1.set_xlabel('Data point index')
+        ax1.set_ylabel('Distance (log-space)')
+        ax1.set_title('Hierarchical Clustering Dendrogram (on D = Γ/q²)'
+                      if normalize_by_q2 else
+                      'Hierarchical Clustering Dendrogram (on Γ)')
+        ax1.legend()
+        ax2 = fig.add_subplot(122)
         for cluster_id in np.unique(cluster_labels):
             mask = cluster_labels == cluster_id
-            plt.hist(gammas_df.loc[mask, 'log_clustering_val'],
+            ax2.hist(gammas_df.loc[mask, 'log_clustering_val'],
                     alpha=0.6, label=f'Pop {cluster_id + 1}', bins=20)
-
-        if normalize_by_q2:
-            plt.xlabel('log₁₀(D) [log(nm²/s)]')
-            plt.title('D Distribution by Population')
-        else:
-            plt.xlabel('log₁₀(Γ) [log(s⁻¹)]')
-            plt.title('Gamma Distribution by Population')
-
-        plt.ylabel('Count')
-        plt.legend()
-        plt.tight_layout()
-        plt.show()
+        ax2.set_xlabel('log₁₀(D) [log(nm²/s)]' if normalize_by_q2
+                       else 'log₁₀(Γ) [log(s⁻¹)]')
+        ax2.set_title('D Distribution by Population' if normalize_by_q2
+                      else 'Gamma Distribution by Population')
+        ax2.set_ylabel('Count')
+        ax2.legend()
+        fig.tight_layout()
 
     return cluster_labels, linkage_matrix
 
@@ -561,7 +590,8 @@ def _plot_population_distribution(gammas_df, stats_df, min_abundance, normalize_
 
     if normalize_by_q2:
         # Special plot for D-based clustering: D vs q²
-        fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+        fig = Figure(figsize=(18, 5))
+        axes = fig.subplots(1, 3)
         suptitle = 'Population Clustering'
         if experiment_name:
             suptitle += f' — {experiment_name}'
@@ -625,7 +655,8 @@ def _plot_population_distribution(gammas_df, stats_df, min_abundance, normalize_
 
     else:
         #original plots for Γ-based clustering
-        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+        fig = Figure(figsize=(14, 5))
+        axes = fig.subplots(1, 2)
         suptitle = 'Population Clustering'
         if experiment_name:
             suptitle += f' — {experiment_name}'
@@ -668,8 +699,8 @@ def _plot_population_distribution(gammas_df, stats_df, min_abundance, normalize_
         ax2.legend()
         ax2.grid(True, alpha=0.3)
 
-    plt.tight_layout()
-    plt.show()
+    fig.tight_layout()
+    return fig
 
 #show preview of what would happen if uncertain points are removed
 def _show_uncertainty_removal_preview(gammas_df, n_uncertain, normalize_by_q2):
@@ -680,38 +711,57 @@ def _show_uncertainty_removal_preview(gammas_df, n_uncertain, normalize_by_q2):
     #current stats
     n_total = len(gammas_df)
     n_clean = n_total - n_uncertain
-    avg_silhouette_current = gammas_df['silhouette'].mean()
+    has_silhouette = 'silhouette' in gammas_df.columns
+    has_zscore     = 'z_score'   in gammas_df.columns
 
-    #preview stats (estimated)
     clean_data = gammas_df[~gammas_df['uncertain']]
-    avg_silhouette_clean = clean_data['silhouette'].mean()
 
     print("Current (with all data):")
     print(f"  - Total points: {n_total}")
-    print(f"  - Average silhouette: {avg_silhouette_current:.3f}")
 
-    #show per-population breakdown
-    for cluster_id in sorted(gammas_df['cluster'].unique()):
-        cluster_data = gammas_df[gammas_df['cluster'] == cluster_id]
-        n_in_cluster = len(cluster_data)
-        print(f"  - Population {cluster_id + 1}: {n_in_cluster} points")
+    if has_silhouette:
+        avg_silhouette_current = gammas_df['silhouette'].mean()
+        avg_silhouette_clean   = clean_data['silhouette'].mean()
+        print(f"  - Average silhouette: {avg_silhouette_current:.3f}")
+    elif has_zscore:
+        avg_zscore_current = gammas_df['z_score'].mean()
+        avg_zscore_clean   = clean_data['z_score'].mean()
+        print(f"  - Average |z-score|: {avg_zscore_current:.3f}")
+
+    if 'cluster' in gammas_df.columns:
+        for cluster_id in sorted(gammas_df['cluster'].unique()):
+            cluster_data = gammas_df[gammas_df['cluster'] == cluster_id]
+            print(f"  - Population {cluster_id + 1}: {len(cluster_data)} points")
 
     print("\nAfter removal (estimated):")
     print(f"  - Total points: {n_clean} ({n_uncertain} removed)")
-    print(f"  - Average silhouette: {avg_silhouette_clean:.3f}", end="")
 
-    improvement = ((avg_silhouette_clean - avg_silhouette_current) / avg_silhouette_current * 100)
-    if improvement > 0:
-        print(f" ← +{improvement:.1f}% improvement")
-    else:
-        print()
+    if has_silhouette:
+        print(f"  - Average silhouette: {avg_silhouette_clean:.3f}", end="")
+        improvement = ((avg_silhouette_clean - avg_silhouette_current) /
+                       avg_silhouette_current * 100) if avg_silhouette_current != 0 else 0
+        if improvement > 0:
+            print(f" <- +{improvement:.1f}% improvement")
+        else:
+            print()
+    elif has_zscore:
+        print(f"  - Average |z-score|: {avg_zscore_clean:.3f}", end="")
+        improvement = ((avg_zscore_current - avg_zscore_clean) /
+                       avg_zscore_current * 100) if avg_zscore_current != 0 else 0
+        if improvement > 0:
+            print(f" <- {improvement:.1f}% reduction in outlier severity")
+        else:
+            print()
 
     #show per-population after removal
-    for cluster_id in sorted(clean_data['cluster'].unique()):
-        cluster_clean = clean_data[clean_data['cluster'] == cluster_id]
-        cluster_all = gammas_df[gammas_df['cluster'] == cluster_id]
-        n_removed = len(cluster_all) - len(cluster_clean)
-        print(f"  - Population {cluster_id + 1}: {len(cluster_clean)} points ({n_removed} removed)")
+    if 'cluster' in clean_data.columns:
+        for cluster_id in sorted(clean_data['cluster'].unique()):
+            cluster_clean = clean_data[clean_data['cluster'] == cluster_id]
+            cluster_all   = gammas_df[gammas_df['cluster'] == cluster_id]
+            n_removed     = len(cluster_all) - len(cluster_clean)
+            print(f"  - Population {cluster_id + 1}: {len(cluster_clean)} points ({n_removed} removed)")
+    else:
+        print(f"  - Single population: {len(clean_data)} points ({n_uncertain} removed)")
 
 #calculate silhouette score for each point
 def _calculate_silhouette_scores(gammas_df, cluster_labels):

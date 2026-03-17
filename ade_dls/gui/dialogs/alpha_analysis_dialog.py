@@ -244,7 +244,7 @@ class AlphaAnalysisDialog(QDialog):
             print(f"[Alpha Analysis] Selected {len(selected_keys)} datasets: {selected_keys}")
 
             # Run regularized fits for all combinations
-            from regularized_optimized import regularized_nnls_optimized, create_exponential_matrix
+            from ade_dls.analysis.regularized_optimized import regularized_nnls_optimized, create_exponential_matrix
 
             # Create decay times (shared across all)
             decay_times = np.logspace(-8, 1, 200)
@@ -254,7 +254,7 @@ class AlphaAnalysisDialog(QDialog):
             T_matrices = {}
             for key in selected_keys:
                 df = self.laplace_analyzer.processed_correlations[key]
-                tau = df['t (s)'].to_numpy()
+                tau = df['t [s]'].to_numpy()
                 T_matrices[key] = create_exponential_matrix(tau, decay_times)
             print("[Alpha Analysis] T matrices cached")
 
@@ -343,7 +343,7 @@ class AlphaAnalysisDialog(QDialog):
         Returns:
             Dictionary with results for each dataset and alpha
         """
-        from regularized_optimized import regularized_nnls_optimized
+        from ade_dls.analysis.regularized_optimized import regularized_nnls_optimized
 
         results = {}
         total_fits = len(selected_keys) * len(alphas)

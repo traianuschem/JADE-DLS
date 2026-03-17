@@ -153,10 +153,17 @@ class NNLSResultsDialog(QDialog):
 
         # Set up table
         self.results_table.setRowCount(len(df))
-        self.results_table.setColumnCount(5)
+        self.results_table.setColumnCount(8)
         self.results_table.setHorizontalHeaderLabels([
-            'Peak', 'Rh [nm]', 'Error [nm]', 'R²', 'D [m²/s]'
+            'Peak', 'Rh [nm]', 'Error [nm]', 'R²', 'D [m²/s]',
+            'Skewness', 'Kurtosis', 'Abundance [%]'
         ])
+
+        def _fmt(val, fmt):
+            try:
+                return format(float(val), fmt)
+            except (TypeError, ValueError):
+                return 'N/A'
 
         # Populate data
         for i, row in df.iterrows():
@@ -166,17 +173,17 @@ class NNLSResultsDialog(QDialog):
             self.results_table.setItem(i, 0, peak_item)
 
             # Rh
-            rh_item = QTableWidgetItem(f"{row['Rh [nm]']:.2f}")
+            rh_item = QTableWidgetItem(_fmt(row['Rh [nm]'], '.2f'))
             rh_item.setTextAlignment(Qt.AlignCenter)
             self.results_table.setItem(i, 1, rh_item)
 
             # Error
-            err_item = QTableWidgetItem(f"± {row['Rh error [nm]']:.2f}")
+            err_item = QTableWidgetItem(f"± {_fmt(row['Rh error [nm]'], '.2f')}")
             err_item.setTextAlignment(Qt.AlignCenter)
             self.results_table.setItem(i, 2, err_item)
 
             # R²
-            r2_item = QTableWidgetItem(f"{row['R_squared']:.4f}")
+            r2_item = QTableWidgetItem(_fmt(row['R_squared'], '.4f'))
             r2_item.setTextAlignment(Qt.AlignCenter)
 
             # Color code based on R² quality
@@ -190,9 +197,24 @@ class NNLSResultsDialog(QDialog):
             self.results_table.setItem(i, 3, r2_item)
 
             # D
-            d_item = QTableWidgetItem(f"{row['D [m^2/s]']:.2e}")
+            d_item = QTableWidgetItem(_fmt(row['D [m^2/s]'], '.2e'))
             d_item.setTextAlignment(Qt.AlignCenter)
             self.results_table.setItem(i, 4, d_item)
+
+            # Skewness
+            skew_item = QTableWidgetItem(_fmt(row.get('Skewness', float('nan')), '.3f'))
+            skew_item.setTextAlignment(Qt.AlignCenter)
+            self.results_table.setItem(i, 5, skew_item)
+
+            # Kurtosis
+            kurt_item = QTableWidgetItem(_fmt(row.get('Kurtosis', float('nan')), '.3f'))
+            kurt_item.setTextAlignment(Qt.AlignCenter)
+            self.results_table.setItem(i, 6, kurt_item)
+
+            # Abundance [%]
+            abund_item = QTableWidgetItem(_fmt(row.get('Abundance [%]', float('nan')), '.1f'))
+            abund_item.setTextAlignment(Qt.AlignCenter)
+            self.results_table.setItem(i, 7, abund_item)
 
         # Adjust column widths
         self.results_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
@@ -378,7 +400,7 @@ class NNLSResultsDialog(QDialog):
 
     def refine_results(self):
         """Open refinement dialog"""
-        from gui.dialogs.postfilter_dialog import PostFilterDialog
+        from ade_dls.gui.dialogs.postfilter_dialog import PostFilterDialog
 
         dialog = PostFilterDialog(
             self.laplace_analyzer.nnls_data,
@@ -387,17 +409,21 @@ class NNLSResultsDialog(QDialog):
         )
 
         if dialog.exec_():
-            indices_to_remove = dialog.get_selected_indices()
-            if indices_to_remove:
-                # Remove outliers
-                self.laplace_analyzer.remove_nnls_outliers(indices_to_remove)
+            filtered_data = dialog.get_filtered_data()
+            if filtered_data is not None:
+                original_index = set(self.laplace_analyzer.nnls_data.index)
+                kept_index = set(filtered_data.index)
+                indices_to_remove = list(original_index - kept_index)
+                if indices_to_remove:
+                    # Remove outliers
+                    self.laplace_analyzer.remove_nnls_outliers(indices_to_remove)
 
-                # Recalculate
-                self.laplace_analyzer.calculate_nnls_diffusion_coefficients()
+                    # Recalculate
+                    self.laplace_analyzer.calculate_nnls_diffusion_coefficients()
 
-                # Refresh display
-                self.populate_results_table()
-                self.populate_data_table()
+                    # Refresh display
+                    self.populate_results_table()
+                    self.populate_data_table()
 
-                QMessageBox.information(self, "Refinement Complete",
-                                       f"Removed {len(indices_to_remove)} outliers and recalculated results.")
+                    QMessageBox.information(self, "Refinement Complete",
+                                           f"Removed {len(indices_to_remove)} outliers and recalculated results.")

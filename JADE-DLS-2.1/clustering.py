@@ -413,7 +413,37 @@ def cluster_all_gammas(data_df, gamma_cols, q_squared_col=None,
             out_col = f'outlier_pop{pop_num}'
             if out_col in clustered_df.columns and pd.isna(clustered_df.loc[file_idx, out_col]):
                 clustered_df.loc[file_idx, out_col] = True
+                
+    # Remap per-peak columns to population order
+    # original_col e.g. 'gamma_3' → peak index 3 → copy skewness_3 → skewness_pop2
+    _per_peak_prefixes = [
+        'tau', 'intensity', 'normalized_area_percent', 'normalized_sum_percent',
+        'area', 'fwhm', 'centroid', 'std_dev', 'skewness', 'kurtosis',
+    ]
 
+    # initialise pop columns as NaN
+    for pop_num in cluster_id_to_pop.values():
+        for prefix in _per_peak_prefixes:
+            col = f'{prefix}_pop{pop_num}'
+            if any(c.startswith(f'{prefix}_') for c in clustered_df.columns):
+                clustered_df[col] = np.nan
+
+    # fill from the reliable rows using original peak index
+    for _, row in gammas_df_reliable.iterrows():
+        file_idx   = row['file_idx']
+        cluster_id = row['cluster']
+        if cluster_id not in cluster_id_to_pop:
+            continue
+        pop_num   = cluster_id_to_pop[cluster_id]
+        peak_idx  = int(row['original_col'].split('_')[-1])  # e.g. 'gamma_3' → 3
+
+        for prefix in _per_peak_prefixes:
+            src_col = f'{prefix}_{peak_idx}'
+            dst_col = f'{prefix}_pop{pop_num}'
+            if src_col in clustered_df.columns and dst_col in clustered_df.columns:
+                if pd.isna(clustered_df.loc[file_idx, dst_col]):
+                    clustered_df.loc[file_idx, dst_col] = clustered_df.loc[file_idx, src_col]
+                    
     # Step 5: Overall silhouette score on reliable populations
     avg_silhouette = None
     if silhouette_scores is not None and n_reliable_populations > 1:
@@ -679,38 +709,57 @@ def _show_uncertainty_removal_preview(gammas_df, n_uncertain, normalize_by_q2):
     #current stats
     n_total = len(gammas_df)
     n_clean = n_total - n_uncertain
-    avg_silhouette_current = gammas_df['silhouette'].mean()
-    
-    #preview stats (estimated)
+    has_silhouette = 'silhouette' in gammas_df.columns
+    has_zscore     = 'z_score'   in gammas_df.columns
+
     clean_data = gammas_df[~gammas_df['uncertain']]
-    avg_silhouette_clean = clean_data['silhouette'].mean()
-    
+
     print("Current (with all data):")
     print(f"  - Total points: {n_total}")
-    print(f"  - Average silhouette: {avg_silhouette_current:.3f}")
-    
-    #show per-population breakdown
-    for cluster_id in sorted(gammas_df['cluster'].unique()):
-        cluster_data = gammas_df[gammas_df['cluster'] == cluster_id]
-        n_in_cluster = len(cluster_data)
-        print(f"  - Population {cluster_id + 1}: {n_in_cluster} points")
-    
+
+    if has_silhouette:
+        avg_silhouette_current = gammas_df['silhouette'].mean()
+        avg_silhouette_clean   = clean_data['silhouette'].mean()
+        print(f"  - Average silhouette: {avg_silhouette_current:.3f}")
+    elif has_zscore:
+        avg_zscore_current = gammas_df['z_score'].mean()
+        avg_zscore_clean   = clean_data['z_score'].mean()
+        print(f"  - Average |z-score|: {avg_zscore_current:.3f}")
+
+    if 'cluster' in gammas_df.columns:
+        for cluster_id in sorted(gammas_df['cluster'].unique()):
+            cluster_data = gammas_df[gammas_df['cluster'] == cluster_id]
+            print(f"  - Population {cluster_id + 1}: {len(cluster_data)} points")
+
     print("\nAfter removal (estimated):")
     print(f"  - Total points: {n_clean} ({n_uncertain} removed)")
-    print(f"  - Average silhouette: {avg_silhouette_clean:.3f}", end="")
-    
-    improvement = ((avg_silhouette_clean - avg_silhouette_current) / avg_silhouette_current * 100)
-    if improvement > 0:
-        print(f" ← +{improvement:.1f}% improvement")
-    else:
-        print()
+
+    if has_silhouette:
+        print(f"  - Average silhouette: {avg_silhouette_clean:.3f}", end="")
+        improvement = ((avg_silhouette_clean - avg_silhouette_current) /
+                       avg_silhouette_current * 100) if avg_silhouette_current != 0 else 0
+        if improvement > 0:
+            print(f" <- +{improvement:.1f}% improvement")
+        else:
+            print()
+    elif has_zscore:
+        print(f"  - Average |z-score|: {avg_zscore_clean:.3f}", end="")
+        improvement = ((avg_zscore_current - avg_zscore_clean) /
+                       avg_zscore_current * 100) if avg_zscore_current != 0 else 0
+        if improvement > 0:
+            print(f" <- {improvement:.1f}% reduction in outlier severity")
+        else:
+            print()
     
     #show per-population after removal
-    for cluster_id in sorted(clean_data['cluster'].unique()):
-        cluster_clean = clean_data[clean_data['cluster'] == cluster_id]
-        cluster_all = gammas_df[gammas_df['cluster'] == cluster_id]
-        n_removed = len(cluster_all) - len(cluster_clean)
-        print(f"  - Population {cluster_id + 1}: {len(cluster_clean)} points ({n_removed} removed)")
+    if 'cluster' in clean_data.columns:
+        for cluster_id in sorted(clean_data['cluster'].unique()):
+            cluster_clean = clean_data[clean_data['cluster'] == cluster_id]
+            cluster_all   = gammas_df[gammas_df['cluster'] == cluster_id]
+            n_removed     = len(cluster_all) - len(cluster_clean)
+            print(f"  - Population {cluster_id + 1}: {len(cluster_clean)} points ({n_removed} removed)")
+    else:
+            print(f"  - Single population: {len(clean_data)} points ({n_uncertain} removed)")
 
 #calculate silhouette score for each point
 def _calculate_silhouette_scores(gammas_df, cluster_labels):

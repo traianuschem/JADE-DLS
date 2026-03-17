@@ -119,41 +119,51 @@ def nnls(df, name, nnls_params, plot_number):
 
     # Check if centroid mode is enabled
     use_centroid = nnls_params.get('use_centroid', False)
-    
-    #create plot for this dataframe
-    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(18, 6))
-    fig.suptitle(f'[{plot_number}]: Analysis for {name}', fontsize=16)
-    
-    # First subplot: Data and optimized function
-    ax1.semilogx(tau, D, 'ro', label='Data (D)')
-    ax1.semilogx(tau, optimized_values, 'g-', label='Optimized Function (f_optimized)')
-    ax1.set_xlabel('lag time [s]')
-    ax1.set_ylabel('g(2)-1')
-    ax1.set_title('Optimization Results')
+
+    #R²
+    ss_res = np.sum(residuals_values**2)
+    ss_tot = np.sum((D - np.mean(D))**2)
+    r_squared = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0
+
+    #4-panel layout: data+fit | distribution | residuals | Q-Q
+    fig, (ax1, ax2, ax3, ax4) = plt.subplots(1, 4, figsize=(24, 6))
+    fig.suptitle(f'[{plot_number}]: NNLS — {name}', fontsize=12)
+
+    # Panel 1: data + fit
+    ax1.semilogx(tau, D, 'o', alpha=0.6, markersize=4, label='Data')
+    ax1.semilogx(tau, optimized_values, 'r-', linewidth=2, label='Fit')
+    ax1.set_xlabel(r'lag time τ [s]')
+    ax1.set_ylabel(r'$g^{(2)}(τ) - 1$')
+    ax1.set_title('Data & Fit')
     ax1.legend()
-    ax1.grid(True)
-    
-    # Second subplot: Tau distribution
-    ax2.semilogx(decay_times, f_optimized, 'bo-', label='Tau Distribution (f_optimized)')
-    ax2.set_xlabel('Tau (Decay Times)')
-    ax2.set_ylabel('Intensity (f_optimized)')
-    ax2.set_title('Tau Distribution')
-    ax2.legend()
-    ax2.grid(True, which="both", ls="--")
-    
-    # Third subplot: Residuals
-    ax3.plot(residuals_values)
-    ax3.set_xlabel('Sample Index')
-    ax3.set_ylabel('Residual Value')
-    ax3.set_title('Residuals')
-    ax3.axhline(0, color='r', linestyle='--')
-    ax3.legend(['Residuals'])
-    ax3.grid(True)
-    
-    #mark peaks in the tau distribution plot
+    ax1.grid(True, alpha=0.3)
+    ax1.text(0.95, 0.95, f'R² = {r_squared:.4f}',
+             transform=ax1.transAxes, va='top', ha='right',
+             bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
+
+    # Panel 2: decay time distribution
+    ax2.semilogx(decay_times, f_optimized, 'bo-', markersize=3, label='f(τ)')
     ax2.plot(decay_times[peaks], f_optimized[peaks], 'rx', markersize=10, label='Peaks')
+    ax2.set_xlabel(r'decay time τ [s]')
+    ax2.set_ylabel('f(τ) [a.u.]')
+    ax2.set_title('τ Distribution')
     ax2.legend()
-    
+    ax2.grid(True, which="both", ls="--", alpha=0.3)
+
+    # Panel 3: residuals
+    ax3.plot(tau, residuals_values, 'b-', alpha=0.7)
+    ax3.axhline(0, color='r', linestyle='--', linewidth=1)
+    ax3.set_xlabel(r'lag time τ [s]')
+    ax3.set_ylabel('Residuals')
+    ax3.set_title('Residuals')
+    ax3.set_xscale('log')
+    ax3.grid(True, alpha=0.3)
+
+    # Panel 4: Q-Q
+    stats.probplot(residuals_values, dist="norm", plot=ax4)
+    ax4.set_title('Q-Q Plot')
+    ax4.grid(True, alpha=0.3)
+
     plt.tight_layout()
     plt.show()
     
@@ -204,7 +214,6 @@ def nnls_reg(df, name, nnls_reg_params, plot_number):
     alpha = nnls_reg_params.get('alpha', 0.01) #default, really low alpha
     normalize = nnls_reg_params.get('normalize', False) #default, no normalization
     sparsity_penalty = nnls_reg_params.get('sparsity_penalty', 0.0) #default no penalty
-    enforce_unimodality = nnls_reg_params.get('enforce_unimodality', False) #default, not enforced
         
     #the vectors
     tau = df['t [s]'].to_numpy()
@@ -221,17 +230,6 @@ def nnls_reg(df, name, nnls_reg_params, plot_number):
         #create a sparse matrix for computational efficiency
         D2 = sparse.diags([1, -2, 1], [-1, 0, 1], shape=(n-2, n)).toarray()
         return D2
-    
-    #unimodality constraint matrix
-    def create_unimodality_matrix(n):
-        # Create a matrix with 1's on the diagonal and -1's on the sub-diagonal
-        # This computes first differences
-        D1 = np.zeros((n-2, n))
-        for i in range(n-2):
-            D1[i, i] = 1
-            D1[i, i+1] = -2
-            D1[i, i+2] = 1
-        return D1
     
     #get the length of decay_times
     n = len(decay_times)
@@ -262,19 +260,6 @@ def nnls_reg(df, name, nnls_reg_params, plot_number):
             l1_penalty = sparsity_penalty * f
             all_residuals.append(l1_penalty)
             
-        #apply unimodality constraint if enabled
-        if enforce_unimodality:
-            if not hasattr(residuals_regularized, 'unimodality_matrix'):
-                residuals_regularized.unimodality_matrix = create_unimodality_matrix(n)
-            
-            #compute second differences and penalize sign changes beyond the first one
-            second_diff = residuals_regularized.unimodality_matrix @ f
-            #only penalize if there are multiple sign changes
-            sign_changes = np.where(np.diff(np.signbit(np.diff(f))))[0]
-            if len(sign_changes) > 1:
-                unimodality_penalty = 10.0 * second_diff
-                all_residuals.append(unimodality_penalty)
-        
         return np.concatenate(all_residuals)
     
     # optimization approach based on normalization constraint
@@ -341,11 +326,12 @@ def nnls_reg(df, name, nnls_reg_params, plot_number):
     #get peak amplitudes/intensities
     peak_amplitudes = f_optimized[peaks]
 
-    #calculate normalized amplitudes
-    normalized_amplitudes_sum = peak_amplitudes / np.sum(peak_amplitudes) if np.sum(peak_amplitudes) > 0 else np.zeros_like(peak_amplitudes)
-
     # Check if centroid mode is enabled
     use_centroid = nnls_reg_params.get('use_centroid', False)
+    # also support JADE 2.0 style peak_method parameter
+    peak_method = nnls_reg_params.get('peak_method', None)
+    if peak_method is not None:
+        use_centroid = (peak_method == 'centroid')
     
     #enhanced peak analysis — always computed when peaks are found
     peak_stats = {}
@@ -391,10 +377,10 @@ def nnls_reg(df, name, nnls_reg_params, plot_number):
             peak_segment = f_optimized[left_base_idx:right_base_idx+1]
             peak_x = decay_times[left_base_idx:right_base_idx+1]
             
-            #calculate peak area using trapezoidal rule
-            peak_area = np.trapz(peak_segment, peak_x)
-            
-            #calculate peak width at half maximum (FWHM)
+            #calculate peak area using trapezoidal rule in log-space (correct for log-spaced decay times)
+            peak_area = np.trapz(peak_segment, np.log(peak_x))
+
+            #calculate peak width at half maximum (FWHM) in log-space (dimensionless, unbiased)
             half_max = peak_amplitudes[i] / 2
             above_half_max = peak_segment >= half_max
             if np.sum(above_half_max) > 0:
@@ -402,37 +388,31 @@ def nnls_reg(df, name, nnls_reg_params, plot_number):
                 left_idx = idx_above[0]
                 right_idx = idx_above[-1]
                 if right_idx > left_idx and right_idx < len(peak_x) and left_idx < len(peak_x):
-                    fwhm = peak_x[right_idx] - peak_x[left_idx]
+                    fwhm = np.log(peak_x[right_idx]) - np.log(peak_x[left_idx])
                 else:
                     fwhm = 0
             else:
                 fwhm = 0
             
-            #calculate peak skewness
-            # ! at least 3 points to calculate skewness required !
-            if len(peak_segment) >= 3:
-                # Use moments to calculate skewness
-                peak_skewness = stats.skew(peak_segment, bias=False)
+            #weighted τ-space moments — f(τ) as probability distribution over τ
+            #note: skewness sign is opposite to cumulant skewness (τ vs Γ space)
+            w = peak_segment / np.sum(peak_segment) if np.sum(peak_segment) > 0 else np.ones(len(peak_segment)) / len(peak_segment)
+            weighted_mean = np.sum(peak_x * w)
+            variance      = np.sum(w * (peak_x - weighted_mean)**2)
+            std_dev       = np.sqrt(variance) if variance > 0 else 0
+            if std_dev > 0 and len(peak_segment) >= 3:
+                peak_skewness = np.sum(w * (peak_x - weighted_mean)**3) / std_dev**3
             else:
                 peak_skewness = 0
-                
-            #calculate peak kurtosis
-            if len(peak_segment) >= 4:
-                peak_kurtosis = stats.kurtosis(peak_segment, fisher=True, bias=False)
+            if std_dev > 0 and len(peak_segment) >= 4:
+                peak_kurtosis = np.sum(w * (peak_x - weighted_mean)**4) / std_dev**4 - 3
             else:
                 peak_kurtosis = 0
-                
-            #calculate mean (centroid) and standard deviation of peak
-            #weight by y values (intensity)
-            weighted_mean = np.sum(peak_x * peak_segment) / np.sum(peak_segment) if np.sum(peak_segment) > 0 else 0
-            variance = np.sum(peak_segment * (peak_x - weighted_mean)**2) / np.sum(peak_segment) if np.sum(peak_segment) > 0 else 0
-            std_dev = np.sqrt(variance) if variance > 0 else 0
-            
+
             #statistics for this peak
             peak_stats[f'peak_{i+1}'] = {
                 'position': decay_times[peak_idx],
                 'amplitude': peak_amplitudes[i],
-                'normalized_amplitude': normalized_amplitudes_sum[i],
                 'area': peak_area,
                 'fwhm': fwhm,
                 'skewness': peak_skewness,
@@ -442,10 +422,28 @@ def nnls_reg(df, name, nnls_reg_params, plot_number):
                 'left_idx': left_base_idx,
                 'right_idx': right_base_idx
             }
-    
+
+    #area-based normalization over detected peaks only (JADE 2.0 methodology)
+    if len(peaks) > 0 and peak_stats:
+        total_detected_area = np.sum([peak_stats[f'peak_{i+1}']['area'] for i in range(len(peaks))])
+        if total_detected_area > 0:
+            normalized_area_percent = [
+                peak_stats[f'peak_{i+1}']['area'] / total_detected_area * 100
+                for i in range(len(peaks))
+            ]
+        else:
+            normalized_area_percent = [100.0 / len(peaks)] * len(peaks)
+    else:
+        normalized_area_percent = []
+
+    #R²
+    ss_res = np.sum(residuals_values**2)
+    ss_tot = np.sum((D - np.mean(D))**2)
+    r_squared = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0
+
     #create 4-panel plot: data+fit | distribution | residuals | Q-Q
     fig, (ax1, ax2, ax3, ax4) = plt.subplots(1, 4, figsize=(24, 6))
-    fig.suptitle(f'[{plot_number}]: Analysis for {name}', fontsize=16)
+    fig.suptitle(f'[{plot_number}]: Regularized — {name}', fontsize=12)
 
     # First subplot: Data and optimized function
     ax1.semilogx(tau, D, 'ro', label='Data (D)', markersize=4)
@@ -477,16 +475,16 @@ def nnls_reg(df, name, nnls_reg_params, plot_number):
             y_fill = f_optimized[left_idx:right_idx+1]
             ax2.fill_between(x_fill, 0, y_fill, alpha=0.3, color=color, label=f'Area {i+1}')
 
-            #mark peak position
-            ax2.plot(decay_times[peak_idx], f_optimized[peak_idx], 'x', color=color, markersize=10)
+            #mark peak position (centroid or maximum)
+            tau_display = peak_info['centroid'] if use_centroid else decay_times[peak_idx]
+            ax2.plot(tau_display, f_optimized[peak_idx], 'x', color=color, markersize=10)
 
             #create annotation text with peak info
-            annotation_text = (f'τ={decay_times[peak_idx]:.2e}\n'
-                              f'I={f_optimized[peak_idx]:.2e}\n'
-                              f'Norm={normalized_amplitudes_sum[i]:.2f}\n'
-                              f'Area={peak_info["area"]:.2e}\n'
+            annotation_text = (f'τ={tau_display:.2e}\n'
+                              f'Area%={normalized_area_percent[i]:.1f}%\n'
                               f'FWHM={peak_info["fwhm"]:.2e}\n'
-                              f'Skew={peak_info["skewness"]:.2f}')
+                              f'Skew={peak_info["skewness"]:.2f}\n'
+                              f'Kurt={peak_info["kurtosis"]:.2f}')
 
             ax2.annotate(annotation_text,
                         xy=(decay_times[peak_idx], f_optimized[peak_idx]),
@@ -517,13 +515,10 @@ def nnls_reg(df, name, nnls_reg_params, plot_number):
 
     plt.tight_layout()
     plt.show()
-    
-    #prepare results for this dataframe
-    results = {'filename': name}
-    for i, peak_index in enumerate(peaks):
-        #basic peak metrics
-        percentage = normalized_amplitudes_sum[i] * 100
 
+    #prepare results for this dataframe
+    results = {'filename': name, 'R_squared': r_squared}
+    for i, peak_index in enumerate(peaks):
         # Calculate tau value: use centroid or maximum
         if use_centroid:
             tau_value = calculate_peak_centroid(decay_times, f_optimized, peak_index, peak_properties)
@@ -532,7 +527,7 @@ def nnls_reg(df, name, nnls_reg_params, plot_number):
 
         results[f'tau_{i+1}'] = tau_value
         results[f'intensity_{i+1}'] = f_optimized[peak_index]
-        results[f'normalized_sum_percent_{i+1}'] = percentage
+        results[f'normalized_area_percent_{i+1}'] = normalized_area_percent[i] if normalized_area_percent else np.nan
 
         #additional peak metrics (always computed)
         if f'peak_{i+1}' in peak_stats:
@@ -781,12 +776,48 @@ def find_dataset_key(filename, full_results):
     return None
 
 #plot distributions for comparison
-def plot_distributions(full_results, nnls_reg_params, df_basedata_mod, 
+def plot_distributions(full_results, nnls_reg_params, df_basedata_mod,
                       angles=None, measurement_mode='first',
-                      convert_to_radius=True, 
-                      figsize=(12, 8), title="Distribution Comparison"):
+                      convert_to_radius=True, xlim=None,
+                      figsize=(12, 8), title="Distribution Comparison", filenames=None):
     decay_times = np.array(nnls_reg_params['decay_times'])
-    
+
+    #direct filename mode: bypass angle/measurement_mode logic
+    if filenames is not None:
+        fig, ax = plt.subplots(1, 1, figsize=figsize)
+        colors = cm.tab10(np.linspace(0, 1, max(len(filenames), 1)))
+        for i, fname in enumerate(filenames):
+            dataset_key = find_dataset_key(fname, full_results)
+            if dataset_key is None or dataset_key not in full_results:
+                print(f"No results found for '{fname}', skipping.")
+                continue
+            rows = df_basedata_mod[df_basedata_mod['filename'] == fname]
+            if rows.empty:
+                print(f"No metadata found for '{fname}', skipping.")
+                continue
+            row = rows.iloc[0]
+            f_opt = full_results[dataset_key]['f_optimized']
+            if convert_to_radius:
+                x_vals = tau_to_hydrodynamic_radius(decay_times, row['q'],
+                                                    row['temperature [K]'],
+                                                    row['viscosity [cp]'])
+                x_label = 'R$_h$ [nm]'
+            else:
+                x_vals = decay_times
+                x_label = 'Decay Time (s)'
+            ax.semilogx(x_vals, f_opt, 'o-', color=colors[i],
+                        label=fname, linewidth=2, markersize=4, alpha=0.8)
+        ax.set_xlabel(x_label, fontsize=12)
+        ax.set_ylabel('Intensity [a.u.]', fontsize=12)
+        ax.set_title(title, fontsize=14)
+        if xlim is not None:
+            ax.set_xlim(*xlim)
+        ax.grid(True, alpha=0.3)
+        ax.legend(fontsize=10)
+        plt.tight_layout()
+        plt.show()
+        return fig, ax
+
     #select angles
     if angles is None:
         angles = sorted(df_basedata_mod['angle [°]'].unique())
@@ -893,11 +924,11 @@ def plot_distributions(full_results, nnls_reg_params, df_basedata_mod,
     ax.set_xlabel(x_label, fontsize=12)
     ax.set_ylabel('Intensity [a.u.]', fontsize=12)
     ax.set_title(title, fontsize=14)
+    if xlim is not None:
+        ax.set_xlim(*xlim)
     ax.grid(True, alpha=0.3)
     ax.legend(fontsize=10)
-    #plt.yticks([]) 
     plt.tight_layout()
     plt.show()
-    
 
     return fig, ax

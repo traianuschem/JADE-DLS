@@ -10,7 +10,8 @@
       "Bash(grep:*)",
       "Bash(python -m py_compile:*)",
       "Bash(python -c:*)",
-      "Bash(ls -la /c/Users/traja/Documents/GitHub/JADE-DLS/JADE-DLS-2.0/*.py)"
+      "Bash(ls -la /c/Users/traja/Documents/GitHub/JADE-DLS/JADE-DLS-2.0/*.py)",
+      "Bash(grep -E \"\\\\.\\(py\\)$\")"
     ]
   }
 }

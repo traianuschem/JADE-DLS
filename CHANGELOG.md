@@ -5,6 +5,67 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1dev] - 2026-03-17
+
+### Added
+
+#### Regularized NNLS – `RegularizedResultsDialog`
+
+- New dedicated results dialog (`regularized_results_dialog.py`) with three tabs:
+  - *Summary*: per-peak table with Rh, Error, R², D, Skewness, Kurtosis, Alpha; R² cells color-coded green (> 0.99) / orange (> 0.95) / red (≤ 0.95); automatic sample interpretation (monodisperse / bidisperse / polydisperse)
+  - *Detailed Data*: full per-file table with tau, gamma, intensity, area, and FWHM columns
+  - *Statistics*: HTML formatted per-peak statistics block with overall mean/min R²
+- Export (xlsx/csv/txt) and "Refine Results" buttons
+
+#### Regularized NNLS – Extended per-dataset plots
+
+- 4-panel per-dataset plot layout (was 2-panel): *Data & Fit* | *τ Distribution* | *Residuals* | *Q-Q plot*; figure size 24 × 6 in
+- R² annotated directly in the Data & Fit panel
+
+#### Post-fit refinement – Clustering & per-population tabs
+
+- New **"3. Clustering"** tab in `LaplacePostFitRefinementDialog` (applies to both NNLS and Regularized):
+  - Live 2-panel clustering preview (D vs q² scatter colored by population + log₁₀(D) histogram); refreshes on demand without closing the dialog
+  - Settings: clustering method (Hierarchical – Ward / Simple – gap-based), distance threshold, silhouette-based refinement toggle
+- **Per-population tabs** (one per detected population): individual q² range filter per population
+- Clustering parameters and per-population q² ranges forwarded through the full refinement flow
+
+#### Clustering – non-interactive mode
+
+- Added `interactive` flag (default `True`) to `cluster_all_gammas()`; when `False`, outliers are flagged but retained automatically without `input()` prompts — required for safe GUI integration
+
+#### Clustering – per-peak → per-population column remapping
+
+- After clustering, peak-indexed columns (`tau_1`, `intensity_1`, `area_1`, …) are remapped to population-indexed equivalents (`tau_pop1`, `intensity_pop1`, `area_pop1`, …) based on the cluster assignment
+- Remapped prefixes: `tau`, `intensity`, `normalized_area_percent`, `normalized_sum_percent`, `area`, `fwhm`, `centroid`, `std_dev`, `skewness`, `kurtosis`
+
+#### Method-specific analyzer instances
+
+- `AnalysisView` now maintains separate `laplace_analyzer_nnls` and `laplace_analyzer_regularized` attributes; post-fit refinement dialogs and recalculation calls use the method-specific instance, preventing result cross-contamination when both NNLS and Regularized are run in the same session
+
+#### Startup splash screen
+
+- Custom PyQt5 splash screen in `run.py`: navy background (#1e3a5f), bold "ADE-DLS" title, "Loading, please wait…" subtitle
+- Heavy imports (`main_window`) deferred until after the splash is rendered, visibly reducing startup time
+
+#### Plot method filter
+
+- Added "Regularized NNLS" entry to the method-filter dropdown in the Plots tab
+
+### Fixed
+
+- **`'NNLS Analysis'` refinement button grayed out**: `'NNLS Analysis'` was missing from the `_REFINABLE` set in `analysis_view.py`
+- **NNLS / Regularized cross-contamination in post-fit refinement**: Refinement dialog previously always operated on `self.laplace_analyzer`; it now selects the method-specific analyzer
+- **Clustering dendrogram incompatible with GUI**: Dendrogram plot switched from `plt.figure()` (interactive pyplot) to `matplotlib.figure.Figure` (non-interactive), enabling embedding in Qt dialogs
+
+### Changed
+
+- **Lazy imports in `__init__.py` files**: Removed eager top-level imports from `ade_dls/__init__.py`, `ade_dls/analysis/__init__.py`, `ade_dls/core/__init__.py`, `ade_dls/utils/__init__.py`; modules are now imported on demand for faster startup and to eliminate circular import risks
+- **`main()` signature**: `run.py` constructs `QApplication` and the splash before calling `main(app=app, splash=splash)`
+- **Regularized clustering parameters**: `calculate_regularized_diffusion_coefficients()` now receives `use_clustering`, `distance_threshold`, and `clustering_strategy` from `RegularizedDialog` parameters
+
+---
+
 ## [2.0.3dev] - 2026-03-10
 
 ### Added
@@ -178,6 +239,7 @@ All functionality remains the same; only import paths have changed.
 
 ---
 
+[2.1dev]: https://github.com/traianuschem/JADE-DLS/compare/v2.0.3dev...v2.1dev
 [2.0.3dev]: https://github.com/traianuschem/JADE-DLS/compare/v2.0.2dev...v2.0.3dev
 [2.1.0]: https://github.com/traianuschem/JADE-DLS/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/traianuschem/JADE-DLS/compare/v1.0.0...v2.0.0

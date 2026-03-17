@@ -5,13 +5,14 @@ Uses matrix caching, vectorization, and optional multiprocessing
 """
 
 from scipy.optimize import least_squares, minimize
-from scipy.signal import find_peaks
+from scipy.signal import find_peaks, peak_widths
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 from scipy import sparse
 from scipy import stats
 from matplotlib import cm
+from matplotlib.figure import Figure
 import random
 from functools import lru_cache
 from typing import Dict, Tuple, Optional, List
@@ -125,13 +126,47 @@ def nnls_optimized(df: pd.DataFrame, name: str, nnls_params: dict,
     # Normalization to the total sum
     normalized_amplitudes_sum = peak_amplitudes / np.sum(peak_amplitudes) if len(peak_amplitudes) > 0 else np.array([])
 
+    # Area-based normalization (trapz integral per peak segment)
+    peak_areas = []
+    for peak_index in peaks:
+        left  = max(0, peak_index - 10)
+        right = min(len(decay_times), peak_index + 10)
+        area  = np.trapz(f_optimized[left:right], decay_times[left:right])
+        peak_areas.append(max(area, 0.0))
+    total_area = sum(peak_areas) if sum(peak_areas) > 0 else 1.0
+    normalized_area_pct = [a / total_area * 100 for a in peak_areas]
+
     # Prepare results for this dataframe
     results = {'filename': name}
     for i, peak_index in enumerate(peaks):
-        percentage = normalized_amplitudes_sum[i] * 100
-        results[f'tau_{i+1}'] = decay_times[peak_index]
-        results[f'intensity_{i+1}'] = f_optimized[peak_index]
-        results[f'normalized_sum_percent_{i+1}'] = percentage
+        pct_sum = normalized_amplitudes_sum[i] * 100
+
+        # Per-peak shape statistics (weighted τ-space moments, log-space)
+        left    = max(0, peak_index - 10)
+        right   = min(len(decay_times), peak_index + 10)
+        peak_x  = np.log(decay_times[left:right])
+        peak_y  = f_optimized[left:right]
+        w       = peak_y / np.sum(peak_y) if np.sum(peak_y) > 0 else np.ones(len(peak_y)) / len(peak_y)
+        wmean   = np.sum(w * peak_x)
+        wvar    = np.sum(w * (peak_x - wmean)**2)
+        wstd    = np.sqrt(wvar) if wvar > 0 else 0
+        skew    = np.sum(w * (peak_x - wmean)**3) / wstd**3 if wstd > 0 and len(peak_x) >= 3 else 0
+        kurt    = np.sum(w * (peak_x - wmean)**4) / wstd**4 - 3 if wstd > 0 and len(peak_x) >= 4 else 0
+
+        # FWHM via scipy peak_widths
+        widths_result = peak_widths(f_optimized, [peak_index], rel_height=0.5)
+        fwhm_idx = widths_result[0][0]
+        fwhm_s   = fwhm_idx * (decay_times[-1] - decay_times[0]) / len(decay_times)
+
+        results[f'tau_{i+1}']                     = decay_times[peak_index]
+        results[f'intensity_{i+1}']               = f_optimized[peak_index]
+        results[f'normalized_sum_percent_{i+1}']  = pct_sum
+        results[f'normalized_area_percent_{i+1}'] = normalized_area_pct[i]
+        results[f'area_{i+1}']                    = peak_areas[i]
+        results[f'fwhm_{i+1}']                    = fwhm_s
+        results[f'skewness_{i+1}']                = skew
+        results[f'kurtosis_{i+1}']                = kurt
+        results[f'std_dev_{i+1}']                 = wstd
 
     return results, f_optimized, optimized_values, residuals_values, peaks
 
@@ -404,7 +439,8 @@ def nnls_preview_random(dataframes_dict: Dict[str, pd.DataFrame],
     cols = min(3, num_to_select)
     rows = (num_to_select + cols - 1) // cols
 
-    fig, axes = plt.subplots(rows, cols, figsize=(6*cols, 4*rows))
+    fig = Figure(figsize=(6*cols, 4*rows))
+    axes = fig.subplots(rows, cols)
     if num_to_select == 1:
         axes = np.array([axes])
     axes = axes.flatten()
@@ -463,9 +499,9 @@ def nnls_preview_random(dataframes_dict: Dict[str, pd.DataFrame],
     for idx in range(num_to_select, len(axes)):
         axes[idx].set_visible(False)
 
-    plt.suptitle(f'NNLS Preview - Prominence: {prominence:.3f}, Distance: {distance}',
-                fontsize=14, fontweight='bold')
-    plt.tight_layout()
+    fig.suptitle(f'NNLS Preview - Prominence: {prominence:.3f}, Distance: {distance}',
+                 fontsize=14, fontweight='bold')
+    fig.tight_layout()
 
     return fig, chosen_keys, all_results
 

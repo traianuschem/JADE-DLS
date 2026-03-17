@@ -6,7 +6,8 @@ Allows users to tune peak detection parameters with live feedback
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox,
                              QLabel, QLineEdit, QPushButton, QCheckBox,
                              QSlider, QSpinBox, QDoubleSpinBox, QTabWidget,
-                             QWidget, QMessageBox, QSizePolicy, QScrollArea)
+                             QWidget, QMessageBox, QSizePolicy, QScrollArea,
+                             QRadioButton, QButtonGroup, QComboBox)
 from PyQt5.QtCore import Qt, pyqtSignal
 import numpy as np
 import pandas as pd
@@ -39,8 +40,10 @@ class NNLSDialog(QDialog):
             'prominence': 0.05,
             'distance': 1,
             'num_preview': 5,
-            'eps_factor': 0.3,  # Clustering parameter for automatic mode detection
-            'use_clustering': True  # Enable automatic peak clustering
+            'distance_threshold': 2.0,         # Ward clustering distance threshold (log-space)
+            'clustering_strategy': 'silhouette_refined',  # clustering strategy
+            'use_clustering': True,            # Enable automatic peak clustering
+            'peak_method': 'maximum',          # Peak position method
         }
 
         # Storage for preview
@@ -262,9 +265,9 @@ class NNLSDialog(QDialog):
         cluster_group = QGroupBox("Automatic Mode Clustering")
         cluster_layout = QVBoxLayout()
 
-        cluster_info = QLabel("Clustering groups similar peaks across different angles into modes.\n"
-                             "Lower eps_factor = stricter clustering (more modes)\n"
-                             "Higher eps_factor = looser clustering (fewer modes)")
+        cluster_info = QLabel("Hierarchical Ward clustering (JADE 2.0 method).\n"
+                             "Smaller distance threshold = more populations detected.\n"
+                             "Clustering is always performed on D = Γ/q² (angle-independent).")
         cluster_info.setWordWrap(True)
         cluster_info.setStyleSheet("color: #666; font-style: italic;")
         cluster_layout.addWidget(cluster_info)
@@ -275,29 +278,30 @@ class NNLSDialog(QDialog):
         self.clustering_enabled_check.setToolTip("Groups peaks with similar diffusion coefficients across angles")
         cluster_layout.addWidget(self.clustering_enabled_check)
 
-        # eps_factor slider
-        eps_slider_layout = QHBoxLayout()
-        eps_slider_layout.addWidget(QLabel("eps_factor:"))
+        # Distance threshold
+        thresh_layout = QHBoxLayout()
+        thresh_layout.addWidget(QLabel("Distance threshold (log-space):"))
+        self.distance_threshold_input = QDoubleSpinBox()
+        self.distance_threshold_input.setDecimals(1)
+        self.distance_threshold_input.setRange(0.1, 3.0)
+        self.distance_threshold_input.setValue(2.0)
+        self.distance_threshold_input.setSingleStep(0.1)
+        self.distance_threshold_input.setMinimumWidth(80)
+        self.distance_threshold_input.setToolTip("Threshold in log₁₀-space; smaller = more populations")
+        thresh_layout.addWidget(self.distance_threshold_input)
+        cluster_layout.addLayout(thresh_layout)
 
-        self.eps_factor_slider = QSlider(Qt.Horizontal)
-        self.eps_factor_slider.setRange(5, 100)  # 0.05 to 1.0 (scaled by 100)
-        self.eps_factor_slider.setValue(30)  # 0.3
-        self.eps_factor_slider.setTickPosition(QSlider.TicksBelow)
-        self.eps_factor_slider.setTickInterval(10)
-        self.eps_factor_slider.valueChanged.connect(self.on_eps_factor_slider_changed)
-        eps_slider_layout.addWidget(self.eps_factor_slider)
-
-        # Manual input field
-        self.eps_factor_input = QDoubleSpinBox()
-        self.eps_factor_input.setDecimals(2)
-        self.eps_factor_input.setRange(0.05, 1.0)
-        self.eps_factor_input.setValue(0.3)
-        self.eps_factor_input.setSingleStep(0.05)
-        self.eps_factor_input.setMinimumWidth(80)
-        self.eps_factor_input.valueChanged.connect(self.on_eps_factor_input_changed)
-        eps_slider_layout.addWidget(self.eps_factor_input)
-
-        cluster_layout.addLayout(eps_slider_layout)
+        # Clustering strategy
+        strategy_layout = QHBoxLayout()
+        strategy_layout.addWidget(QLabel("Clustering strategy:"))
+        self.clustering_strategy_combo = QComboBox()
+        self.clustering_strategy_combo.addItems(['silhouette_refined', 'simple'])
+        self.clustering_strategy_combo.setCurrentText('silhouette_refined')
+        self.clustering_strategy_combo.setToolTip(
+            "silhouette_refined: iterative quality optimization (recommended)\n"
+            "simple: threshold-based cluster separation")
+        strategy_layout.addWidget(self.clustering_strategy_combo)
+        cluster_layout.addLayout(strategy_layout)
 
         # Mode detection info label
         self.detected_modes_label = QLabel("Detected modes: N/A (run preview to see)")
@@ -311,19 +315,24 @@ class NNLSDialog(QDialog):
         position_group = QGroupBox("Peak Position Method")
         position_layout = QVBoxLayout()
 
-        position_info = QLabel("Choose how to calculate the characteristic decay time for each peak:\n"
-                              "• Maximum: Use the tau value at the peak maximum (traditional method)\n"
-                              "• Centroid: Use the center of mass in log-space (compensates for log-distortion)")
+        position_info = QLabel("Choose how to calculate the characteristic decay time for each peak:")
         position_info.setWordWrap(True)
         position_info.setStyleSheet("color: #666; font-style: italic;")
         position_layout.addWidget(position_info)
 
-        # Centroid checkbox
-        self.use_centroid_check = QCheckBox("Use centroid (center of mass) instead of maximum")
-        self.use_centroid_check.setChecked(False)
-        self.use_centroid_check.setToolTip("Calculate peak position as weighted average in log-space.\n"
-                                           "Recommended for distributions with asymmetric or log-distorted peaks.")
-        position_layout.addWidget(self.use_centroid_check)
+        # Radio buttons for peak method
+        self.peak_method_group = QButtonGroup(self)
+        self.peak_method_max = QRadioButton("Maximum (default)")
+        self.peak_method_max.setChecked(True)
+        self.peak_method_max.setToolTip("Tau value at the peak amplitude maximum (classical method)")
+        self.peak_method_centroid = QRadioButton("Centroid (center of mass in log-space)")
+        self.peak_method_centroid.setToolTip(
+            "Weighted center of the peak area in log-τ space.\n"
+            "Recommended for asymmetric or log-distorted distributions.")
+        self.peak_method_group.addButton(self.peak_method_max)
+        self.peak_method_group.addButton(self.peak_method_centroid)
+        position_layout.addWidget(self.peak_method_max)
+        position_layout.addWidget(self.peak_method_centroid)
 
         position_group.setLayout(position_layout)
         layout.addWidget(position_group)
@@ -447,22 +456,6 @@ class NNLSDialog(QDialog):
         self.distance_slider.setValue(value)
         self.distance_slider.blockSignals(False)
         self.params['distance'] = value
-
-    def on_eps_factor_slider_changed(self, value):
-        """Handle eps_factor slider change"""
-        eps_factor = value / 100.0
-        self.eps_factor_input.blockSignals(True)
-        self.eps_factor_input.setValue(eps_factor)
-        self.eps_factor_input.blockSignals(False)
-        self.params['eps_factor'] = eps_factor
-
-    def on_eps_factor_input_changed(self, value):
-        """Handle eps_factor manual input change"""
-        slider_value = int(value * 100)
-        self.eps_factor_slider.blockSignals(True)
-        self.eps_factor_slider.setValue(slider_value)
-        self.eps_factor_slider.blockSignals(False)
-        self.params['eps_factor'] = value
 
     def apply_preset(self, preset_name):
         """Apply parameter preset"""
@@ -677,8 +670,10 @@ class NNLSDialog(QDialog):
 
             # Add overall title
             self.canvas.figure.suptitle(
-                f'NNLS Preview - Prominence: {self.params["prominence"]:.3f}, Distance: {self.params["distance"]}, '
-                f'eps_factor: {self.params["eps_factor"]:.2f}',
+                f'NNLS Preview — Prominence: {self.params["prominence"]:.3f}, '
+                f'Distance: {self.params["distance"]}, '
+                f'dist_thresh: {self.params.get("distance_threshold", 2.0):.1f}, '
+                f'strategy: {self.params.get("clustering_strategy", "silhouette_refined")}',
                 fontsize=12, fontweight='bold'
             )
 
@@ -705,88 +700,56 @@ class NNLSDialog(QDialog):
 
     def _estimate_mode_count_from_preview(self, preview_results, selected_datasets):
         """
-        Estimate the number of modes from preview results using clustering
-
-        Args:
-            preview_results: List of result dicts from NNLS preview
-            selected_datasets: List of dataset names used in preview
+        Summarize the number of peaks detected by NNLS across preview datasets.
+        Used to give the user feedback on peak-picking settings (prominence, distance).
+        No clustering: that belongs to the full analysis run, not the preview.
         """
         try:
-            # Check if clustering is enabled
-            if not self.params.get('use_clustering', True):
-                self.detected_modes_label.setText("Detected modes: N/A (clustering disabled)")
-                self.detected_modes_label.setStyleSheet("font-weight: bold; color: gray; padding: 5px;")
+            if not preview_results:
+                self.detected_modes_label.setText("Detected modes: N/A")
+                self.detected_modes_label.setStyleSheet(
+                    "font-weight: bold; color: orange; padding: 5px;")
                 return
 
-            # Create a DataFrame from preview results
-            preview_df = pd.DataFrame(preview_results)
+            peak_counts = []
+            for result in preview_results:
+                n_peaks = sum(
+                    1 for k, v in result.items()
+                    if k.startswith('tau_') and v is not None
+                    and not (isinstance(v, float) and np.isnan(v))
+                )
+                peak_counts.append(n_peaks)
 
-            # Get q² values from basedata for the selected datasets
-            basedata = self.laplace_analyzer.df_basedata
+            n_modes = int(round(np.median(peak_counts)))
+            min_p, max_p = int(min(peak_counts)), int(max(peak_counts))
 
-            # Match filenames to get q² values
-            q_squared_values = []
-            for filename in selected_datasets:
-                # Find matching row in basedata
-                matching_rows = basedata[basedata['filename'] == filename]
-                if len(matching_rows) > 0:
-                    q_squared_values.append(matching_rows.iloc[0]['q^2'])
-                else:
-                    # If not found, try to calculate from angle
-                    print(f"[Preview Clustering] Warning: {filename} not found in basedata")
-                    q_squared_values.append(None)
+            if min_p == max_p:
+                mode_text = f"Detected modes: {n_modes}"
+            else:
+                mode_text = f"Detected modes: {n_modes} (range {min_p}–{max_p})"
 
-            # Add q² column to preview_df
-            preview_df['q^2'] = q_squared_values
-
-            # Remove rows with missing q² values
-            preview_df = preview_df.dropna(subset=['q^2'])
-
-            if len(preview_df) < 2:
-                self.detected_modes_label.setText("Detected modes: N/A (insufficient data)")
-                self.detected_modes_label.setStyleSheet("font-weight: bold; color: orange; padding: 5px;")
-                return
-
-            # Perform mock clustering
-            from peak_clustering import cluster_peaks_across_datasets
-
-            eps_factor = self.params.get('eps_factor', 0.3)
-
-            clustered_df, cluster_info = cluster_peaks_across_datasets(
-                preview_df,
-                tau_prefix='tau_',
-                method='dbscan',
-                eps_factor=eps_factor,
-                min_samples=max(2, int(0.2 * len(preview_df)))
-            )
-
-            # Count modes
-            n_modes = len(cluster_info)
-
-            # Update label
-            mode_text = f"Detected modes: {n_modes} mode{'s' if n_modes != 1 else ''}"
             self.detected_modes_label.setText(mode_text)
 
-            # Color based on mode count
+            # Color coding by median peak count
             if n_modes == 0:
-                color = "#f44336"  # Red - no modes
+                color = "#f44336"   # Red — no peaks found
             elif n_modes == 1:
-                color = "#4CAF50"  # Green - monodisperse
+                color = "#4CAF50"   # Green — monodisperse
             elif n_modes <= 3:
-                color = "#2196F3"  # Blue - few modes
+                color = "#2196F3"   # Blue — few modes
             else:
-                color = "#FF9800"  # Orange - many modes
+                color = "#FF9800"   # Orange — many modes
 
-            self.detected_modes_label.setStyleSheet(f"font-weight: bold; color: {color}; padding: 5px;")
-
-            print(f"[Preview Clustering] Estimated {n_modes} modes with eps_factor={eps_factor:.2f}")
+            self.detected_modes_label.setStyleSheet(
+                f"font-weight: bold; color: {color}; padding: 5px;")
+            print(f"[Preview] Peak count: median={n_modes}, range={min_p}–{max_p} "
+                  f"across {len(peak_counts)} datasets")
 
         except Exception as e:
-            print(f"[Preview Clustering] Error estimating mode count: {e}")
-            import traceback
-            traceback.print_exc()
-            self.detected_modes_label.setText(f"Detected modes: Error ({str(e)[:30]}...)")
-            self.detected_modes_label.setStyleSheet("font-weight: bold; color: red; padding: 5px;")
+            print(f"[Preview] Error counting modes: {e}")
+            self.detected_modes_label.setText("Detected modes: Error")
+            self.detected_modes_label.setStyleSheet(
+                "font-weight: bold; color: red; padding: 5px;")
 
     def _create_gamma_q2_logplot(self, preview_results, selected_datasets):
         """
@@ -830,7 +793,7 @@ class NNLSDialog(QDialog):
 
             # Calculate Γ values from tau values
             # Γ = 1/τ
-            from regularized_optimized import calculate_decay_rates
+            from ade_dls.analysis.regularized_optimized import calculate_decay_rates
             preview_df = calculate_decay_rates(preview_df, tau_cols)
 
             # Get gamma columns
@@ -932,12 +895,14 @@ class NNLSDialog(QDialog):
         self.params['prominence'] = self.prominence_input.value()
         self.params['distance'] = self.distance_input.value()
 
-        # Clustering parameters
-        self.params['use_clustering'] = self.clustering_enabled_check.isChecked()
-        self.params['eps_factor'] = self.eps_factor_input.value()
+        # Clustering parameters (Ward/JADE 2.0) — normalize_by_q2 always True (fixed)
+        self.params['use_clustering']      = self.clustering_enabled_check.isChecked()
+        self.params['distance_threshold']  = self.distance_threshold_input.value()
+        self.params['clustering_strategy'] = self.clustering_strategy_combo.currentText()
 
         # Peak position method
-        self.params['use_centroid'] = self.use_centroid_check.isChecked()
+        self.params['peak_method']  = 'centroid' if self.peak_method_centroid.isChecked() else 'maximum'
+        self.params['use_centroid'] = self.peak_method_centroid.isChecked()  # backward compat
 
         # Processing options
         self.params['use_multiprocessing'] = self.multiprocessing_check.isChecked()
