@@ -388,7 +388,10 @@ class DistributionInspectorWidget(QWidget):
             ax.set_xticks([])
             ax.set_yticks([])
 
-        self.current_figure.tight_layout()
+        try:
+            self.current_figure.tight_layout()
+        except Exception:
+            pass
         self.canvas.draw()
 
         print(f"[DistributionInspector] Displayed plot: {filename}")

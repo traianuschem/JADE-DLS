@@ -388,7 +388,8 @@ class LaplaceAnalyzer:
 
         # Step 1: Auto-detect tau columns
         if tau_columns is None:
-            tau_columns = [col for col in self.nnls_data.columns if col.startswith('tau_')]
+            tau_columns = [col for col in self.nnls_data.columns
+                           if col.startswith('tau_') and not col.startswith('tau_pop')]
 
         print(f"\n[NNLS] Calculating diffusion coefficients for {len(tau_columns)} peaks...")
 

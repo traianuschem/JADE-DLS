@@ -5,10 +5,13 @@ Shows code, parameters, and documentation for transparency
 
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QTabWidget, QTextEdit,
                              QTableWidget, QTableWidgetItem, QLabel,
-                             QPushButton, QHBoxLayout, QGroupBox)
+                             QPushButton, QToolButton, QMenu, QHBoxLayout,
+                             QGroupBox)
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont, QSyntaxHighlighter, QTextCharFormat, QColor
 import re
+
+from .report_panel import ReportPanel
 
 
 class PythonHighlighter(QSyntaxHighlighter):
@@ -83,6 +86,10 @@ class InspectorPanel(QWidget):
         # Create tab widget
         self.tabs = QTabWidget()
 
+        # Tab 0: Report (first — most commonly used for export)
+        self.report_panel = ReportPanel(self.pipeline, parent=self)
+        self.tabs.addTab(self.report_panel, "📄 Report")
+
         # Tab 1: Code View
         self.code_tab = self.create_code_tab()
         self.tabs.addTab(self.code_tab, "💻 Code")
@@ -104,8 +111,25 @@ class InspectorPanel(QWidget):
         self.copy_code_btn.clicked.connect(self.copy_code)
         export_layout.addWidget(self.copy_code_btn)
 
-        self.export_btn = QPushButton("💾 Export")
-        self.export_btn.clicked.connect(self.export_code)
+        self.export_btn = QToolButton()
+        self.export_btn.setText("💾 Export Report")
+        self.export_btn.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self.export_btn.setPopupMode(QToolButton.InstantPopup)
+        export_menu = QMenu(self)
+        export_menu.addAction("Export as TXT…").triggered.connect(
+            self.report_panel._export_txt
+        )
+        export_menu.addAction("Export as Markdown…").triggered.connect(
+            self.report_panel._export_markdown
+        )
+        export_menu.addSeparator()
+        export_menu.addAction("Export as PDF (Portrait)…").triggered.connect(
+            lambda: self.report_panel._export_pdf(landscape=False)
+        )
+        export_menu.addAction("Export as PDF (Landscape)…").triggered.connect(
+            lambda: self.report_panel._export_pdf(landscape=True)
+        )
+        self.export_btn.setMenu(export_menu)
         export_layout.addWidget(self.export_btn)
 
         layout.addLayout(export_layout)
@@ -321,11 +345,6 @@ class InspectorPanel(QWidget):
         from PyQt5.QtWidgets import QApplication
         clipboard = QApplication.clipboard()
         clipboard.setText(self.code_view.toPlainText())
-
-    def export_code(self):
-        """Export code (triggers main window export)"""
-        # This would trigger the main window's export dialog
-        pass
 
     def set_code_view_visible(self, visible):
         """Set code view tab visibility"""

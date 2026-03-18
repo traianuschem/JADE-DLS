@@ -398,7 +398,7 @@ def cluster_all_gammas(data_df, gamma_cols, q_squared_col=None,
         clustered_df[f'gamma_pop{pop_num}'] = np.nan
         if uncertainty_flags:
             clustered_df[f'uncertain_pop{pop_num}'] = np.nan
-        clustered_df[f'outlier_pop{pop_num}'] = np.nan
+        clustered_df[f'outlier_pop{pop_num}'] = pd.array([pd.NA] * len(clustered_df), dtype='boolean')
 
     #fill reliable points
     for _, row in gammas_df_reliable.iterrows():

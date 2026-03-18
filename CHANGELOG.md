@@ -5,6 +5,70 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.1dev] - 2026-03-18
+
+### Added
+
+#### Static Light Scattering (SLS) – new analysis module
+
+- New module `ade_dls/analysis/sls.py` with population-resolved SLS analysis:
+  - `compute_sls_data()` — intensity decomposition per population using area-fraction weights from regularized NNLS (`I_pop = I_total × normalized_area_percent / 100`)
+  - `compute_sls_data_number_weighted()` — number-weighting correction (`I_pop / Rh^exponent`) to remove the intensity-vs-size bias; exponent configurable (6 = Rayleigh, 5 = Daoud-Cotton)
+  - `compute_guinier_total()` — Guinier fit on total intensity (reference baseline)
+  - `compute_guinier_extrapolation()` — per-population Guinier analysis (`ln(I_pop)` vs q²), yields I₀ and Rg per population
+  - `plot_sls_intensity()` / `plot_guinier()` — embeddable matplotlib plots (pass `ax=` for GUI, `ax=None` for standalone)
+  - `summarize_sls()` / `summarize_sls_combined()` — summary DataFrames with I₀, Rg, qRg_max, R² per population
+- New utility `ade_dls/utils/intensity.py`:
+  - `build_intensity_dataframe()` — reads ALV .ASC files and computes monitor-corrected, geometry-corrected mean count rates: `MeanCR_corr = (CR0 + CR1) / 2 / (monitordiode × 1e−3) × sin(θ)`; falls back to plain average × sin(θ) when monitor diode is unavailable
+- `LaplaceAnalyzer.load_intensity_data()` — loads and stores intensity data from ALV .ASC file list
+- `LaplaceAnalyzer.run_sls_analysis()` — orchestrates full SLS pipeline; stores `sls_data`, `guinier_results`, `guinier_total`, `sls_summary` on the analyzer instance
+
+#### SLS Analysis tab in results dialogs
+
+- **`RegularizedResultsDialog`** (Regularized NNLS): new **"📡 SLS Analysis"** tab (4th tab):
+  - Configuration: number of populations (auto-detected), q² Guinier fit range, Rh exponent, number-weighting toggle
+  - "Load Intensity Data" button opens folder browser for ALV .ASC files
+  - "▶ Run SLS Analysis" triggers `LaplaceAnalyzer.run_sls_analysis()`; Guinier plot and summary table rendered inline
+- **`LaplacePostFitRefinementDialog`** (Regularized only): equivalent SLS Analysis tab added
+
+#### Method D – parallel fitting
+
+- `_fit_single_method_d()` — new module-level function (required by joblib) that runs fitting, clustering, and moment calculation for a single file in isolation; returns `(name, result_dict, error_str)`
+- Method D fitting loop in `analyze_method_d()` now supports `use_multiprocessing` parameter to switch between sequential and parallel (joblib) execution
+
+#### Report panel integration
+
+- **`InspectorPanel`**: Report tab (`ReportPanel`) promoted to **Tab 0** (first tab, most prominent)
+- **Export Report button** (toolbar-style `QToolButton` with drop-down menu): TXT / Markdown / PDF (portrait) / PDF (landscape)
+- **`AnalysisView`**: new `send_to_report` PyQt5 signal; **"📤 Send Plot to Report"** button in the Plots panel navigation bar; right-click context menu on Results table rows adds **"Send to Report (Summary)"** and **"Send to Report (Details)"** actions
+- **`MainWindow`**: connects `analysis_view.send_to_report` to `inspector_panel.report_panel.add_block_from_payload()` and automatically switches to the Report tab on receipt
+- "Compare Results" menu action replaced by an informational dialog pointing users to the Report tab workflow
+
+#### Count-rate inspection – FFT panel
+
+- Filtering dialog count-rate preview expanded to **2-panel layout** (figure 10 × 9 in):
+  - Top panel: count rate vs time (one line per detector slot)
+  - Bottom panel: frequency spectrum (`semilogy` FFT magnitude vs Hz, DC component excluded)
+- Applies to both `FilteringDialog` and `MethodDPostFitDialog` raw-data viewers
+
+#### Pipeline – noise correction tracking
+
+- `AnalysisStep.make_filter_step()` now accepts an optional `noise_params` argument; active noise-reduction settings (`baseline_correction`, `baseline_pct`, `intercept_correction`, `intercept_pct`) are included in the pipeline step parameters when at least one correction is enabled — enables accurate code export
+
+### Fixed
+
+- **FutureWarning (pandas dtype)**: `outlier_pop{N}` columns in `cluster_all_gammas()` were initialized with `np.nan` (float64), then assigned `True`/`False` (bool). Columns are now initialized as `pd.array([pd.NA] * n, dtype='boolean')` — full three-state logic (NA / False / True) retained without dtype mismatch.
+- **ValueError in NNLS clustering re-run**: Auto-detection of tau columns (`col.startswith('tau_')`) included population-indexed columns (`tau_pop1`, `tau_pop2`, …) produced by a prior clustering run. On re-run this led to `original_col = 'gamma_pop1'` and `int('pop1')` → `ValueError`. Detection now explicitly excludes `tau_pop*` columns.
+- **UserWarning from `tight_layout()`**: `LaplacePostFitDialog._show_plot()` called `tight_layout()` unconditionally; fails with a UserWarning when many subplots with decorated text annotations are present. Wrapped in `try/except` (best-effort layout).
+- **Postfit refinement dialog – pyplot event loop conflict**: Figure construction in `PostfitRefinementDialog` switched from `plt.figure()` to `matplotlib.figure.Figure()` to avoid interference with the Qt event loop.
+
+### Changed
+
+- **Comparison tab removed** from `AnalysisView`: the dedicated comparison tab is replaced by the Report tab workflow (right-click → "Send to Report")
+- **`MethodDPostFitDialog` clustering calls**: `cluster_all_gammas()` is now called with `interactive=False` to prevent blocking `input()` prompts inside the GUI
+
+---
+
 ## [2.1dev] - 2026-03-17
 
 ### Added
@@ -239,6 +303,7 @@ All functionality remains the same; only import paths have changed.
 
 ---
 
+[2.1.1dev]: https://github.com/traianuschem/JADE-DLS/compare/v2.1.0dev...v2.1.1dev
 [2.1dev]: https://github.com/traianuschem/JADE-DLS/compare/v2.0.3dev...v2.1dev
 [2.0.3dev]: https://github.com/traianuschem/JADE-DLS/compare/v2.0.2dev...v2.0.3dev
 [2.1.0]: https://github.com/traianuschem/JADE-DLS/compare/v2.0.0...v2.1.0

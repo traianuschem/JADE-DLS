@@ -170,7 +170,8 @@ class TransparentPipeline(QObject):
         return step
 
     def add_filter_step(self, filter_type: str, excluded_files: List[str],
-                       original_count: int, remaining_count: int) -> AnalysisStep:
+                       original_count: int, remaining_count: int,
+                       noise_params: dict = None) -> AnalysisStep:
         """
         Add a data filtering step to the pipeline
 
@@ -181,6 +182,10 @@ class TransparentPipeline(QObject):
             excluded_files: List of filenames that were excluded
             original_count: Number of files before filtering
             remaining_count: Number of files after filtering
+            noise_params: Optional dict with noise-reduction settings
+                          (baseline_correction, baseline_pct,
+                           intercept_correction, intercept_pct).
+                          Only stored when at least one correction is active.
 
         Returns:
             The created AnalysisStep
@@ -214,17 +219,29 @@ if 'df_basedata' in locals() and len(df_basedata) > 0:
 print(f"No files excluded from {filter_type} filtering - {{len({filter_type}_data)}} files kept")
 """
 
+        # Build params dict; include noise_params only when active
+        step_params = {
+            'filter_type': filter_type,
+            'excluded_files': excluded_files,
+            'original_count': original_count,
+            'remaining_count': remaining_count,
+        }
+        if noise_params:
+            active_noise = {
+                k: v for k, v in noise_params.items()
+                if k in ('baseline_correction', 'baseline_pct',
+                         'intercept_correction', 'intercept_pct')
+            }
+            # Only attach when at least one correction flag is True
+            if active_noise.get('baseline_correction') or active_noise.get('intercept_correction'):
+                step_params['noise_params'] = active_noise
+
         # Create step with custom code
         step = AnalysisStep(
             name=f"Filter {filter_type.capitalize()}",
             step_type='filter',
             custom_code=code,
-            params={
-                'filter_type': filter_type,
-                'excluded_files': excluded_files,
-                'original_count': original_count,
-                'remaining_count': remaining_count
-            }
+            params=step_params,
         )
 
         self.steps.append(step)

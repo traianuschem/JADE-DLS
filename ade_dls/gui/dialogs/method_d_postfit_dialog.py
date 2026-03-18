@@ -249,6 +249,7 @@ class MethodDPostFitDialog(QDialog):
                 normalize_by_q2=True,
                 uncertainty_flags=False,
                 plot=False,
+                interactive=False,
                 **params,
             )
             self._draw_clustering_on_figure(clustered_df, cluster_info)

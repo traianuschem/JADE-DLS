@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTabWidget,
                              QTableWidget, QTableWidgetItem, QLabel, QTextEdit,
                              QGroupBox, QScrollArea, QListWidget, QListWidgetItem,
                              QPushButton, QSplitter, QComboBox)
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, pyqtSignal
 import pandas as pd
 
 
@@ -15,6 +15,8 @@ class AnalysisView(QWidget):
     """
     Central panel showing data overview, plots, and results
     """
+
+    send_to_report = pyqtSignal(dict)
 
     def __init__(self, pipeline, parent=None):
         super().__init__(parent)
@@ -39,10 +41,6 @@ class AnalysisView(QWidget):
         # Tab 3: Results
         self.results_tab = self.create_results_tab()
         self.tabs.addTab(self.results_tab, "📋 Results")
-
-        # Tab 4: Comparison
-        self.comparison_tab = self.create_comparison_tab()
-        self.tabs.addTab(self.comparison_tab, "⚖️ Comparison")
 
         layout.addWidget(self.tabs)
         self.setLayout(layout)
@@ -157,6 +155,15 @@ class AnalysisView(QWidget):
             nav_buttons.addWidget(self.sf_diffusion_btn)
 
         nav_layout.addLayout(nav_buttons)
+
+        # Send to Report button
+        report_btn_row = QHBoxLayout()
+        self.send_plot_btn = QPushButton("📤 Send Plot to Report")
+        self.send_plot_btn.setToolTip("Add the current plot as an image block to the Report tab")
+        self.send_plot_btn.clicked.connect(self._send_plot_to_report)
+        report_btn_row.addWidget(self.send_plot_btn)
+        report_btn_row.addStretch()
+        nav_layout.addLayout(report_btn_row)
 
         # Analyzer reference (set by main_window after analysis completes)
         self.cumulant_analyzer = None
@@ -304,33 +311,6 @@ class AnalysisView(QWidget):
         widget.setLayout(layout)
         return widget
 
-    def create_comparison_tab(self):
-        """Create comparison tab"""
-        widget = QWidget()
-        layout = QVBoxLayout()
-
-        # Title
-        title = QLabel("Method Comparison")
-        title.setStyleSheet("font-size: 14pt; font-weight: bold;")
-        layout.addWidget(title)
-
-        # Comparison table
-        comparison_group = QGroupBox("All Methods")
-        comparison_layout = QVBoxLayout()
-
-        self.comparison_table = QTableWidget()
-        self.comparison_table.setColumnCount(7)
-        self.comparison_table.setHorizontalHeaderLabels([
-            "Method", "Rh (nm)", "Error (nm)", "R²", "PDI", "Residuals", "Recommendation"
-        ])
-        comparison_layout.addWidget(self.comparison_table)
-
-        comparison_group.setLayout(comparison_layout)
-        layout.addWidget(comparison_group)
-
-        widget.setLayout(layout)
-        return widget
-
     def update_data_overview(self):
         """Update data overview with loaded data"""
         if 'files' not in self.pipeline.data:
@@ -392,15 +372,14 @@ class AnalysisView(QWidget):
             'cumulant_c': 2,
             'nnls': 2,
             'regularized': 2,
-            'compare': 3
         }
 
         tab_index = step_to_tab.get(step_name, 0)
         self.tabs.setCurrentIndex(tab_index)
 
     def show_comparison(self):
-        """Show comparison tab"""
-        self.tabs.setCurrentIndex(3)
+        """Comparison tab removed — use Report tab in Inspector panel instead."""
+        pass
 
     def plot_data(self, x_data, y_data, xlabel, ylabel, title):
         """Plot data on matplotlib canvas"""
@@ -1444,6 +1423,16 @@ class AnalysisView(QWidget):
         copy_table_action.triggered.connect(self._copy_table)
         menu.addAction(copy_table_action)
 
+        menu.addSeparator()
+
+        send_summary_action = QAction("📤 Send to Report (Summary)", self)
+        send_summary_action.triggered.connect(self._send_result_summary_to_report)
+        menu.addAction(send_summary_action)
+
+        send_detail_action = QAction("📤 Send to Report (Details)", self)
+        send_detail_action.triggered.connect(self._send_result_detail_to_report)
+        menu.addAction(send_detail_action)
+
         # Show menu
         menu.exec_(self.results_table.mapToGlobal(position))
 
@@ -1514,6 +1503,81 @@ class AnalysisView(QWidget):
             table_data.append("\t".join(row_data))
 
         QApplication.clipboard().setText("\n".join(table_data))
+
+    def _send_result_summary_to_report(self):
+        """Emit send_to_report with the 8-column summary data for the selected row."""
+        from datetime import datetime
+        row = self.results_table.currentRow()
+        if row < 0:
+            return
+        headers = [
+            self.results_table.horizontalHeaderItem(c).text()
+            for c in range(self.results_table.columnCount())
+        ]
+        data = {}
+        for col, header in enumerate(headers):
+            item = self.results_table.item(row, col)
+            data[header] = item.text() if item else ""
+
+        method_item = self.results_table.item(row, 0)
+        if method_item:
+            method_name = method_item.data(Qt.UserRole + 1) or data.get("Method", "Unknown")
+        else:
+            method_name = data.get("Method", "Unknown")
+
+        payload = {
+            "block_type": "result_summary",
+            "method_name": method_name,
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "data": data,
+        }
+        self.send_to_report.emit(payload)
+
+    def _send_result_detail_to_report(self):
+        """Emit send_to_report with the full HTML detail content for the selected row."""
+        from datetime import datetime
+        row = self.results_table.currentRow()
+        if row < 0:
+            return
+        method_item = self.results_table.item(row, 0)
+        if not method_item:
+            return
+        html = method_item.data(Qt.UserRole) or ""
+        method_name = method_item.data(Qt.UserRole + 1) or "Unknown"
+        payload = {
+            "block_type": "result_detail",
+            "method_name": method_name,
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "html": html,
+        }
+        self.send_to_report.emit(payload)
+
+    def _send_plot_to_report(self):
+        """Capture the current matplotlib figure and send it to the Report tab."""
+        import io
+        from datetime import datetime
+        if not hasattr(self, 'figure') or self.figure is None:
+            return
+        # Get display title from plot_list
+        current_item = self.plot_list.currentItem()
+        title = current_item.text() if current_item else "Plot"
+        # Capture as PNG bytes
+        buf = io.BytesIO()
+        try:
+            self.figure.savefig(buf, format='png', dpi=96, bbox_inches='tight')
+        except Exception:
+            return
+        buf.seek(0)
+        image_bytes = buf.read()
+        if not image_bytes:
+            return
+        payload = {
+            "block_type": "plot",
+            "title": title,
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "image_bytes": image_bytes,
+        }
+        self.send_to_report.emit(payload)
 
     def _show_plot_context_menu(self, position):
         """Show context menu for plot canvas"""

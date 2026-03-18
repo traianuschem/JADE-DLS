@@ -263,6 +263,9 @@ class JADEDLSMainWindow(QMainWindow):
         self.data_loader.data_loaded.connect(self.on_data_loaded)
         self.data_loader.error.connect(self.on_load_error)
 
+        # Connect report signal from analysis view to inspector report panel
+        self.analysis_view.send_to_report.connect(self._on_send_to_report)
+
     # ========== Slot Methods ==========
 
     def load_data(self):
@@ -546,8 +549,15 @@ class JADEDLSMainWindow(QMainWindow):
         """Run NNLS analysis"""
         self.workflow_panel.activate_step('nnls')
 
+    def _on_send_to_report(self, payload: dict):
+        """Route a result payload from the Results table to the Report tab."""
+        self.inspector_panel.report_panel.add_block_from_payload(payload)
+        idx = self.inspector_panel.tabs.indexOf(self.inspector_panel.report_panel)
+        if idx >= 0:
+            self.inspector_panel.tabs.setCurrentIndex(idx)
+
     def compare_results(self):
-        """Compare all analysis results"""
+        """Compare results — use Report tab in the Inspector panel."""
         self.analysis_view.show_comparison()
 
     def toggle_code_view(self, checked):
@@ -862,12 +872,13 @@ print(f"Extracted correlations from {len(correlations_data)} files")
                 excluded_files = [f for f in correlations_to_filter.keys()
                                  if f not in filtered_correlations]
 
-                # Add filter step to pipeline
+                # Add filter step to pipeline (include noise params if active)
                 self.pipeline.add_filter_step(
                     filter_type='correlations',
                     excluded_files=excluded_files,
                     original_count=len(correlations_to_filter),
-                    remaining_count=len(filtered_correlations)
+                    remaining_count=len(filtered_correlations),
+                    noise_params=noise_params if noise_active else None,
                 )
 
                 if excluded_count > 0:
@@ -1026,6 +1037,10 @@ print(f"Extracted correlations from {len(correlations_data)} files")
             original_count = len(data['correlations'])
             excluded_count = original_count - len(filtered_correlations)
 
+            # Store noise correction parameters
+            noise_active, noise_params = correlation_dialog.get_noise_params()
+            self._pending_noise_params = noise_params if noise_active else None
+
             # Track excluded files for reproducibility
             excluded_files = [f for f in data['correlations'].keys()
                              if f not in filtered_correlations]
@@ -1042,12 +1057,13 @@ print(f"Extracted correlations from {len(correlations_data)} files")
                 self.pipeline.data['basedata'] = filtered_basedata
                 self.pipeline.data['num_files'] = len(remaining_files)
 
-            # Add to pipeline for code export
+            # Add to pipeline for code export (include noise params if active)
             self.pipeline.add_filter_step(
                 filter_type='correlations',
                 excluded_files=excluded_files,
                 original_count=original_count,
-                remaining_count=len(filtered_correlations)
+                remaining_count=len(filtered_correlations),
+                noise_params=noise_params if noise_active else None,
             )
 
             # Update view
@@ -2027,16 +2043,15 @@ print(method_d_results)
         self.analysis_view.show_results_tab()
 
     def compare_results(self):
-        """Compare results from different methods"""
-        # TODO: Implement comparison view
+        """Compare results from different methods via the Report tab."""
         QMessageBox.information(
             self,
-            "Coming Soon",
-            "Results comparison feature will allow you to:\n\n"
-            "• Compare Cumulant A/B/C methods\n"
-            "• Compare NNLS vs Regularized fits\n"
-            "• View all Rh values side-by-side\n"
-            "• Export comprehensive comparison reports"
+            "Results Comparison",
+            "Right-click any row in the Results table and choose\n"
+            "\"Send to Report\" to collect results in the Report tab\n"
+            "(Inspector panel, right side).\n\n"
+            "You can add as many result blocks as you like and\n"
+            "then export the report as TXT, Markdown, or PDF."
         )
 
     def _add_nnls_step_to_pipeline(self, params):

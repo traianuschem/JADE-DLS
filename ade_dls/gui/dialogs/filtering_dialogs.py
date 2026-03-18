@@ -125,7 +125,7 @@ class CountrateFilterDialog(QDialog):
         layout = QVBoxLayout()
 
         # Matplotlib figure
-        self.figure = Figure(figsize=(10, 6))
+        self.figure = Figure(figsize=(10, 9))
         self.canvas = FigureCanvasQTAgg(self.figure)
         self.toolbar = NavigationToolbar2QT(self.canvas, self)
 
@@ -147,29 +147,50 @@ class CountrateFilterDialog(QDialog):
         self.figure.clear()
 
         if self.current_file and self.current_file in self.countrate_data:
-            # Plot single file
-            ax = self.figure.add_subplot(111)
             df = self.countrate_data[self.current_file]
 
-            # Plot each detector slot
-            if 'time [s]' in df.columns:
-                for col in ['detectorslot 1', 'detectorslot 2', 'detectorslot 3', 'detectorslot 4']:
-                    if col in df.columns and not df[col].isna().all():
-                        ax.plot(df['time [s]'], df[col], label=col, alpha=0.7)
+            ax1 = self.figure.add_subplot(211)
+            ax2 = self.figure.add_subplot(212)
 
-            ax.set_xlabel('Time [s]')
-            ax.set_ylabel('Count Rate [kHz]')
-            ax.set_title(f'Count Rate: {self.current_file}')
-            ax.legend()
-            ax.grid(True, alpha=0.3)
+            detector_cols = [col for col in
+                             ['detectorslot 1', 'detectorslot 2', 'detectorslot 3', 'detectorslot 4']
+                             if col in df.columns and not df[col].isna().all()]
+
+            if 'time [s]' in df.columns:
+                time = df['time [s]'].values
+                dt = np.mean(np.diff(time)) if len(time) > 1 else 1.0
+
+                for col in detector_cols:
+                    values = df[col].dropna().values
+                    ax1.plot(time[:len(values)], values, label=col, alpha=0.7)
+
+                    # FFT (DC-Anteil bei Index 0 weglassen)
+                    N = len(values)
+                    freqs = np.fft.rfftfreq(N, d=dt)
+                    fft_mag = np.abs(np.fft.rfft(values))
+                    ax2.semilogy(freqs[1:], fft_mag[1:], label=col, alpha=0.7)
+
+            ax1.set_xlabel('Time [s]')
+            ax1.set_ylabel('Count Rate [kHz]')
+            ax1.set_title(f'Count Rate: {self.current_file}')
+            ax1.legend()
+            ax1.grid(True, alpha=0.3)
+
+            ax2.set_xlabel('Frequency [Hz]')
+            ax2.set_ylabel('Magnitude [a.u.]')
+            ax2.set_title('Frequency Spectrum (FFT)')
+            ax2.legend()
+            ax2.grid(True, alpha=0.3)
 
             # Mark if excluded
             if self.current_file in self.excluded_files:
-                ax.text(0.5, 0.95, '❌ EXCLUDED',
-                       transform=ax.transAxes,
-                       ha='center', va='top',
-                       bbox=dict(boxstyle='round', facecolor='red', alpha=0.5),
-                       fontsize=14, fontweight='bold')
+                ax1.text(0.5, 0.95, '❌ EXCLUDED',
+                        transform=ax1.transAxes,
+                        ha='center', va='top',
+                        bbox=dict(boxstyle='round', facecolor='red', alpha=0.5),
+                        fontsize=14, fontweight='bold')
+
+            self.figure.tight_layout()
 
         self.canvas.draw()
 

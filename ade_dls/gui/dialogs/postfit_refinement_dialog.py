@@ -14,6 +14,7 @@ from PyQt5.QtCore import Qt
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
+from matplotlib.figure import Figure as MplFigure
 from matplotlib.patches import Rectangle
 import numpy as np
 
@@ -43,8 +44,9 @@ class InteractivePlotWidget(QWidget):
         """Initialize UI with matplotlib plot"""
         layout = QVBoxLayout()
 
-        # Create matplotlib figure
-        self.figure, self.ax = plt.subplots(figsize=(8, 5))
+        # Create matplotlib figure (use Figure directly to avoid pyplot event loop conflict)
+        self.figure = MplFigure(figsize=(8, 5))
+        self.ax = self.figure.add_subplot(1, 1, 1)
         self.canvas = FigureCanvas(self.figure)
         self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 

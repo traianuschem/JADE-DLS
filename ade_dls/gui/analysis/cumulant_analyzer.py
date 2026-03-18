@@ -1119,9 +1119,13 @@ class CumulantAnalyzer:
 
             all_fit_results.append(fit_result)
 
-            # Create 3-panel diagnostic figure (no show)
+            # Create 3-panel diagnostic figure (use Figure directly, no pyplot event loop)
+            from matplotlib.figure import Figure as _MplFigure
             residuals = y_fit - result['g2_fit']
-            fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15, 4))
+            fig = _MplFigure(figsize=(15, 4))
+            ax1 = fig.add_subplot(1, 3, 1)
+            ax2 = fig.add_subplot(1, 3, 2)
+            ax3 = fig.add_subplot(1, 3, 3)
             fig.suptitle(f'Method D — {name}', fontsize=11)
 
             ax1.plot(x_fit, y_fit, 'o', alpha=0.6, markersize=3, label='Data')
@@ -1152,8 +1156,7 @@ class CumulantAnalyzer:
             ax3.set_title('Q-Q Plot')
             ax3.grid(True, alpha=0.3)
 
-            plt.tight_layout()
-            plt.close(fig)
+            fig.tight_layout()
             method_d_plots[f"D: {name}"] = (fig, {})
             method_d_fit_quality[f"D: {name}"] = {'R2': r_squared, 'residuals': 'Normal'}
 
@@ -1215,6 +1218,7 @@ class CumulantAnalyzer:
                 clustering_strategy=params.get('clustering_strategy', 'simple'),
                 uncertainty_flags=False,
                 plot=False,
+                interactive=False,
             )
             self.method_d_clustered_df = clustered_df
             self.method_d_cluster_info = cluster_info
@@ -1430,6 +1434,7 @@ class CumulantAnalyzer:
                     q_squared_col='q^2',
                     uncertainty_flags=False,
                     plot=False,
+                    interactive=False,
                     **cparams,
                 )
                 n_pops = self.method_d_cluster_info.get('n_populations', 0)
