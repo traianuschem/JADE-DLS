@@ -13,4 +13,5 @@ __all__ = [
     'peak_clustering',
     'clustering',
     'noise',
+    'sls',
 ]

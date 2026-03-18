@@ -33,6 +33,48 @@ def _normality_status(resid) -> str:
         return "N/A"
 
 
+def _fit_single_method_d(name, x_data, y_data, n_max, n_start, gap_threshold):
+    """
+    Modul-Level-Wrapper für joblib-Parallelisierung von Method D.
+    Führt Fitting, Clustering und Momentenberechnung durch – kein Plotting.
+    Gibt (name, result_dict, error_str) zurück.
+    """
+    from ade_dls.analysis.cumulants_D import (
+        fit_cumulant_D, calculate_moments_from_gammas, cluster_gammas
+    )
+    import numpy as np
+
+    mask = y_data > 0
+    x_fit = x_data[mask]
+    y_fit = y_data[mask]
+
+    if len(x_fit) < 5:
+        return name, None, "Too few positive data points"
+
+    try:
+        result = fit_cumulant_D(x_fit, y_fit, n_max=n_max, n_start=n_start)
+        clusters, representatives, cluster_info = cluster_gammas(
+            result['gammas'], gap_threshold=gap_threshold
+        )
+        moments = calculate_moments_from_gammas(result['gammas'])
+
+        ss_res = result['residual_ss']
+        ss_tot = np.sum((y_fit - np.mean(y_fit))**2)
+        r_squared = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0.0
+
+        return name, {
+            'result': result,
+            'representatives': representatives,
+            'cluster_info': cluster_info,
+            'moments': moments,
+            'r_squared': r_squared,
+            'x_fit': x_fit,
+            'y_fit': y_fit,
+        }, None
+    except Exception as e:
+        return name, None, str(e)
+
+
 class CumulantAnalyzer:
     """
     Performs cumulant analysis on DLS data using multiple methods
@@ -972,9 +1014,6 @@ class CumulantAnalyzer:
         Returns:
             DataFrame with results (Rh, D, PDI, Skewness, Kurtosis, R²)
         """
-        from ade_dls.analysis.cumulants_D import (
-            fit_cumulant_D, calculate_moments_from_gammas, cluster_gammas
-        )
         from ade_dls.gui.analysis.cumulant_plotting import create_summary_plot
         import matplotlib.pyplot as plt
         import statsmodels.api as sm
@@ -1000,102 +1039,123 @@ class CumulantAnalyzer:
             print("[Step 2/6] Preparing processed correlations...")
             self.prepare_processed_correlations()
 
-        print(f"[Step 3/6] Fitting {len(self.processed_correlations)} correlation functions...")
+        total = len(self.processed_correlations)
+        use_multiprocessing = params.get('use_multiprocessing', False)
+
+        print(f"[Step 3/6] Fitting {total} correlation functions...")
         all_fit_results = []
         method_d_plots = {}
         method_d_fit_quality = {}
 
-        for idx, (name, df) in enumerate(self.processed_correlations.items()):
+        # --- Phase 1: Fitting (parallel or sequential) ---
+        multiprocessing_success = False
+        raw_results = []
+
+        if use_multiprocessing and total > 3:
             try:
-                print(f"  [{idx+1}/{len(self.processed_correlations)}] {name}")
+                from joblib import Parallel, delayed
+                import multiprocessing as mp
+                n_jobs = mp.cpu_count()
+                print(f"[Method D] Phase 1: Paralleles Fitting mit {n_jobs} CPU-Kernen (joblib loky)...")
+                raw_results = Parallel(n_jobs=n_jobs, backend='loky', verbose=5)(
+                    delayed(_fit_single_method_d)(
+                        name,
+                        df['t [s]'].values,
+                        df['g(2)-1'].values,
+                        n_max, n_start, gap_threshold
+                    )
+                    for name, df in self.processed_correlations.items()
+                )
+                multiprocessing_success = True
+            except Exception as e:
+                print(f"[Method D] Warnung: Parallelverarbeitung fehlgeschlagen ({e}), Fallback auf sequenziell.")
 
-                # Extract data: t [s] and g(2)-1 = g²(τ)-1 (baseline-subtracted)
-                x_data = df['t [s]'].values
-                y_data = df['g(2)-1'].values
-
-                # Filter to positive values only (noise floor can cause negatives)
-                mask = y_data > 0
-                x_fit = x_data[mask]
-                y_fit = y_data[mask]
-
-                if len(x_fit) < 5:
-                    print(f"    Warning: Too few positive data points, skipping.")
-                    continue
-
-                # Iterative multi-exponential fit
-                result = fit_cumulant_D(x_fit, y_fit, n_max=n_max, n_start=n_start)
-
-                # Cluster fitted decay rates into populations
-                clusters, representatives, cluster_info = cluster_gammas(
-                    result['gammas'], gap_threshold=gap_threshold
+        if not multiprocessing_success:
+            if use_multiprocessing and total > 3:
+                print("[Method D] Phase 1: Sequenzielles Fitting (Fallback)...")
+            else:
+                print("[Method D] Phase 1: Sequenzielles Fitting...")
+            for name, df in self.processed_correlations.items():
+                raw_results.append(
+                    _fit_single_method_d(
+                        name,
+                        df['t [s]'].values,
+                        df['g(2)-1'].values,
+                        n_max, n_start, gap_threshold
+                    )
                 )
 
-                # Calculate distribution moments
-                moments = calculate_moments_from_gammas(result['gammas'])
+        # --- Phase 2: Plot generation (always sequential) ---
+        if multiprocessing_success:
+            print("[Method D] Phase 2: Sequentielle Ploterstellung...")
 
-                # R-squared (computed on positive-value subset)
-                ss_res = result['residual_ss']
-                ss_tot = np.sum((y_fit - np.mean(y_fit))**2)
-                r_squared = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0.0
-
-                fit_result = {
-                    'filename': name,
-                    'n_modes': result['n_modes'],
-                    'beta': result['beta'],
-                    'residual_ss': result['residual_ss'],
-                    'R-squared': r_squared,
-                    'n_populations': cluster_info['n_clusters'],
-                    'gamma_mean': moments['gamma_mean'],
-                    'pdi': moments['pdi'],
-                    'skewness': moments['skewness'],
-                    'kurtosis': moments['kurtosis'],
-                }
-                for i, rep_gamma in enumerate(representatives):
-                    fit_result[f'gamma_{i+1}'] = rep_gamma
-
-                all_fit_results.append(fit_result)
-
-                # Create 3-panel diagnostic figure (no show)
-                residuals = y_fit - result['g2_fit']
-                fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15, 4))
-                fig.suptitle(f'Method D — {name}', fontsize=11)
-
-                ax1.plot(x_fit, y_fit, 'o', alpha=0.6, markersize=3, label='Data')
-                ax1.plot(x_fit, result['g2_fit'], 'r-', linewidth=2,
-                         label=f'Fit (n={result["n_modes"]})')
-                ax1.set_xscale('log')
-                ax1.set_xlabel('lag time τ [s]')
-                ax1.set_ylabel('g²(τ) − 1')
-                ax1.set_title('Data & Fit')
-                ax1.legend(fontsize=8)
-                ax1.grid(True, alpha=0.3)
-                param_text = (f"n modes: {result['n_modes']}  |  "
-                              f"n populations: {cluster_info['n_clusters']}\n"
-                              f"R² = {r_squared:.4f}\n"
-                              f"⟨Γ⟩ = {moments['gamma_mean']:.3e} s⁻¹")
-                ax1.text(0.97, 0.97, param_text, transform=ax1.transAxes,
-                         va='top', ha='right', fontsize=7,
-                         bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
-
-                ax2.plot(residuals, 'o', markersize=3, alpha=0.6)
-                ax2.axhline(0, color='r', linestyle='--', linewidth=1)
-                ax2.set_xlabel('Sample Index')
-                ax2.set_ylabel('Residuals')
-                ax2.set_title('Residuals')
-                ax2.grid(True, alpha=0.3)
-
-                scipy_stats.probplot(residuals, dist="norm", plot=ax3)
-                ax3.set_title('Q-Q Plot')
-                ax3.grid(True, alpha=0.3)
-
-                plt.tight_layout()
-                plt.close(fig)
-                method_d_plots[f"D: {name}"] = (fig, {})
-                method_d_fit_quality[f"D: {name}"] = {'R2': r_squared, 'residuals': 'Normal'}
-
-            except Exception as e:
-                print(f"    Error: {e}")
+        for name, data, err in raw_results:
+            if data is None:
+                print(f"    Warning [{name}]: {err}")
                 continue
+
+            result = data['result']
+            representatives = data['representatives']
+            cluster_info = data['cluster_info']
+            moments = data['moments']
+            r_squared = data['r_squared']
+            x_fit = data['x_fit']
+            y_fit = data['y_fit']
+
+            fit_result = {
+                'filename': name,
+                'n_modes': result['n_modes'],
+                'beta': result['beta'],
+                'residual_ss': result['residual_ss'],
+                'R-squared': r_squared,
+                'n_populations': cluster_info['n_clusters'],
+                'gamma_mean': moments['gamma_mean'],
+                'pdi': moments['pdi'],
+                'skewness': moments['skewness'],
+                'kurtosis': moments['kurtosis'],
+            }
+            for i, rep_gamma in enumerate(representatives):
+                fit_result[f'gamma_{i+1}'] = rep_gamma
+
+            all_fit_results.append(fit_result)
+
+            # Create 3-panel diagnostic figure (no show)
+            residuals = y_fit - result['g2_fit']
+            fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15, 4))
+            fig.suptitle(f'Method D — {name}', fontsize=11)
+
+            ax1.plot(x_fit, y_fit, 'o', alpha=0.6, markersize=3, label='Data')
+            ax1.plot(x_fit, result['g2_fit'], 'r-', linewidth=2,
+                     label=f'Fit (n={result["n_modes"]})')
+            ax1.set_xscale('log')
+            ax1.set_xlabel('lag time τ [s]')
+            ax1.set_ylabel('g²(τ) − 1')
+            ax1.set_title('Data & Fit')
+            ax1.legend(fontsize=8)
+            ax1.grid(True, alpha=0.3)
+            param_text = (f"n modes: {result['n_modes']}  |  "
+                          f"n populations: {cluster_info['n_clusters']}\n"
+                          f"R² = {r_squared:.4f}\n"
+                          f"⟨Γ⟩ = {moments['gamma_mean']:.3e} s⁻¹")
+            ax1.text(0.97, 0.97, param_text, transform=ax1.transAxes,
+                     va='top', ha='right', fontsize=7,
+                     bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
+
+            ax2.plot(residuals, 'o', markersize=3, alpha=0.6)
+            ax2.axhline(0, color='r', linestyle='--', linewidth=1)
+            ax2.set_xlabel('Sample Index')
+            ax2.set_ylabel('Residuals')
+            ax2.set_title('Residuals')
+            ax2.grid(True, alpha=0.3)
+
+            scipy_stats.probplot(residuals, dist="norm", plot=ax3)
+            ax3.set_title('Q-Q Plot')
+            ax3.grid(True, alpha=0.3)
+
+            plt.tight_layout()
+            plt.close(fig)
+            method_d_plots[f"D: {name}"] = (fig, {})
+            method_d_fit_quality[f"D: {name}"] = {'R2': r_squared, 'residuals': 'Normal'}
 
         if not all_fit_results:
             raise ValueError("Method D: no fits succeeded. Check input data quality.")

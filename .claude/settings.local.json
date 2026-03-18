@@ -11,7 +11,22 @@
       "Bash(python -m py_compile:*)",
       "Bash(python -c:*)",
       "Bash(ls -la /c/Users/traja/Documents/GitHub/JADE-DLS/JADE-DLS-2.0/*.py)",
-      "Bash(grep -E \"\\\\.\\(py\\)$\")"
+      "Bash(grep -E \"\\\\.\\(py\\)$\")",
+      "Bash(xargs -I {} head -30 {})",
+      "Bash(ls -lh /c/Users/traja/Documents/GitHub/JADE-DLS/*.ipynb)",
+      "Bash(python -m pip show pandas)",
+      "Bash(where python3:*)",
+      "Bash(where python:*)",
+      "Read(//c/Users/traja/AppData/Local/Programs/Python//**)",
+      "Read(//c/Users/traja/miniconda3/**)",
+      "Read(//c/ProgramData/miniconda3/**)",
+      "Bash(/c/Python3-12/python.exe -c \"import pandas; print\\(''pandas OK''\\)\")",
+      "Bash(/c/Python3-12/python.exe -c \"import ast; ast.parse\\(open\\(''ade_dls/analysis/sls.py''\\).read\\(\\)\\); print\\(''sls syntax OK''\\)\")",
+      "Bash(/c/Python3-12/python.exe -c \"from ade_dls.analysis import sls; print\\(''sls import OK''\\)\")",
+      "Bash(/c/Python3-12/python.exe -c \"from ade_dls.utils.intensity import build_intensity_dataframe; print\\(''intensity OK''\\)\")",
+      "Bash(/c/Python3-12/python.exe -c \"import ast; ast.parse\\(open\\(''ade_dls/gui/dialogs/regularized_results_dialog.py''\\).read\\(\\)\\); print\\(''dialog syntax OK''\\)\")",
+      "Bash(/c/Python3-12/python.exe -c \"import ast; ast.parse\\(open\\(''ade_dls/gui/analysis/laplace_analyzer.py''\\).read\\(\\)\\); print\\(''analyzer syntax OK''\\)\")",
+      "Bash(/c/Python3-12/python.exe -c \":*)"
     ]
   }
 }

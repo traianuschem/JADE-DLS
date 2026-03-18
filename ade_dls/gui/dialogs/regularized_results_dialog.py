@@ -6,7 +6,8 @@ Displays Regularized NNLS analysis results with multiple peaks
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox,
                              QLabel, QPushButton, QTableWidget, QTableWidgetItem,
                              QTabWidget, QWidget, QHeaderView, QMessageBox,
-                             QFileDialog, QTextEdit)
+                             QFileDialog, QTextEdit, QSpinBox, QDoubleSpinBox,
+                             QFormLayout, QCheckBox, QSizePolicy, QScrollArea)
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont, QColor
 import pandas as pd
@@ -68,6 +69,10 @@ class RegularizedResultsDialog(QDialog):
         # Tab 3: Statistics
         stats_tab = self.create_statistics_tab()
         tabs.addTab(stats_tab, "📈 Statistics")
+
+        # Tab 4: SLS Analysis
+        sls_tab = self.create_sls_tab()
+        tabs.addTab(sls_tab, "📡 SLS Analysis")
 
         layout.addWidget(tabs)
 
@@ -393,6 +398,279 @@ class RegularizedResultsDialog(QDialog):
             interpretation += "<br>💡 Multiple peaks indicate a heterogeneous sample"
 
         return interpretation
+
+    # ------------------------------------------------------------------
+    # SLS Analysis Tab
+    # ------------------------------------------------------------------
+
+    def create_sls_tab(self):
+        """Create the SLS analysis tab with configuration, Guinier plot and summary table."""
+        widget = QWidget()
+        outer = QVBoxLayout()
+
+        # ── Configuration ────────────────────────────────────────────
+        config_group = QGroupBox("Configuration")
+        form = QFormLayout()
+
+        # n_populations — auto-set from regularized_final_results
+        n_auto = len(self.laplace_analyzer.regularized_final_results) \
+            if self.laplace_analyzer.regularized_final_results is not None else 1
+        self.sls_npop_spin = QSpinBox()
+        self.sls_npop_spin.setRange(1, 4)
+        self.sls_npop_spin.setValue(min(n_auto, 4))
+        self.sls_npop_spin.setToolTip("Number of populations to analyse")
+        form.addRow("Populations:", self.sls_npop_spin)
+
+        # q² range for Guinier fit
+        q2_layout = QHBoxLayout()
+        self.sls_q2_min = QDoubleSpinBox()
+        self.sls_q2_min.setRange(0.0, 1000.0)
+        self.sls_q2_min.setDecimals(6)
+        self.sls_q2_min.setValue(0.0)
+        self.sls_q2_min.setToolTip("Lower q² bound for Guinier fit (0 = no limit)")
+        self.sls_q2_max = QDoubleSpinBox()
+        self.sls_q2_max.setRange(0.0, 1000.0)
+        self.sls_q2_max.setDecimals(6)
+        self.sls_q2_max.setValue(0.0)
+        self.sls_q2_max.setToolTip("Upper q² bound for Guinier fit (0 = no limit)")
+        q2_layout.addWidget(QLabel("min:"))
+        q2_layout.addWidget(self.sls_q2_min)
+        q2_layout.addWidget(QLabel("max:"))
+        q2_layout.addWidget(self.sls_q2_max)
+        form.addRow("q² Guinier range [nm⁻²]:", q2_layout)
+
+        # Exponent
+        self.sls_exponent_spin = QSpinBox()
+        self.sls_exponent_spin.setRange(1, 10)
+        self.sls_exponent_spin.setValue(6)
+        self.sls_exponent_spin.setToolTip(
+            "Rh exponent for number-weighting:\n"
+            "6 = Rayleigh (compact spheres)\n"
+            "5 = Daoud-Cotton (star polymers)"
+        )
+        form.addRow("Rh exponent:", self.sls_exponent_spin)
+
+        # Number-weighting checkbox
+        self.sls_use_nw_cb = QCheckBox("Apply number-weighting correction")
+        self.sls_use_nw_cb.setChecked(True)
+        form.addRow("", self.sls_use_nw_cb)
+
+        config_group.setLayout(form)
+        outer.addWidget(config_group)
+
+        # ── Action buttons ────────────────────────────────────────────
+        btn_layout = QHBoxLayout()
+
+        self.sls_load_btn = QPushButton("📂 Load Intensity Data")
+        self.sls_load_btn.setToolTip(
+            "Select the folder containing the ALV .ASC files to read "
+            "count-rate and monitor-diode data from."
+        )
+        self.sls_load_btn.clicked.connect(self._sls_load_intensity)
+        btn_layout.addWidget(self.sls_load_btn)
+
+        self.sls_run_btn = QPushButton("▶ Run SLS Analysis")
+        self.sls_run_btn.setEnabled(False)
+        self.sls_run_btn.clicked.connect(self._sls_run_analysis)
+        btn_layout.addWidget(self.sls_run_btn)
+
+        self.sls_status_label = QLabel("Load intensity data to start.")
+        self.sls_status_label.setStyleSheet("color: #666; font-style: italic;")
+        btn_layout.addWidget(self.sls_status_label)
+        btn_layout.addStretch()
+
+        outer.addLayout(btn_layout)
+
+        # ── Guinier Plot ──────────────────────────────────────────────
+        plot_group = QGroupBox("Guinier Plot")
+        plot_layout = QVBoxLayout()
+
+        try:
+            import matplotlib
+            matplotlib.use('Qt5Agg')
+            from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+            from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavToolbar
+            import matplotlib.pyplot as plt
+
+            self.sls_figure, self.sls_ax = plt.subplots(figsize=(7, 4))
+            self.sls_canvas = FigureCanvas(self.sls_figure)
+            self.sls_canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            self.sls_nav = NavToolbar(self.sls_canvas, widget)
+
+            # placeholder text
+            self.sls_ax.text(0.5, 0.5, "Run SLS Analysis to see the Guinier plot",
+                             ha='center', va='center', fontsize=11, color='#aaa',
+                             transform=self.sls_ax.transAxes)
+            self.sls_ax.set_xticks([])
+            self.sls_ax.set_yticks([])
+
+            plot_layout.addWidget(self.sls_nav)
+            plot_layout.addWidget(self.sls_canvas)
+            self._sls_plot_available = True
+        except Exception:
+            self._sls_plot_available = False
+            fallback = QLabel("Matplotlib Qt5 backend not available. "
+                              "Plot will be shown in a separate window.")
+            fallback.setWordWrap(True)
+            plot_layout.addWidget(fallback)
+
+        plot_group.setLayout(plot_layout)
+        outer.addWidget(plot_group)
+
+        # ── Summary Table ─────────────────────────────────────────────
+        summary_group = QGroupBox("SLS Summary")
+        summary_layout = QVBoxLayout()
+
+        self.sls_summary_table = QTableWidget()
+        self.sls_summary_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.sls_summary_table.setAlternatingRowColors(True)
+        self.sls_summary_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        summary_layout.addWidget(self.sls_summary_table)
+
+        export_csv_btn = QPushButton("💾 Export SLS Summary (CSV)")
+        export_csv_btn.clicked.connect(self._sls_export_csv)
+        summary_layout.addWidget(export_csv_btn)
+
+        summary_group.setLayout(summary_layout)
+        outer.addWidget(summary_group)
+
+        widget.setLayout(outer)
+        return widget
+
+    def _sls_load_intensity(self):
+        """Slot: open folder dialog, load intensity data from ALV files."""
+        import os
+
+        folder = QFileDialog.getExistingDirectory(
+            self, "Select folder with ALV .ASC files", "",
+            QFileDialog.ShowDirsOnly
+        )
+        if not folder:
+            return
+
+        # Collect .ASC files
+        file_paths = [
+            os.path.join(folder, f)
+            for f in os.listdir(folder)
+            if f.lower().endswith('.asc')
+        ]
+
+        if not file_paths:
+            QMessageBox.warning(self, "No Files Found",
+                                f"No .ASC files found in:\n{folder}")
+            return
+
+        try:
+            ok = self.laplace_analyzer.load_intensity_data(file_paths)
+            if ok:
+                n = len(self.laplace_analyzer.df_intensity)
+                self.sls_status_label.setText(
+                    f"✅ Loaded {n} intensity records from {folder}")
+                self.sls_run_btn.setEnabled(True)
+            else:
+                QMessageBox.warning(self, "Load Failed",
+                                    "Could not load intensity data. "
+                                    "Check that the files contain MeanCR0/MeanCR1 fields.")
+        except Exception as e:
+            QMessageBox.critical(self, "Load Error", str(e))
+
+    def _sls_run_analysis(self):
+        """Slot: run SLS analysis and update plot + table."""
+        n_pop = self.sls_npop_spin.value()
+        q2_min = self.sls_q2_min.value()
+        q2_max = self.sls_q2_max.value()
+        exponent = self.sls_exponent_spin.value()
+        use_nw = self.sls_use_nw_cb.isChecked()
+
+        q2_range = None
+        if q2_min > 0 or q2_max > 0:
+            q2_range = (q2_min if q2_min > 0 else 0.0,
+                        q2_max if q2_max > 0 else float('inf'))
+
+        try:
+            summary_df = self.laplace_analyzer.run_sls_analysis(
+                n_populations=n_pop,
+                q2_range=q2_range,
+                exponent=exponent,
+                use_nw=use_nw,
+            )
+            self._sls_update_plot()
+            self._sls_populate_table(summary_df)
+            self.sls_status_label.setText("✅ SLS analysis complete.")
+        except RuntimeError as e:
+            QMessageBox.warning(self, "SLS Analysis Error", str(e))
+        except Exception as e:
+            QMessageBox.critical(self, "Unexpected Error", str(e))
+
+    def _sls_update_plot(self):
+        """Redraw the embedded Guinier plot."""
+        from ade_dls.analysis.sls import plot_guinier
+
+        if not self._sls_plot_available:
+            # Fallback: standalone window
+            plot_guinier(
+                self.laplace_analyzer.guinier_results,
+                total_result=self.laplace_analyzer.guinier_total,
+            )
+            return
+
+        self.sls_ax.clear()
+        plot_guinier(
+            self.laplace_analyzer.guinier_results,
+            total_result=self.laplace_analyzer.guinier_total,
+            ax=self.sls_ax,
+        )
+        self.sls_figure.tight_layout()
+        self.sls_canvas.draw()
+
+    def _sls_populate_table(self, df):
+        """Fill the SLS summary QTableWidget from the summary DataFrame."""
+        if df is None or df.empty:
+            return
+
+        self.sls_summary_table.setRowCount(len(df))
+        self.sls_summary_table.setColumnCount(len(df.columns))
+        self.sls_summary_table.setHorizontalHeaderLabels(list(df.columns))
+
+        def _fmt(val):
+            if pd.isna(val):
+                return '—'
+            try:
+                f = float(val)
+                if abs(f) < 0.01 or abs(f) > 1e4:
+                    return f'{f:.4e}'
+                return f'{f:.4f}'
+            except (TypeError, ValueError):
+                return str(val)
+
+        for r, (_, row) in enumerate(df.iterrows()):
+            for c, col in enumerate(df.columns):
+                item = QTableWidgetItem(_fmt(row[col]))
+                item.setTextAlignment(Qt.AlignCenter)
+                # Colour qRg_max > 1.3 warning
+                if col == 'qRg_max':
+                    try:
+                        if float(row[col]) > 1.3:
+                            item.setBackground(QColor('#FFB6C1'))
+                    except (TypeError, ValueError):
+                        pass
+                self.sls_summary_table.setItem(r, c, item)
+
+    def _sls_export_csv(self):
+        """Export SLS summary table to CSV."""
+        if self.laplace_analyzer.sls_summary is None:
+            QMessageBox.warning(self, "No Data", "Run SLS Analysis first.")
+            return
+
+        filename, _ = QFileDialog.getSaveFileName(
+            self, "Export SLS Summary", "", "CSV Files (*.csv)")
+        if filename:
+            try:
+                self.laplace_analyzer.sls_summary.to_csv(filename, index=False)
+                QMessageBox.information(self, "Export Successful",
+                                        f"SLS summary saved to:\n{filename}")
+            except Exception as e:
+                QMessageBox.critical(self, "Export Error", str(e))
 
     def export_results(self):
         """Export results to file"""

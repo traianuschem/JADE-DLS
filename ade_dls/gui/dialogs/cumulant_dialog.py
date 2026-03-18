@@ -585,6 +585,20 @@ class CumulantDDialog(QDialog):
         cluster_group.setLayout(cluster_form)
         layout.addWidget(cluster_group)
 
+        # --- Processing Options ---
+        proc_group = QGroupBox("Processing Options")
+        proc_layout = QVBoxLayout()
+        self.d_multiprocessing = QCheckBox(
+            "Use multiprocessing (faster for large datasets)"
+        )
+        self.d_multiprocessing.setChecked(False)
+        self.d_multiprocessing.setToolTip(
+            "Enable parallel processing via joblib (cross-platform)."
+        )
+        proc_layout.addWidget(self.d_multiprocessing)
+        proc_group.setLayout(proc_layout)
+        layout.addWidget(proc_group)
+
         layout.addWidget(_build_q_range_group(self))
         layout.addStretch()
         layout.addLayout(self._button_row())
@@ -631,6 +645,7 @@ class CumulantDDialog(QDialog):
             'distance_threshold': self.d_distance_threshold.value(),
             'min_abundance': self.d_min_abundance.value(),
             'clustering_strategy': strategy,
+            'use_multiprocessing': self.d_multiprocessing.isChecked(),
         }
         self.q_range = q
         super().accept()

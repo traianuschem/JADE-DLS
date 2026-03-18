@@ -204,6 +204,7 @@ class DataLoadWorker(QThread):
                 if extracted_data is not None and not extracted_data.empty:
                     filename = os.path.basename(file)
                     extracted_data['filename'] = filename
+                    extracted_data['folder'] = os.path.dirname(os.path.abspath(file))
                     all_data.append(extracted_data)
                     print(f"[DATA LOADER]   ✓ {filename}")
                 else:

@@ -67,6 +67,13 @@ class LaplaceAnalyzer:
         self.nnls_params = None
         self.regularized_params = None
 
+        # SLS analysis results
+        self.df_intensity = None
+        self.sls_data = None
+        self.guinier_results = None
+        self.guinier_total = None
+        self.sls_summary = None
+
     def _process_raw_correlations(self, raw_correlations: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
         """
         Process raw correlation data to format needed for NNLS/Regularized fits
@@ -1222,3 +1229,105 @@ class LaplaceAnalyzer:
                 f.write("\n\n")
 
         print(f"Results exported to {filename}")
+
+    # ------------------------------------------------------------------
+    # SLS Analysis
+    # ------------------------------------------------------------------
+
+    def load_intensity_data(self, file_paths: list) -> bool:
+        """
+        Load and monitor-correct SLS intensity data from ALV .ASC files.
+
+        Calls build_intensity_dataframe() for each file path and stores
+        the result in self.df_intensity.
+
+        Parameters
+        ----------
+        file_paths : list of str
+            Full paths to the ALV .ASC files.
+
+        Returns
+        -------
+        bool  True if data was loaded successfully, False otherwise.
+        """
+        from ade_dls.utils.intensity import build_intensity_dataframe
+        df = build_intensity_dataframe(file_paths)
+        if df is None or df.empty:
+            print("load_intensity_data: no data loaded.")
+            return False
+        self.df_intensity = df
+        print(f"load_intensity_data: loaded {len(df)} intensity records "
+              f"from {df['angle [°]'].nunique()} angles.")
+        return True
+
+    def run_sls_analysis(self, n_populations: int, q2_range=None,
+                         exponent: int = 6, use_nw: bool = True) -> 'pd.DataFrame':
+        """
+        Run population-resolved SLS analysis on the regularized NNLS results.
+
+        Requires:
+            - self.regularized_data  (from run_regularized_nnls)
+            - self.regularized_final_results
+            - self.df_intensity  (from load_intensity_data)
+
+        Parameters
+        ----------
+        n_populations : int
+            Number of populations to analyse (1 – 4).
+        q2_range : tuple (q2_min, q2_max), dict {pop: (min, max)}, or None
+            q² range for Guinier fit. None = all angles.
+        exponent : int  (default 6)
+            Rh exponent for number-weighting correction.
+            6 = Rayleigh (compact spheres), 5 = Daoud-Cotton (star polymers).
+        use_nw : bool  (default True)
+            If True, also compute number-weighted intensities.
+
+        Returns
+        -------
+        pd.DataFrame  summary table (from summarize_sls_combined)
+        """
+        from ade_dls.analysis.sls import (
+            compute_sls_data,
+            compute_sls_data_number_weighted,
+            compute_guinier_total,
+            compute_guinier_extrapolation,
+            summarize_sls_combined,
+        )
+
+        if self.regularized_data is None or self.regularized_final_results is None:
+            raise RuntimeError("No regularized results available. "
+                               "Run Regularized NNLS first.")
+        if self.df_intensity is None:
+            raise RuntimeError("No intensity data loaded. "
+                               "Call load_intensity_data() first.")
+
+        # Build Rh lookup {1: Rh1, 2: Rh2, ...}
+        rh_values = {}
+        for _, row in self.regularized_final_results.iterrows():
+            fit_label = str(row.get('Fit', ''))
+            # Labels like 'Peak 1', 'pop1', 'Population 1' — extract trailing digit
+            digits = ''.join(c for c in fit_label if c.isdigit())
+            idx = int(digits) if digits else None
+            if idx is not None and 1 <= idx <= n_populations:
+                rh_values[idx] = float(row['Rh [nm]'])
+
+        # Fallback: assign in order if label parsing failed
+        if not rh_values:
+            for i, (_, row) in enumerate(self.regularized_final_results.iterrows(), 1):
+                if i > n_populations:
+                    break
+                rh_values[i] = float(row['Rh [nm]'])
+
+        sls = compute_sls_data(self.regularized_data, self.df_intensity, n_populations)
+        if use_nw:
+            sls = compute_sls_data_number_weighted(sls, n_populations, rh_values,
+                                                    exponent)
+        self.sls_data = sls
+        self.guinier_total = compute_guinier_total(sls, q2_range)
+        self.guinier_results = compute_guinier_extrapolation(sls, n_populations,
+                                                              q2_range)
+        self.sls_summary = summarize_sls_combined(
+            sls, self.guinier_results, self.guinier_total,
+            n_populations, rh_values, exponent,
+        )
+        return self.sls_summary

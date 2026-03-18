@@ -75,6 +75,72 @@ def extract_intensity(file_path):
       print(f"An error occurred while processing {file_path}: {e}")
       return None
 
+def build_intensity_dataframe(file_paths):
+    """
+    Load intensity data from a list of ALV .ASC file paths and compute
+    monitor-corrected, geometry-corrected mean count rates.
+
+    Correction formula (identical to JADE-DLS 2.1 notebook):
+
+        MeanCR_corr [kHz] = (meancr0 + meancr1) / 2
+                            / (monitordiode [cps] * 1e-3)
+                            * sin(angle [°])
+
+    Explanation:
+      - Average of both detector channels
+      - Divide by monitor diode (converted cps → kHz via *1e-3) to
+        normalise primary-beam fluctuations between measurements
+      - Multiply by sin(θ) to apply the scattering-geometry correction
+
+    Fallback (if monitordiode is unavailable): plain average * sin(θ).
+
+    Parameters
+    ----------
+    file_paths : list of str or Path
+        Paths to ALV .ASC files.
+
+    Returns
+    -------
+    pd.DataFrame with columns:
+        filename, angle [°], meancr0 [kHz], meancr1 [kHz],
+        monitordiode [cps], MeanCR_corr [kHz]
+    Returns None if no files could be loaded.
+    """
+    import os
+    import numpy as np
+
+    frames = []
+    for fp in file_paths:
+        df_row = extract_intensity(fp)
+        if df_row is not None:
+            df_row['filename'] = os.path.basename(fp)
+            frames.append(df_row)
+
+    if not frames:
+        print("build_intensity_dataframe: no intensity data could be loaded.")
+        return None
+
+    df = pd.concat(frames, ignore_index=True)
+
+    # geometry correction factor: sin(θ)
+    sin_theta = np.sin(np.radians(df['angle [°]'].fillna(90)))
+
+    raw_mean = (df['meancr0 [kHz]'].fillna(0) + df['meancr1 [kHz]'].fillna(0)) / 2
+
+    valid_md = df['monitordiode [cps]'].notna() & (df['monitordiode [cps]'] > 0)
+    if valid_md.any():
+        # monitor-diode correction: divide by monitordiode [cps] * 1e-3
+        md_khz = df['monitordiode [cps]'] * 1e-3
+        df['MeanCR_corr [kHz]'] = raw_mean / md_khz * sin_theta
+    else:
+        # fallback: no monitor correction, only geometry correction
+        print("build_intensity_dataframe: monitordiode data missing — "
+              "applying geometry correction only (no monitor normalisation).")
+        df['MeanCR_corr [kHz]'] = raw_mean * sin_theta
+
+    return df
+
+
 #plotting mean intensities for each angle
 def plot_meancr(df, x_col, y_col):
     plt.figure(figsize=(8, 4))
