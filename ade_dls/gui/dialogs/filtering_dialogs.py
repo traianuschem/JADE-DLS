@@ -161,14 +161,22 @@ class CountrateFilterDialog(QDialog):
                 dt = np.mean(np.diff(time)) if len(time) > 1 else 1.0
 
                 for col in detector_cols:
-                    values = df[col].dropna().values
-                    ax1.plot(time[:len(values)], values, label=col, alpha=0.7)
+                    I = df[col].values[:len(time)].copy()
+                    ax1.plot(time[:len(I)], I, label=col, alpha=0.7)
 
-                    # FFT (DC-Anteil bei Index 0 weglassen)
-                    N = len(values)
+                    # PSD: one-sided power spectral density via FFT (DC at index 0 excluded)
+                    N = len(I)
+                    # replace NaN with column mean to avoid FFT artefacts
+                    nan_mask = np.isnan(I)
+                    if nan_mask.any():
+                        I[nan_mask] = np.nanmean(I)
+                    if np.all(I == 0):
+                        continue
                     freqs = np.fft.rfftfreq(N, d=dt)
-                    fft_mag = np.abs(np.fft.rfft(values))
-                    ax2.semilogy(freqs[1:], fft_mag[1:], label=col, alpha=0.7)
+                    mask = freqs > 0
+                    X = np.fft.rfft(I)
+                    psd = (np.abs(X) ** 2) * dt / N
+                    ax2.loglog(freqs[mask], psd[mask], label=col, alpha=0.7, linewidth=1)
 
             ax1.set_xlabel('Time [s]')
             ax1.set_ylabel('Count Rate [kHz]')
@@ -177,8 +185,8 @@ class CountrateFilterDialog(QDialog):
             ax1.grid(True, alpha=0.3)
 
             ax2.set_xlabel('Frequency [Hz]')
-            ax2.set_ylabel('Magnitude [a.u.]')
-            ax2.set_title('Frequency Spectrum (FFT)')
+            ax2.set_ylabel('PSD [kHz² / Hz]')
+            ax2.set_title('Power Spectral Density (FFT)')
             ax2.legend()
             ax2.grid(True, alpha=0.3)
 

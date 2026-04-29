@@ -52,14 +52,14 @@ _BOUNDS_UPPER = {'a':  1.0, 'b':  1e6, 'c':  np.inf, 'd': np.inf, 'e': np.inf, '
 def get_meaningful_parameters(fit_function, full_parameter_list):
     #extract individual parameters
     a, b, c, d, e, f = full_parameter_list
-
+    
     func_name = fit_function.__name__
-
+    
     if func_name == 'fit_function1':
         return [a, b, f]
     elif func_name == 'fit_function2':
         return [a, b, c, f]
-    elif func_name == 'fit_function3':
+    elif func_name == 'fit_function3':  
         return [a, b, c, d, f]
     elif func_name == 'fit_function4':
         return [a, b, c, d, e, f]
@@ -132,16 +132,12 @@ def estimate_parameters_from_data(x_data, y_data, base_parameters):
             'f': base_parameters[5] if len(base_parameters) > 5 else 0.0
         }
 
-#estimate per-dataset initial parameters via fast single-exponential pre-fit.
-#strategy parameter is accepted for backward compatibility but ignored (all strategies
-#now use per-dataset individual pre-fitting, equivalent to the old 'individual' strategy).
+#different approaches for adaptive fitting
+#estimate per-dataset initial parameters via fast single-exponential pre-fit
 def get_adaptive_initial_parameters(dataframes_dict, fit_function, base_parameters,
-                                    strategy='individual', x_col='t [s]', y_col='g(2)-1',
-                                    verbose=True):
+                                    x_col='t [s]', y_col='g(2)-1', verbose=True):
     if verbose:
         print(f"Estimating adaptive parameters for {fit_function.__name__}...")
-    if strategy not in ('individual', None):
-        print(f"[INFO] strategy='{strategy}' is deprecated; using per-dataset individual pre-fitting.")
 
     idx_map         = {'a': 0, 'b': 1, 'c': 2, 'd': 3, 'e': 4, 'f': 5}
     adaptive_params = {}
@@ -167,7 +163,7 @@ def get_adaptive_initial_parameters(dataframes_dict, fit_function, base_paramete
 #  expert   mode  (initial_guesses is a list)  → direct iterative refinement from user parameters
 def plot_processed_correlations_iterative(dataframes_dict, fit_function2, fit_x_limits, initial_guesses,
                                          max_iterations=10, tolerance=1e-4, maxfev=50000,
-                                         method='lm', show_plots=True, plot_number_start=1):
+                                         method='lm', plot_number_start=1):
 
     #zoom rounds: coarse → medium → fine (adaptive mode only)
     _ZOOM_ROUNDS = [
@@ -365,46 +361,45 @@ def plot_processed_correlations_iterative(dataframes_dict, fit_function2, fit_x_
 
             all_fit_results.append(fit_result)
 
-            if show_plots:
-                #3-panel diagnostic plot: data+fit | residuals | Q-Q
-                mode_str = (f'adaptive ({len(all_r_squared)} attempts)'
-                            if _is_adaptive else f'expert (iter {best_idx+1})')
-                fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(20, 5))
-                fig.suptitle(f'[{plot_number}]: Method C ({fit_function2.__name__}) — {name}', fontsize=12)
+            #3-panel diagnostic plot: data+fit | residuals | Q-Q
+            mode_str = (f'adaptive ({len(all_r_squared)} attempts)'
+                        if _is_adaptive else f'expert (iter {best_idx+1})')
+            fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(20, 5))
+            fig.suptitle(f'[{plot_number}]: Method C ({fit_function2.__name__}) — {name}', fontsize=12)
 
-                ax1.plot(x_data, y_data, 'o', alpha=0.6, markersize=4, label='Data')
-                for i, (popt_i, y_i) in enumerate(all_y_fits):
-                    if i == best_idx:
-                        ax1.plot(x_data, y_i, 'r-', linewidth=2, label=f'Best fit ({mode_str})')
-                    else:
-                        ax1.plot(x_data, y_i, '-', color='gray', linewidth=1,
-                                 alpha=max(0.1, 0.3 + 0.5 * (i / len(all_y_fits))))
-                ax1.set_xlabel(r'lag time τ [s]')
-                ax1.set_ylabel(r'$g^{(2)}(\tau) - 1$')
-                ax1.set_title('Data & Fit')
-                ax1.grid(True, alpha=0.3)
-                ax1.set_xscale('log')
-                ax1.set_xlim(1e-6, 10)
-                ax1.legend()
-                ax1.text(0.95, 0.95,
-                         f"R² = {best_r2_val:.4f}\n⟨Γ⟩ = {best_popt[1]:.3e} s⁻¹",
-                         transform=ax1.transAxes, va='top', ha='right',
-                         bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
+            ax1.plot(x_data, y_data, 'o', alpha=0.6, markersize=4, label='Data')
+            for i, (popt_i, y_i) in enumerate(all_y_fits):
+                if i == best_idx:
+                    ax1.plot(x_data, y_i, 'r-', linewidth=2, label=f'Best fit ({mode_str})')
+                else:
+                    ax1.plot(x_data, y_i, '-', color='gray', linewidth=1,
+                             alpha=max(0.1, 0.3 + 0.5 * (i / len(all_y_fits))))
+            ax1.set_xlabel(r'lag time τ [s]')
+            ax1.set_ylabel(r'$g^{(2)}(\tau) - 1$')
+            ax1.set_title('Data & Fit')
+            ax1.grid(True, alpha=0.3)
+            ax1.set_xscale('log')
+            ax1.set_xlim(1e-6, 10)
+            ax1.legend()
+            ax1.text(0.95, 0.95,
+                     f"R² = {best_r2_val:.4f}\n⟨Γ⟩ = {best_popt[1]:.3e} s⁻¹",
+                     transform=ax1.transAxes, va='top', ha='right',
+                     bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
 
-                ax2.plot(best_residuals)
-                ax2.axhline(0, color='r', linestyle='--', linewidth=1)
-                ax2.set_xlabel('Sample Index')
-                ax2.set_ylabel('Residuals')
-                ax2.set_title('Residuals')
-                ax2.grid(True, alpha=0.3)
+            ax2.plot(best_residuals)
+            ax2.axhline(0, color='r', linestyle='--', linewidth=1)
+            ax2.set_xlabel('Sample Index')
+            ax2.set_ylabel('Residuals')
+            ax2.set_title('Residuals')
+            ax2.grid(True, alpha=0.3)
 
-                stats.probplot(best_residuals, dist="norm", plot=ax3)
-                ax3.set_title('Q-Q Plot')
-                ax3.grid(True, alpha=0.3)
+            stats.probplot(best_residuals, dist="norm", plot=ax3)
+            ax3.set_title('Q-Q Plot')
+            ax3.grid(True, alpha=0.3)
 
-                plt.tight_layout()
-                plt.show()
-                plot_number += 1
+            plt.tight_layout()
+            plt.show()
+            plot_number += 1
 
         except RuntimeError as e:
             print(f"[WARNING] '{name}': fit failed — {e}. Filling with NaN.")
@@ -422,24 +417,3 @@ def plot_processed_correlations_iterative(dataframes_dict, fit_function2, fit_x_
             all_fit_results.append(fit_result)
 
     return pd.DataFrame(all_fit_results)
-
-
-#calculate mean fit metrics to compare different fit methods
-def calculate_mean_fit_metrics(results_df):
-    #filter out rows with errors
-    valid_results = results_df[~results_df['filename'].str.contains('Error', na=False)]
-
-    #calculate means of "best fit" metrics
-    mean_metrics = {
-        'mean_R_squared': valid_results['best_R-squared'].mean(),
-        'mean_RMSE': valid_results['best_RMSE'].mean(),
-        'mean_AIC': valid_results['best_AIC'].mean(),
-        'num_datasets': len(valid_results)
-    }
-
-    #calculate standard deviations
-    mean_metrics['std_R_squared'] = valid_results['best_R-squared'].std()
-    mean_metrics['std_RMSE'] = valid_results['best_RMSE'].std()
-    mean_metrics['std_AIC'] = valid_results['best_AIC'].std()
-
-    return mean_metrics

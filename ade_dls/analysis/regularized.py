@@ -378,7 +378,7 @@ def nnls_reg(df, name, nnls_reg_params, plot_number):
             peak_x = decay_times[left_base_idx:right_base_idx+1]
             
             #calculate peak area using trapezoidal rule in log-space (correct for log-spaced decay times)
-            peak_area = np.trapz(peak_segment, np.log(peak_x))
+            peak_area = np.trapezoid(peak_segment, np.log(peak_x))
 
             #calculate peak width at half maximum (FWHM) in log-space (dimensionless, unbiased)
             half_max = peak_amplitudes[i] / 2
@@ -394,18 +394,21 @@ def nnls_reg(df, name, nnls_reg_params, plot_number):
             else:
                 fwhm = 0
             
-            #weighted τ-space moments — f(τ) as probability distribution over τ
+            #weighted moments in log-τ space — consistent with area calculated via d(ln τ)
+            #since grid is log-spaced, uniform weights w are correct in log space
             #note: skewness sign is opposite to cumulant skewness (τ vs Γ space)
+            ln_x = np.log(peak_x)
             w = peak_segment / np.sum(peak_segment) if np.sum(peak_segment) > 0 else np.ones(len(peak_segment)) / len(peak_segment)
-            weighted_mean = np.sum(peak_x * w)
-            variance      = np.sum(w * (peak_x - weighted_mean)**2)
-            std_dev       = np.sqrt(variance) if variance > 0 else 0
+            ln_mean       = np.sum(ln_x * w)
+            weighted_mean = np.exp(ln_mean)                           # geometric mean in τ-space
+            variance      = np.sum(w * (ln_x - ln_mean)**2)           # variance in log-τ space
+            std_dev       = np.sqrt(variance) if variance > 0 else 0  # std dev in log-τ space
             if std_dev > 0 and len(peak_segment) >= 3:
-                peak_skewness = np.sum(w * (peak_x - weighted_mean)**3) / std_dev**3
+                peak_skewness = np.sum(w * (ln_x - ln_mean)**3) / std_dev**3
             else:
                 peak_skewness = 0
             if std_dev > 0 and len(peak_segment) >= 4:
-                peak_kurtosis = np.sum(w * (peak_x - weighted_mean)**4) / std_dev**4 - 3
+                peak_kurtosis = np.sum(w * (ln_x - ln_mean)**4) / std_dev**4 - 3
             else:
                 peak_kurtosis = 0
 
@@ -477,7 +480,8 @@ def nnls_reg(df, name, nnls_reg_params, plot_number):
 
             #mark peak position (centroid or maximum)
             tau_display = peak_info['centroid'] if use_centroid else decay_times[peak_idx]
-            ax2.plot(tau_display, f_optimized[peak_idx], 'x', color=color, markersize=10)
+            f_display = np.interp(tau_display, decay_times, f_optimized) if use_centroid else f_optimized[peak_idx]
+            ax2.plot(tau_display, f_display, 'x', color=color, markersize=10)
 
             #create annotation text with peak info
             annotation_text = (f'τ={tau_display:.2e}\n'
@@ -487,7 +491,7 @@ def nnls_reg(df, name, nnls_reg_params, plot_number):
                               f'Kurt={peak_info["kurtosis"]:.2f}')
 
             ax2.annotate(annotation_text,
-                        xy=(decay_times[peak_idx], f_optimized[peak_idx]),
+                        xy=(tau_display, f_display),
                         xytext=(5, 5), textcoords='offset points',
                         fontsize=8, color='black', backgroundcolor='white',
                         bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="gray", alpha=0.8))

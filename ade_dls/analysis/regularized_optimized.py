@@ -131,7 +131,7 @@ def nnls_optimized(df: pd.DataFrame, name: str, nnls_params: dict,
     for peak_index in peaks:
         left  = max(0, peak_index - 10)
         right = min(len(decay_times), peak_index + 10)
-        area  = np.trapz(f_optimized[left:right], decay_times[left:right])
+        area  = np.trapezoid(f_optimized[left:right], decay_times[left:right])
         peak_areas.append(max(area, 0.0))
     total_area = sum(peak_areas) if sum(peak_areas) > 0 else 1.0
     normalized_area_pct = [a / total_area * 100 for a in peak_areas]
