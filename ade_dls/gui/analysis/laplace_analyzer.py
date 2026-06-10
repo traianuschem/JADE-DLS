@@ -67,6 +67,10 @@ class LaplaceAnalyzer:
         self.nnls_params = None
         self.regularized_params = None
 
+        # Snapshots for idempotent post-processing (stored after first run, restored before re-refinement)
+        self._nnls_data_snapshot = None
+        self._regularized_data_snapshot = None
+
         # SLS analysis results
         self.df_intensity = None
         self.sls_data = None
@@ -399,6 +403,11 @@ class LaplaceAnalyzer:
         gamma_columns = [col.replace('tau', 'gamma') for col in tau_columns]
 
         # Step 3: Ward hierarchical clustering (replaces DBSCAN)
+        # Remove stale gamma_pop columns from a previous run before re-clustering
+        old_pop_cols = [c for c in self.nnls_data.columns if c.startswith('gamma_pop')]
+        if old_pop_cols:
+            self.nnls_data = self.nnls_data.drop(columns=old_pop_cols)
+
         if use_clustering:
             print(f"\n[NNLS] Performing Ward hierarchical clustering...")
             from ade_dls.analysis.clustering import cluster_all_gammas
@@ -480,6 +489,10 @@ class LaplaceAnalyzer:
 
         # Step 6: Calculate Rh for each peak
         self._calculate_nnls_final_results()
+
+        # Store snapshot of the clustered data after the first run for idempotent post-processing
+        if self._nnls_data_snapshot is None:
+            self._nnls_data_snapshot = self.nnls_data.copy()
 
         print(f"[NNLS] Diffusion coefficient analysis complete.")
         return self.nnls_final_results
@@ -907,6 +920,11 @@ class LaplaceAnalyzer:
         gamma_columns = [col.replace('tau', 'gamma') for col in tau_columns]
 
         # Step 3: Ward hierarchical clustering (replaces DBSCAN)
+        # Remove stale gamma_pop columns from a previous run before re-clustering
+        old_pop_cols = [c for c in self.regularized_data.columns if c.startswith('gamma_pop')]
+        if old_pop_cols:
+            self.regularized_data = self.regularized_data.drop(columns=old_pop_cols)
+
         if use_clustering:
             print(f"\n[Regularized] Performing Ward hierarchical clustering...")
             from ade_dls.analysis.clustering import cluster_all_gammas
@@ -988,6 +1006,10 @@ class LaplaceAnalyzer:
 
         # Step 6: Calculate Rh for each peak
         self._calculate_regularized_final_results()
+
+        # Store snapshot of the clustered data after the first run for idempotent post-processing
+        if self._regularized_data_snapshot is None:
+            self._regularized_data_snapshot = self.regularized_data.copy()
 
         print(f"[Regularized] Diffusion coefficient analysis complete.")
         return self.regularized_final_results

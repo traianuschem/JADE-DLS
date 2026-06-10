@@ -24,6 +24,11 @@ from .core.data_loader import DataLoader
 from .dialogs.filtering_dialogs import CountrateFilterDialog, CorrelationFilterDialog
 from .dialogs.cumulant_dialog import CumulantADialog, CumulantBDialog, CumulantCDialog, CumulantDDialog
 
+try:
+    from ade_dls import __version__ as _JADE_VERSION
+except ImportError:
+    _JADE_VERSION = "unknown"
+
 
 class JADEDLSMainWindow(QMainWindow):
     """
@@ -93,8 +98,8 @@ class JADEDLSMainWindow(QMainWindow):
         self.analysis_view = AnalysisView(self.pipeline)
         self.analysis_view.setMinimumWidth(500)
 
-        # Right panel: Inspector (code viewer, parameters)
-        self.inspector_panel = InspectorPanel(self.pipeline)
+        # Right panel: Inspector (provenance, parameters)
+        self.inspector_panel = InspectorPanel(self.pipeline, version=_JADE_VERSION)
         self.inspector_panel.setMinimumWidth(300)
 
         # Add panels to splitter
@@ -140,6 +145,14 @@ class JADEDLSMainWindow(QMainWindow):
         export_report_action.setStatusTip('Export complete analysis report')
         export_report_action.triggered.connect(self.export_report)
         file_menu.addAction(export_report_action)
+
+        export_provenance_action = QAction('Export &Provenance JSON...', self)
+        export_provenance_action.setShortcut('Ctrl+Shift+P')
+        export_provenance_action.setStatusTip(
+            'Export FAIR-compliant provenance record (JSON) for this analysis session'
+        )
+        export_provenance_action.triggered.connect(self.export_provenance)
+        file_menu.addAction(export_provenance_action)
 
         file_menu.addSeparator()
 
@@ -208,9 +221,9 @@ class JADEDLSMainWindow(QMainWindow):
         # View Menu
         view_menu = menubar.addMenu('&View')
 
-        show_code_action = QAction('Show &Code', self, checkable=True)
+        show_code_action = QAction('Show &Provenance', self, checkable=True)
         show_code_action.setChecked(True)
-        show_code_action.setStatusTip('Show generated code')
+        show_code_action.setStatusTip('Show provenance record tab')
         show_code_action.triggered.connect(self.toggle_code_view)
         view_menu.addAction(show_code_action)
 
@@ -355,6 +368,19 @@ class JADEDLSMainWindow(QMainWindow):
                 )
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Export failed: {str(e)}")
+
+    def export_provenance(self):
+        """Export the FAIR-compliant provenance record as a JSON file."""
+        from datetime import datetime as _dt
+        default_name = f"DLS_Provenance_{_dt.now().strftime('%Y%m%d_%H%M%S')}.json"
+        filename, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Provenance JSON",
+            default_name,
+            "JSON Files (*.json)",
+        )
+        if filename:
+            self.inspector_panel.provenance_panel._export_json_to(filename)
 
     # ------------------------------------------------------------------
     # Cumulant analysis – shared helper
@@ -700,6 +726,16 @@ class JADEDLSMainWindow(QMainWindow):
             msg_box.setStandardButtons(QMessageBox.Ok)
             msg_box.exec_()
 
+        # ------------------------------------------------------------------
+        # Initialise the provenance record FIRST so the Load/Extract steps
+        # that follow can be captured as the first activities.
+        # ------------------------------------------------------------------
+        files = data.get('files', [])
+        basedata_df = data.get('basedata', None)
+        self.inspector_panel.provenance_panel.initialize_input(
+            data_folder, files, basedata_df
+        )
+
         # Add data loading step to pipeline with reproducible code
         load_code = f"""
 # Load data from folder (case-insensitive for Linux compatibility)
@@ -731,6 +767,8 @@ df_basedata = pd.DataFrame()
             }
         )
         self.pipeline.steps.append(load_step)
+        # Emit signal so provenance panel records this as the first activity
+        self.pipeline.step_added.emit(load_step.to_dict())
 
         # Add extraction step for countrates and correlations
         extract_code = """
@@ -764,6 +802,8 @@ print(f"Extracted correlations from {len(correlations_data)} files")
             }
         )
         self.pipeline.steps.append(extract_step)
+        # Emit signal so provenance panel records this as the second activity
+        self.pipeline.step_added.emit(extract_step.to_dict())
 
         # Update status
         self.status_manager.complete_operation(
@@ -1290,7 +1330,7 @@ print(method_a_results)
         elif method == 'B':
             fit_limits = config['method_b_params']['fit_limits']
             code = f"""
-# Cumulant Method B: Linear fit method
+# Cumulant Method B: Linear fit method (JADE 2.2: linregress)
 from ade_dls.analysis.cumulants import calculate_g2_B, plot_processed_correlations, analyze_diffusion_coefficient
 from ade_dls.core.preprocessing import process_correlation_data
 
@@ -1298,27 +1338,23 @@ from ade_dls.core.preprocessing import process_correlation_data
 columns_to_drop = ['time [ms]', 'correlation 1', 'correlation 2', 'correlation 3', 'correlation 4']
 processed_correlations_1 = process_correlation_data(correlations_data, columns_to_drop)
 
-# Calculate sqrt(g2)
+# Calculate ln√(g2-1)
 processed_correlations = calculate_g2_B(processed_correlations_1)
 
-# Define fit function
-def fit_function(x, a, b, c):
-    return 0.5 * np.log(a) - b * x + 0.5 * c * x**2
-
-# Fit data
+# Fit data (linear OLS — no fit_function needed)
 fit_limits = {fit_limits}
-cumulant_method_B_fit = plot_processed_correlations(processed_correlations, fit_function, fit_limits)
+cumulant_method_B_fit = plot_processed_correlations(processed_correlations, fit_limits)
 
 # Merge with basedata
 cumulant_method_B_data = pd.merge(df_basedata, cumulant_method_B_fit, on='filename', how='outer')
 cumulant_method_B_data = cumulant_method_B_data.reset_index(drop=True)
 cumulant_method_B_data.index = cumulant_method_B_data.index + 1
 
-# Analyze diffusion coefficient
+# Analyze diffusion coefficient (Γ vs q²)
 cumulant_method_B_diff = analyze_diffusion_coefficient(
     data_df=cumulant_method_B_data,
     q_squared_col='q^2',
-    gamma_cols=['b'],
+    gamma_cols=['Gamma'],
     method_names=['Method B']
 )
 
@@ -1327,11 +1363,7 @@ B_diff = pd.DataFrame()
 B_diff['D [m^2/s]'] = cumulant_method_B_diff['q^2_coef'] * 10**(-18)
 B_diff['std err D [m^2/s]'] = cumulant_method_B_diff['q^2_se'] * 10**(-18)
 
-# Calculate polydispersity
-cumulant_method_B_data['polydispersity'] = cumulant_method_B_data['c'] / (cumulant_method_B_data['b'])**2
-polydispersity_method_B = cumulant_method_B_data['polydispersity'].mean()
-
-# Calculate results
+# Calculate results (PDI not available from linear fit — use Method C)
 method_b_results = pd.DataFrame()
 method_b_results['Rh [nm]'] = c * (1 / B_diff['D [m^2/s]'][0]) * 10**9
 fractional_error_Rh_B = np.sqrt((delta_c / c)**2 + (B_diff['std err D [m^2/s]'][0] / B_diff['D [m^2/s]'][0])**2)
@@ -1339,7 +1371,7 @@ method_b_results['Rh error [nm]'] = fractional_error_Rh_B * method_b_results['Rh
 method_b_results['R_squared'] = cumulant_method_B_diff['R_squared']
 method_b_results['Fit'] = 'Rh from linear cumulant fit'
 method_b_results['Residuals'] = cumulant_method_B_diff['Normality']
-method_b_results['PDI'] = polydispersity_method_B
+method_b_results['PDI'] = float('nan')
 
 print("\\nCumulant Method B Results:")
 print(method_b_results)

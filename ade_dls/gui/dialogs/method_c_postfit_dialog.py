@@ -255,35 +255,44 @@ class MethodCPostFitDialog(QDialog):
         self.figure.clear()
 
         source_axes = fig.get_axes()
+        n_axes = len(source_axes)
+        if n_axes == 0:
+            self.canvas.draw()
+            return
 
         for ax_idx, source_ax in enumerate(source_axes):
-            # Create subplot in same position
-            if len(source_axes) == 2:
-                ax = self.figure.add_subplot(1, 2, ax_idx + 1)
-            else:
-                ax = self.figure.add_subplot(111)
+            # Create subplot grid: 1 row × n_axes columns (works for 1, 2, 3, … axes)
+            ax = self.figure.add_subplot(1, n_axes, ax_idx + 1)
 
             # Copy scatter plots (collections)
             for collection in source_ax.collections:
                 offsets = collection.get_offsets()
                 if len(offsets) > 0:
-                    ax.scatter(offsets[:, 0], offsets[:, 1],
-                             label=collection.get_label(),
-                             c=collection.get_facecolors(),
-                             s=collection.get_sizes(),
-                             alpha=collection.get_alpha(),
-                             edgecolors=collection.get_edgecolors(),
-                             linewidths=collection.get_linewidths())
+                    try:
+                        ax.scatter(offsets[:, 0], offsets[:, 1],
+                                 label=collection.get_label(),
+                                 c=collection.get_facecolors(),
+                                 s=collection.get_sizes() if len(collection.get_sizes()) else 20,
+                                 alpha=collection.get_alpha() or 0.7,
+                                 edgecolors=collection.get_edgecolors(),
+                                 linewidths=collection.get_linewidths())
+                    except Exception:
+                        ax.scatter(offsets[:, 0], offsets[:, 1], alpha=0.7)
 
             # Copy lines
             for line in source_ax.get_lines():
-                ax.plot(line.get_xdata(), line.get_ydata(),
-                       label=line.get_label(),
-                       color=line.get_color(),
-                       linestyle=line.get_linestyle(),
-                       marker=line.get_marker(),
-                       markersize=line.get_markersize() if line.get_marker() else 1,
-                       alpha=line.get_alpha())
+                try:
+                    marker = line.get_marker()
+                    ms = line.get_markersize() if (marker and marker != 'None') else 1
+                    ax.plot(line.get_xdata(), line.get_ydata(),
+                           label=line.get_label(),
+                           color=line.get_color(),
+                           linestyle=line.get_linestyle(),
+                           marker=marker,
+                           markersize=ms,
+                           alpha=line.get_alpha() or 1.0)
+                except Exception:
+                    ax.plot(line.get_xdata(), line.get_ydata())
 
             # Copy labels and title
             ax.set_xlabel(source_ax.get_xlabel())
@@ -296,16 +305,17 @@ class MethodCPostFitDialog(QDialog):
             if source_ax.get_yscale() == 'log':
                 ax.set_yscale('log')
 
-            # Copy legend
-            if source_ax.get_legend():
-                ax.legend()
+            # Copy legend (only if there are labelled artists)
+            handles, labels = ax.get_legend_handles_labels()
+            if handles:
+                ax.legend(fontsize=7)
 
             # Copy grid
             x_gridlines = source_ax.xaxis.get_gridlines()
-            grid_visible = any(line.get_visible() for line in x_gridlines) if x_gridlines else False
-            ax.grid(grid_visible)
+            grid_visible = any(gl.get_visible() for gl in x_gridlines) if x_gridlines else False
+            ax.grid(grid_visible, alpha=0.3)
 
-        self.figure.tight_layout()
+        self.figure.tight_layout(pad=1.5)
         self.canvas.draw()
 
     def on_item_checked(self, item):

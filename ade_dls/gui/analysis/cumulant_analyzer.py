@@ -502,19 +502,14 @@ class CumulantAnalyzer:
             print("[Step 2/5] Preparing processed correlations...")
             self.prepare_processed_correlations()
 
-        # Calculate sqrt(g2)
-        print("[Step 3/5] Calculating sqrt(g2) and dropping negative values...")
+        # Calculate ln√(g2-1) for linear fit
+        print("[Step 3/5] Calculating ln√(g2-1) and dropping non-positive values...")
         processed_correlations = calculate_g2_B(self.processed_correlations)
 
-        # Define fit function (up to 1st moment extension)
-        def fit_function(x, a, b, c):
-            return 0.5 * np.log(a) - b * x + 0.5 * c * x**2
-
-        # Plot and fit (without showing)
+        # Linear fit (JADE 2.2: linregress, no fit_function needed)
         print(f"[Step 4/5] Fitting {len(processed_correlations)} correlation functions...")
         cumulant_method_B_fit, self.method_b_plots = plot_processed_correlations_no_show(
             processed_correlations,
-            fit_function,
             fit_limits
         )
         print(f"            Successfully fitted {len(cumulant_method_B_fit)} datasets")
@@ -541,14 +536,14 @@ class CumulantAnalyzer:
             print(f"            Applied q² range filter: {min_q:.4e} - {max_q:.4e} nm⁻²")
             print(f"            {len(cumulant_method_B_data)} data points remaining")
 
-        # Analyze diffusion coefficient (without plotting)
-        # We'll create our own summary plot
+        # Analyze diffusion coefficient (Γ vs q²)
         print(f"[Step 5/5] Analyzing diffusion coefficient (Γ vs q²)...")
         import statsmodels.api as sm
 
-        # Linear regression
-        X = cumulant_method_B_data['q^2']
-        Y = cumulant_method_B_data['b']
+        # Linear regression — filter NaN rows (failed per-file fits)
+        valid_mask = cumulant_method_B_data['Gamma'].notna()
+        X = cumulant_method_B_data.loc[valid_mask, 'q^2']
+        Y = cumulant_method_B_data.loc[valid_mask, 'Gamma']
         X_with_const = sm.add_constant(X)
         model = sm.OLS(Y, X_with_const).fit()
 
@@ -559,7 +554,7 @@ class CumulantAnalyzer:
         self.method_b_summary_plot = create_summary_plot(
             cumulant_method_B_data,
             'q^2',
-            ['b'],
+            ['Gamma'],
             ['Method B'],
             '1/s'
         )
@@ -570,7 +565,7 @@ class CumulantAnalyzer:
             row = cumulant_method_B_fit[cumulant_method_B_fit['filename'] == filename]
             if not row.empty:
                 self.method_b_fit_quality[filename] = {
-                    'R2': row['R-squared'].values[0] if 'R-squared' in row else 0,
+                    'R2': row['R_squared'].values[0] if 'R_squared' in row else 0,
                     'residuals': 'Normal'
                 }
 
@@ -579,13 +574,7 @@ class CumulantAnalyzer:
         B_diff['D [m^2/s]'] = [model.params.iloc[1] * 10**(-18)]
         B_diff['std err D [m^2/s]'] = [model.bse.iloc[1] * 10**(-18)]
 
-        # Calculate polydispersity
-        cumulant_method_B_data['polydispersity'] = (
-            cumulant_method_B_data['c'] / (cumulant_method_B_data['b'])**2
-        )
-        polydispersity_method_B = cumulant_method_B_data['polydispersity'].mean()
-
-        # Calculate final results - use lists to ensure DataFrame rows are created
+        # Calculate final results
         print("\nCalculating hydrodynamic radius...")
         print(f"  D = {B_diff['D [m^2/s]'][0]:.4e} ± {B_diff['std err D [m^2/s]'][0]:.4e} m²/s")
 
@@ -600,7 +589,7 @@ class CumulantAnalyzer:
         # Normality test on Γ vs q² regression residuals (matches JADE 2.0)
         normality_b = _normality_status(model.resid)
 
-        # Create DataFrame with lists to ensure rows are created
+        # PDI not available from the linear fit (no 2nd cumulant); comes from Method C
         self.method_b_results = pd.DataFrame({
             'Rh [nm]':        [rh_value],
             'Rh error [nm]':  [rh_error_value],
@@ -609,12 +598,11 @@ class CumulantAnalyzer:
             'R_squared':      [model.rsquared],
             'Fit':            ['Rh from linear cumulant fit'],
             'Residuals':      [normality_b],
-            'PDI':            [polydispersity_method_B]
+            'PDI':            [np.nan],
         })
 
         print(f"\nFINAL RESULTS:")
         print(f"  Rh = {rh_value:.2f} ± {rh_error_value:.2f} nm")
-        print(f"  PDI = {polydispersity_method_B:.4f}")
         print(f"  R² = {model.rsquared:.6f}")
         print("="*60 + "\n")
 
@@ -632,6 +620,102 @@ class CumulantAnalyzer:
             'bic': float(model.bic)
         }
 
+        return self.method_b_results
+
+    def refine_method_b(self, q_range=None, excluded_files=None) -> pd.DataFrame:
+        """
+        Refine Method B results: re-run only the Γ vs q² regression
+        without repeating individual correlation-function fits.
+
+        Uses the stored ``method_b_data`` snapshot as input, optionally
+        filtered by q_range and/or excluded_files.
+
+        Returns:
+            DataFrame with updated Rh / D (same structure as run_method_b).
+        """
+        import statsmodels.api as sm
+        from ade_dls.gui.analysis.cumulant_plotting import create_summary_plot
+
+        if not hasattr(self, 'method_b_data') or self.method_b_data is None:
+            raise RuntimeError("No Method B data available. Run Method B first.")
+
+        data = self.method_b_data.copy()
+
+        # Apply file exclusion
+        if excluded_files:
+            data = data[~data['filename'].isin(excluded_files)].reset_index(drop=True)
+            print(f"  [Method B refine] Excluded {len(excluded_files)} file(s); "
+                  f"{len(data)} remaining")
+
+        # Apply q² range filter
+        if q_range is not None:
+            min_q, max_q = q_range
+            mask = (data['q^2'] >= min_q) & (data['q^2'] <= max_q)
+            data = data[mask].reset_index(drop=True)
+            print(f"  [Method B refine] q² filter {min_q:.3e}–{max_q:.3e}: "
+                  f"{len(data)} points remaining")
+
+        valid_mask = data['Gamma'].notna()
+        if valid_mask.sum() < 2:
+            raise RuntimeError("Not enough valid data points for regression after filtering.")
+
+        X = data.loc[valid_mask, 'q^2']
+        Y = data.loc[valid_mask, 'Gamma']
+        X_with_const = sm.add_constant(X)
+        model = sm.OLS(Y, X_with_const).fit()
+
+        print(f"  [Method B refine] Slope (D): {model.params.iloc[1]:.4e} s⁻¹·nm²  "
+              f"R²={model.rsquared:.6f}")
+
+        self.method_b_summary_plot = create_summary_plot(data, 'q^2', ['Gamma'],
+                                                          ['Method B'], '1/s')
+
+        D = model.params.iloc[1] * 1e-18  # nm² → m²
+        D_err = model.bse.iloc[1] * 1e-18
+
+        rh_value = self.c_value * (1 / D) * 1e9
+        frac_err = np.sqrt((self.delta_c / self.c_value)**2 + (D_err / D)**2)
+        rh_error_value = frac_err * rh_value
+
+        normality_b = _normality_status(model.resid)
+
+        n_excluded = len(excluded_files) if excluded_files else 0
+        n_total = len(self.method_b_data)
+        n_included = len(data)
+
+        self.method_b_results = pd.DataFrame({
+            'Rh [nm]':        [rh_value],
+            'Rh error [nm]':  [rh_error_value],
+            'D [m²/s]':       [D],
+            'D error [m²/s]': [D_err],
+            'R_squared':      [model.rsquared],
+            'Fit':            ['Rh from linear cumulant fit (refined)'],
+            'Residuals':      [normality_b],
+            'PDI':            [np.nan],
+        })
+
+        self.method_b_regression_stats = {
+            'summary':           str(model.summary()),
+            'params':            model.params.to_dict(),
+            'stderr_intercept':  float(model.bse.iloc[0]),
+            'stderr_slope':      float(model.bse.iloc[1]),
+            'rsquared':          float(model.rsquared),
+            'rsquared_adj':      float(model.rsquared_adj),
+            'fvalue':            float(model.fvalue),
+            'f_pvalue':          float(model.f_pvalue),
+            'aic':               float(model.aic),
+            'bic':               float(model.bic),
+        }
+
+        self._method_b_refinement_info = {
+            'q_range':        q_range,
+            'excluded_files': excluded_files or [],
+            'n_total':        n_total,
+            'n_included':     n_included,
+            'n_excluded':     n_excluded,
+        }
+
+        print(f"  [Method B refine] Rh = {rh_value:.2f} ± {rh_error_value:.2f} nm")
         return self.method_b_results
 
     def run_method_c(self, params: Dict[str, Any], q_range=None) -> pd.DataFrame:
@@ -675,7 +759,7 @@ class CumulantAnalyzer:
             return term
 
         def fit_function4(x, a, b, c, d, e, f):
-            inner_term = 1 + 0.5 * c * x**2 - (d * x**3) / 6 + ((e - 3 * c**2) * x**4) / 24
+            inner_term = 1 + 0.5 * c * x**2 - (d * x**3) / 6 + (e * x**4) / 24
             term = f + a * (np.exp(-b * x) * inner_term)**2
             return term
 
@@ -754,41 +838,24 @@ class CumulantAnalyzer:
             row = self.method_c_fit[self.method_c_fit['filename'] == filename]
             if not row.empty:
                 self.method_c_fit_quality[filename] = {
-                    'R2': row['R_squared'].values[0] if 'R_squared' in row else 0,
-                    'residuals': row['RMSE'].values[0] if 'RMSE' in row else 0
+                    'R2': row['best_R-squared'].values[0] if 'best_R-squared' in row else 0,
+                    'residuals': row['best_RMSE'].values[0] if 'best_RMSE' in row else 0,
                 }
 
-        # Linear regression for diffusion coefficient
+        # Linear regression for diffusion coefficient (Γ vs q²)
         import statsmodels.api as sm
 
-        # Debug: Check data before regression
-        print(f"[CUMULANT METHOD C DEBUG] Data for regression:")
-        print(f"  q^2 shape: {cumulant_method_C_data['q^2'].shape}")
-        print(f"  best_b shape: {cumulant_method_C_data['best_b'].shape}")
-        print(f"  q^2 sample: {cumulant_method_C_data['q^2'].head()}")
-        print(f"  best_b sample: {cumulant_method_C_data['best_b'].head()}")
-        print(f"  q^2 has NaN: {cumulant_method_C_data['q^2'].isna().any()}")
-        print(f"  best_b has NaN: {cumulant_method_C_data['best_b'].isna().any()}")
-
-        X = cumulant_method_C_data['q^2']
-        Y = cumulant_method_C_data['best_b']
+        # Filter NaN rows (failed fits)
+        valid_mask = cumulant_method_C_data['best_b'].notna()
+        X = cumulant_method_C_data.loc[valid_mask, 'q^2']
+        Y = cumulant_method_C_data.loc[valid_mask, 'best_b']
         X_with_const = sm.add_constant(X)
         model = sm.OLS(Y, X_with_const).fit()
-
-        print(f"[CUMULANT METHOD C DEBUG] Regression results:")
-        print(f"  params: {model.params}")
-        print(f"  R²: {model.rsquared}")
-        print(f"  slope (params[1]): {model.params.iloc[1]}")
 
         # Create DataFrame with diffusion coefficients
         C_diff = pd.DataFrame()
         C_diff['D [m^2/s]'] = [model.params.iloc[1] * 10**(-18)]
         C_diff['std err D [m^2/s]'] = [model.bse.iloc[1] * 10**(-18)]
-
-        print(f"[CUMULANT METHOD C DEBUG] Diffusion coefficient:")
-        print(f"  D [m^2/s]: {C_diff['D [m^2/s]'][0]}")
-        print(f"  c_value: {self.c_value}")
-        print(f"  Rh calculation: {self.c_value} * (1 / {C_diff['D [m^2/s]'][0]}) * 10^9")
 
         # Calculate polydispersity
         cumulant_method_C_data['polydispersity'] = (
@@ -798,13 +865,7 @@ class CumulantAnalyzer:
 
         # Calculate final results
         self.method_c_results = pd.DataFrame()
-
-        # Calculate Rh step by step for debugging
         rh_value = self.c_value * (1 / C_diff['D [m^2/s]'][0]) * 10**9
-        print(f"[CUMULANT METHOD C DEBUG] Rh calculation result:")
-        print(f"  Calculated Rh: {rh_value}")
-        print(f"  Type: {type(rh_value)}")
-
         self.method_c_results['Rh [nm]'] = [rh_value]
 
         fractional_error_Rh_C = np.sqrt(
@@ -812,8 +873,6 @@ class CumulantAnalyzer:
             (C_diff['std err D [m^2/s]'][0] / C_diff['D [m^2/s]'][0])**2
         )
         rh_error = fractional_error_Rh_C * rh_value
-        print(f"  Calculated Rh error: {rh_error}")
-
         self.method_c_results['Rh error [nm]'] = [rh_error]
         self.method_c_results['D [m²/s]'] = [C_diff['D [m^2/s]'][0]]
         self.method_c_results['D error [m²/s]'] = [C_diff['std err D [m^2/s]'][0]]
@@ -839,9 +898,6 @@ class CumulantAnalyzer:
         else:
             kurtosis_c = np.nan
         self.method_c_results['Kurtosis'] = [kurtosis_c]
-
-        print(f"[CUMULANT METHOD C DEBUG] Final DataFrame:")
-        print(self.method_c_results)
 
         # Store regression statistics as strings/dicts (not model object)
         self.method_c_regression_stats = {
@@ -935,7 +991,7 @@ class CumulantAnalyzer:
         )
         polydispersity_method_C = cumulant_method_C_data['polydispersity'].mean()
 
-        # Calculate final results
+        # Recomputed results
         recomputed_results = pd.DataFrame()
         rh_value = self.c_value * (1 / C_diff['D [m^2/s]'][0]) * 10**9
         recomputed_results['Rh [nm]'] = [rh_value]

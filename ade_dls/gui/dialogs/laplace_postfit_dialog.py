@@ -46,10 +46,12 @@ class InteractivePlotWidget(QWidget):
 
     def init_ui(self):
         """Initialize UI with matplotlib plot"""
+        from matplotlib.figure import Figure as MplFigure
         layout = QVBoxLayout()
 
-        # Create matplotlib figure
-        self.figure, self.ax = plt.subplots(figsize=(8, 5))
+        # Create matplotlib figure (MplFigure avoids pyplot event loop conflicts with Qt)
+        self.figure = MplFigure(figsize=(8, 5))
+        self.ax = self.figure.add_subplot(1, 1, 1)
         self.canvas = FigureCanvas(self.figure)
         self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
@@ -69,7 +71,7 @@ class InteractivePlotWidget(QWidget):
 
         # Instructions
         instructions = QLabel(
-            "📌 <b>Interactive Selection:</b> Click and drag on the plot to select q² range. "
+            "Click and drag on the plot to select q² range. "
             "The spinboxes below will update automatically."
         )
         instructions.setWordWrap(True)
@@ -546,7 +548,7 @@ class LaplacePostFitRefinementDialog(QDialog):
             data = self.analyzer.nnls_data
         else:
             data = self.analyzer.regularized_data
-        gamma_cols = [col for col in data.columns if col.startswith('gamma_')] if data is not None else []
+        gamma_cols = [col for col in data.columns if col.startswith('gamma_pop')] if data is not None else []
 
         # Add interactive Γ vs q² plot
         if data is not None and gamma_cols:
@@ -687,7 +689,9 @@ class LaplacePostFitRefinementDialog(QDialog):
         refresh_btn.clicked.connect(self._refresh_clustering_preview)
         layout.addWidget(refresh_btn)
 
-        self._cl_fig, self._cl_axes = plt.subplots(1, 2, figsize=(10, 4))
+        from matplotlib.figure import Figure as MplFigure
+        self._cl_fig = MplFigure(figsize=(10, 4))
+        self._cl_axes = [self._cl_fig.add_subplot(1, 2, 1), self._cl_fig.add_subplot(1, 2, 2)]
         self._cl_canvas = FigureCanvas(self._cl_fig)
         self._cl_canvas.setMinimumHeight(280)
         layout.addWidget(self._cl_canvas)
@@ -805,7 +809,8 @@ class LaplacePostFitRefinementDialog(QDialog):
     # ------------------------------------------------------------------ #
 
     def create_population_tab(self, pop_num, col):
-        """Create a per-population q² range tab (mirrors Method D population tabs)."""
+        """Create a per-population refinement tab (mirrors Method D population tabs)."""
+        from PyQt5.QtWidgets import QSpinBox as _QSpinBox
         tab = QWidget()
         layout = QVBoxLayout()
 
@@ -815,21 +820,23 @@ class LaplacePostFitRefinementDialog(QDialog):
             )
             layout.addWidget(plot_widget)
 
-        q_group = QGroupBox(f"Q² Range for Population {pop_num}")
+        ctrl_group = QGroupBox(f"Regression Settings – Population {pop_num}")
         q_form = QFormLayout()
 
-        enable_q = QCheckBox("Apply custom q² range for this population")
+        enable_q = QCheckBox("Restrict q² range for this population")
         q_form.addRow("", enable_q)
 
         q_min_sb = QDoubleSpinBox()
         q_min_sb.setRange(0, 1e9)
-        q_min_sb.setDecimals(6)
+        q_min_sb.setDecimals(4)
         q_min_sb.setSuffix(" nm⁻²")
+        q_min_sb.setSpecialValueText("—")
 
         q_max_sb = QDoubleSpinBox()
         q_max_sb.setRange(0, 1e9)
-        q_max_sb.setDecimals(6)
+        q_max_sb.setDecimals(4)
         q_max_sb.setSuffix(" nm⁻²")
+        q_max_sb.setSpecialValueText("—")
 
         if self._data is not None and 'q^2' in self._data.columns:
             q2_vals = self._data['q^2'].dropna()
@@ -847,12 +854,30 @@ class LaplacePostFitRefinementDialog(QDialog):
 
         q_form.addRow("Min q²:", q_min_sb)
         q_form.addRow("Max q²:", q_max_sb)
-        q_group.setLayout(q_form)
-        layout.addWidget(q_group)
+
+        # Outlier threshold (k×σ) — 0 = disabled (same as Method D)
+        outlier_sb = QDoubleSpinBox()
+        outlier_sb.setRange(0.0, 10.0)
+        outlier_sb.setValue(0.0)
+        outlier_sb.setDecimals(1)
+        outlier_sb.setSingleStep(0.5)
+        outlier_sb.setSpecialValueText("Disabled (0)")
+        outlier_sb.setToolTip("Points with |residual| > k×σ are excluded. 0 = disabled.")
+        q_form.addRow("Outlier threshold (k×σ):", outlier_sb)
+
+        # Minimum data points for regression
+        min_pts_sb = _QSpinBox()
+        min_pts_sb.setRange(2, 100)
+        min_pts_sb.setValue(2)
+        min_pts_sb.setToolTip("Minimum number of data points required for OLS regression.")
+        q_form.addRow("Min. points for regression:", min_pts_sb)
+
+        ctrl_group.setLayout(q_form)
+        layout.addWidget(ctrl_group)
 
         info = QLabel(
             "<b>Effect:</b> Recalculates the diffusion coefficient for this population "
-            "using only data points within the specified q² range."
+            "using the specified q² range and outlier settings."
         )
         info.setWordWrap(True)
         info.setStyleSheet("padding: 8px; background-color: #e3f2fd; border-radius: 4px;")
@@ -865,6 +890,8 @@ class LaplacePostFitRefinementDialog(QDialog):
             'enable_q': enable_q,
             'q_min': q_min_sb,
             'q_max': q_max_sb,
+            'outlier_sigma': outlier_sb,
+            'min_points': min_pts_sb,
         }
         return tab
 
@@ -948,9 +975,11 @@ class LaplacePostFitRefinementDialog(QDialog):
                 'distance_threshold': self._cl_distance.value(),
             }
 
-        # Collect per-population q² ranges
+        # Collect per-population ranges and regression settings
         self._per_pop_ranges = {}
+        self._per_pop_settings = {}
         for pop_num, refs in self._pop_widgets.items():
+            pop_entry = {}
             if refs['enable_q'].isChecked():
                 q_min = refs['q_min'].value()
                 q_max = refs['q_max'].value()
@@ -962,6 +991,19 @@ class LaplacePostFitRefinementDialog(QDialog):
                     )
                     return
                 self._per_pop_ranges[pop_num] = (q_min, q_max)
+                pop_entry['q_min'] = q_min
+                pop_entry['q_max'] = q_max
+            else:
+                pop_entry['q_min'] = None
+                pop_entry['q_max'] = None
+
+            # Outlier threshold and min points (always collected)
+            outlier_val = refs['outlier_sigma'].value()
+            pop_entry['outlier_sigma'] = outlier_val if outlier_val > 0 else None
+            pop_entry['min_points'] = refs['min_points'].value()
+
+            if any(v is not None for v in pop_entry.values()):
+                self._per_pop_settings[pop_num] = pop_entry
 
         self.accept()
 
@@ -970,13 +1012,14 @@ class LaplacePostFitRefinementDialog(QDialog):
         Get refinement parameters
 
         Returns:
-            dict with keys: q_range, excluded_files, clustering, per_pop_ranges
+            dict with keys: q_range, excluded_files, clustering, per_pop_ranges, per_pop_settings
         """
         return {
             'q_range': self.q_range,
             'excluded_files': self.excluded_files,
             'clustering': self._clustering_params,
             'per_pop_ranges': self._per_pop_ranges,
+            'per_pop_settings': self._per_pop_settings,
         }
 
     # ------------------------------------------------------------------

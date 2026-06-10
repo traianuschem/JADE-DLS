@@ -12,9 +12,13 @@ Two-stage refinement for multi-exponential (Method D) results:
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTabWidget,
                              QWidget, QGroupBox, QFormLayout, QLabel,
                              QSpinBox, QDoubleSpinBox, QComboBox, QCheckBox,
-                             QPushButton, QMessageBox, QSizePolicy)
+                             QPushButton, QMessageBox, QSizePolicy,
+                             QListWidget, QListWidgetItem, QSplitter)
 from PyQt5.QtCore import Qt
 import numpy as np
+from matplotlib.figure import Figure as MplFigure
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 
 from .postfit_refinement_dialog import InteractivePlotWidget
 
@@ -71,6 +75,10 @@ class MethodDPostFitDialog(QDialog):
         tab_combined, refs_combined = self._build_combined_tab()
         tabs.addTab(tab_combined, "Combined")
         self._combined_refs = refs_combined
+
+        # Fit exclusion tab
+        self._excluded_files_d = []
+        tabs.addTab(self._build_exclusion_tab(), "Fit Exclusion")
 
         layout.addWidget(tabs)
         layout.addLayout(self._button_row())
@@ -419,6 +427,183 @@ class MethodDPostFitDialog(QDialog):
         refs = {'enable_q': enable_q, 'q_min': q_min_sb, 'q_max': q_max_sb}
         return widget, refs
 
+    def _build_exclusion_tab(self):
+        """Tab to exclude individual per-file fits, with a plot preview (like Method C)."""
+        widget = QWidget()
+        outer = QVBoxLayout()
+
+        info = QLabel(
+            "<b>Exclude individual fits</b><br>"
+            "Check files to exclude them from the Γ vs q² regression. "
+            "Click a row to preview the fit on the right."
+        )
+        info.setWordWrap(True)
+        outer.addWidget(info)
+
+        splitter = QSplitter(Qt.Horizontal)
+
+        # ── Left panel: file list ──────────────────────────────────────────
+        left = QWidget()
+        left_layout = QVBoxLayout()
+        left_layout.setContentsMargins(0, 0, 0, 0)
+
+        self._excl_list = QListWidget()
+        # SingleSelection so clicking highlights a row (for preview)
+        # ItemIsUserCheckable provides the exclusion checkbox
+        self._excl_list.setSelectionMode(QListWidget.SingleSelection)
+
+        method_d_data = getattr(self.analyzer, 'method_d_data', None)
+        if method_d_data is not None and 'filename' in method_d_data.columns:
+            for fname in sorted(method_d_data['filename'].dropna().unique()):
+                item = QListWidgetItem(str(fname))
+                item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+                item.setCheckState(Qt.Unchecked)
+                self._excl_list.addItem(item)
+
+        self._excl_list.itemChanged.connect(self._update_excl_count)
+        self._excl_list.currentItemChanged.connect(self._show_excl_preview)
+        left_layout.addWidget(self._excl_list)
+
+        ctrl_row = QHBoxLayout()
+        sel_all = QPushButton("Check All")
+        sel_all.setToolTip("Mark all files for exclusion")
+        sel_all.clicked.connect(lambda: self._set_all_checked(True))
+        ctrl_row.addWidget(sel_all)
+        desel_all = QPushButton("Uncheck All")
+        desel_all.setToolTip("Clear all exclusions (include all)")
+        desel_all.clicked.connect(lambda: self._set_all_checked(False))
+        ctrl_row.addWidget(desel_all)
+        left_layout.addLayout(ctrl_row)
+
+        self._excl_count_lbl = QLabel("0 files selected for exclusion")
+        left_layout.addWidget(self._excl_count_lbl)
+
+        left.setLayout(left_layout)
+        splitter.addWidget(left)
+
+        # ── Right panel: matplotlib preview canvas ─────────────────────────
+        right = QWidget()
+        right_layout = QVBoxLayout()
+        right_layout.setContentsMargins(0, 0, 0, 0)
+
+        self._excl_preview_label = QLabel("<i>Select a file to preview its fit</i>")
+        right_layout.addWidget(self._excl_preview_label)
+
+        self._excl_figure = MplFigure(figsize=(10, 4))
+        self._excl_canvas = FigureCanvas(self._excl_figure)
+        self._excl_canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self._excl_canvas.setMinimumHeight(300)
+        self._excl_toolbar = NavigationToolbar(self._excl_canvas, right)
+
+        right_layout.addWidget(self._excl_toolbar)
+        right_layout.addWidget(self._excl_canvas)
+        right.setLayout(right_layout)
+        splitter.addWidget(right)
+
+        # 25 % list, 75 % preview
+        splitter.setSizes([220, 660])
+        outer.addWidget(splitter)
+
+        widget.setLayout(outer)
+        return widget
+
+    def _show_excl_preview(self, current, previous=None):
+        """Render the stored Method-D fit figure for the selected file into the preview canvas."""
+        if current is None:
+            return
+
+        fname = current.text()
+        self._excl_preview_label.setText(f"<b>Preview:</b> {fname}")
+
+        # method_d_plots keys are "D: {filename}"
+        method_d_plots = getattr(self.analyzer, 'method_d_plots', {})
+        key = f"D: {fname}"
+        if key not in method_d_plots:
+            self._excl_figure.clear()
+            ax = self._excl_figure.add_subplot(1, 1, 1)
+            ax.text(0.5, 0.5, f'No stored plot for:\n{fname}',
+                    transform=ax.transAxes, ha='center', va='center',
+                    fontsize=11, color='gray')
+            self._excl_canvas.draw()
+            return
+
+        source_fig, _ = method_d_plots[key]
+        if source_fig is None:
+            return
+
+        self._excl_figure.clear()
+        source_axes = source_fig.get_axes()
+        n_axes = len(source_axes)
+        if n_axes == 0:
+            self._excl_canvas.draw()
+            return
+
+        for ax_idx, source_ax in enumerate(source_axes):
+            ax = self._excl_figure.add_subplot(1, n_axes, ax_idx + 1)
+
+            # Copy scatter collections
+            for coll in source_ax.collections:
+                offsets = coll.get_offsets()
+                if len(offsets) > 0:
+                    try:
+                        ax.scatter(offsets[:, 0], offsets[:, 1],
+                                   label=coll.get_label(),
+                                   c=coll.get_facecolors(),
+                                   s=coll.get_sizes() if len(coll.get_sizes()) else 20,
+                                   alpha=coll.get_alpha() or 0.7)
+                    except Exception:
+                        ax.scatter(offsets[:, 0], offsets[:, 1], alpha=0.7)
+
+            # Copy lines
+            for line in source_ax.get_lines():
+                try:
+                    marker = line.get_marker()
+                    ms = line.get_markersize() if (marker and marker != 'None') else 1
+                    ax.plot(line.get_xdata(), line.get_ydata(),
+                            label=line.get_label(),
+                            color=line.get_color(),
+                            linestyle=line.get_linestyle(),
+                            marker=marker, markersize=ms,
+                            alpha=line.get_alpha() or 1.0)
+                except Exception:
+                    ax.plot(line.get_xdata(), line.get_ydata())
+
+            ax.set_xlabel(source_ax.get_xlabel())
+            ax.set_ylabel(source_ax.get_ylabel())
+            ax.set_title(source_ax.get_title())
+            if source_ax.get_xscale() == 'log':
+                ax.set_xscale('log')
+            if source_ax.get_yscale() == 'log':
+                ax.set_yscale('log')
+            handles, labels = ax.get_legend_handles_labels()
+            if handles:
+                ax.legend(fontsize=7)
+            x_gridlines = source_ax.xaxis.get_gridlines()
+            grid_visible = any(gl.get_visible() for gl in x_gridlines) if x_gridlines else False
+            ax.grid(grid_visible, alpha=0.3)
+
+        self._excl_figure.tight_layout(pad=1.2)
+        self._excl_canvas.draw()
+
+    def _set_all_checked(self, checked):
+        state = Qt.Checked if checked else Qt.Unchecked
+        for i in range(self._excl_list.count()):
+            self._excl_list.item(i).setCheckState(state)
+
+    def _update_excl_count(self):
+        count = sum(
+            1 for i in range(self._excl_list.count())
+            if self._excl_list.item(i).checkState() == Qt.Checked
+        )
+        self._excl_count_lbl.setText(f"{count} file(s) selected for exclusion")
+
+    def _get_excluded_files_d(self):
+        return [
+            self._excl_list.item(i).text()
+            for i in range(self._excl_list.count())
+            if self._excl_list.item(i).checkState() == Qt.Checked
+        ]
+
     # ------------------------------------------------------------------
     # Plot interaction (called by InteractivePlotWidget.on_mouse_release)
     # ------------------------------------------------------------------
@@ -536,10 +721,14 @@ class MethodDPostFitDialog(QDialog):
                 return
             combined_q = (q_min, q_max)
 
+        # Collect excluded files
+        excluded_files = self._get_excluded_files_d() if hasattr(self, '_excl_list') else []
+
         self._params = {
             'clustering': clustering,
             'mode_params': mode_params,
             'combined_q_range': combined_q,
+            'excluded_files': excluded_files,
         }
         super().accept()
 

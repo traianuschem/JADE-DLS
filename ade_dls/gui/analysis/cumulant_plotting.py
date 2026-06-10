@@ -7,115 +7,125 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import scipy.stats as stats
-from scipy.optimize import curve_fit, OptimizeWarning
+from scipy.stats import linregress
+from scipy.optimize import curve_fit
 import inspect
-import warnings
 
 
-def plot_processed_correlations_no_show(dataframes_dict, fit_function, fit_x_limits):
+def plot_processed_correlations_no_show(dataframes_dict, fit_x_limits, xlim=None, ylim=None):
     """
-    Plot and fit correlation data without showing plots
+    Linear OLS fit of ln√(g²−1) vs lag time for Method B (JADE 2.2).
+    Uses scipy.stats.linregress instead of curve_fit.
 
     Returns:
         tuple: (results_df, plots_dict)
-            - results_df: DataFrame with fit parameters
+            - results_df: DataFrame with Gamma, Gamma_error, a, R_squared
             - plots_dict: Dictionary {filename: (fig, fit_data)}
     """
+    from matplotlib.figure import Figure
+
     all_fit_results = []
     plots_dict = {}
     plot_number = 1
 
     for name, df in dataframes_dict.items():
+        if df is None:
+            print(f"Skipping '{name}': no data (None).")
+            continue
         try:
             fit_result = {'filename': name}
 
-            # Main processing
             x_data = df['t [s]']
             y_data = df['g(2)_mod']
             x_fit = x_data[(x_data >= fit_x_limits[0]) & (x_data <= fit_x_limits[1])]
             y_fit = y_data[(x_data >= fit_x_limits[0]) & (x_data <= fit_x_limits[1])]
 
-            # Perform the fit (optimized: reduced maxfev from 50000 to 5000)
-            popt, pcov = curve_fit(fit_function, x_fit, y_fit, method='lm', maxfev=5000)
+            slope, intercept, r, p, se = linregress(x_fit, y_fit)
 
-            # Calculate parameter errors
-            perr = np.sqrt(np.diag(pcov))
+            # Γ = −slope,  a = exp(2·intercept)
+            Gamma = -slope
+            a = np.exp(2 * intercept)
 
-            # Calculate residuals
-            residuals = y_fit - fit_function(x_fit, *popt)
+            fit_result['Gamma'] = Gamma
+            fit_result['Gamma_error'] = se
+            fit_result['Gamma_relative_error'] = (se / abs(Gamma)) * 100 if Gamma != 0 else np.inf
+            fit_result['a'] = a
 
-            # Extract parameter names and store fit parameters
-            param_names = inspect.getfullargspec(fit_function).args[1:]
-            for i, param_name in enumerate(param_names):
-                fit_result[param_name] = popt[i]
-                fit_result[f'{param_name}_error'] = perr[i]
-                fit_result[f'{param_name}_relative_error'] = (perr[i] / abs(popt[i])) * 100 if popt[i] != 0 else np.inf
+            # Fit line over full x range (JADE 2.2 style)
+            y_fit_values = slope * x_data + intercept
 
-            # Calculate fit quality metrics
+            # Residuals (in fit window only)
+            residuals = y_fit - (slope * x_fit + intercept)
             ss_res = np.sum(residuals**2)
             ss_tot = np.sum((y_fit - np.mean(y_fit))**2)
             r_squared = 1 - (ss_res / ss_tot)
-            fit_result['R-squared'] = r_squared
+            fit_result['R_squared'] = r_squared
 
-            # Fit curve restricted to fit window only (quadratic diverges outside it)
-            x_fit_line = np.linspace(fit_x_limits[0], fit_x_limits[1], 500)
-            y_fit_line = fit_function(x_fit_line, *popt)
-
-            # Create figure (but don't show it)
-            # Use Figure() instead of plt.subplots() to avoid memory leak
-            from matplotlib.figure import Figure
+            # 3-panel figure (no plt.show — uses Figure API)
             fig = Figure(figsize=(20, 5))
             ax1, ax2, ax3 = fig.subplots(1, 3)
+            fig.suptitle(f'[{plot_number}]: Method B — {name}', fontsize=12)
 
-            # Left plot: full correlation data + fit restricted to fit window
-            ax1.plot(x_data, y_data, marker='.', linestyle='', markersize=3,
-                     alpha=0.7, label='Data')
-            ax1.plot(x_fit_line, y_fit_line, 'r-', linewidth=2, label='Fit (cumulant)')
-            ax1.axvline(fit_x_limits[1], color='gray', linestyle='--', linewidth=1,
-                        alpha=0.6, label=f'Fit limit ({fit_x_limits[1]*1e6:.0f} µs)')
+            # JADE 2.2 approach: default xlim = fit window so the linear region is visible
+            # (the user can zoom/pan from there if needed)
+            effective_xlim = xlim if xlim is not None else fit_x_limits
+
+            # Panel 1: data + fit (zoomed to fit window by default, like JADE 2.2)
+            ax1.plot(x_data, y_data, 'o', alpha=0.6, markersize=4, label='Data', zorder=2)
+            ax1.plot(x_data, y_fit_values, 'r-', linewidth=2, label='Linear fit', zorder=3)
             ax1.set_xlabel(r'lag time τ [s]')
             ax1.set_ylabel(r'ln$\sqrt{g^{(2)}(\tau)-1}$')
-            ax1.set_title(f'[{plot_number}]: Method B — {name}')
-            ax1.grid(True)
-            ax1.set_xscale('log')
-            ax1.legend()
+            ax1.set_title('Data & Fit')
+            ax1.grid(True, alpha=0.3)
+            ax1.set_xlim(*effective_xlim)
+            # Compute proper ylim from the data AND fit within the visible x window
+            x_arr = np.asarray(x_data)
+            y_arr = np.asarray(y_data)
+            mask_vis = (x_arr >= effective_xlim[0]) & (x_arr <= effective_xlim[1])
+            y_vis = y_arr[mask_vis]
+            yfit_vis = np.asarray(y_fit_values)[mask_vis]
+            all_y_vis = np.concatenate([y_vis, yfit_vis])
+            all_y_vis = all_y_vis[~np.isnan(all_y_vis)]
+            if len(all_y_vis) > 0:
+                y_lo = float(np.min(all_y_vis))
+                y_hi = float(np.max(all_y_vis))
+                y_margin = max(abs(y_hi - y_lo) * 0.20, 0.1)
+                ax1.set_ylim(y_lo - y_margin, y_hi + y_margin)
+            if ylim is not None:
+                ax1.set_ylim(*ylim)
+            ax1.legend(fontsize=8)
+            ax1.text(0.95, 0.95,
+                     f"R² = {r_squared:.4f}\n⟨Γ⟩ = {Gamma:.3e} s⁻¹",
+                     transform=ax1.transAxes, va='top', ha='right',
+                     bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
 
-            # Middle plot: residuals timeseries
-            ax2.plot(np.arange(len(residuals)), residuals, marker='.', linestyle='-', markersize=4)
+            # Panel 2: residuals
+            ax2.plot(residuals.values if hasattr(residuals, 'values') else residuals)
             ax2.axhline(0, color='r', linestyle='--', linewidth=1)
             ax2.set_xlabel('Sample Index')
             ax2.set_ylabel('Residuals')
-            ax2.set_title(f'[{plot_number}]: Residuals')
-            ax2.grid(True)
+            ax2.set_title('Residuals')
+            ax2.grid(True, alpha=0.3)
 
-            # Right plot: Q-Q plot
+            # Panel 3: Q-Q
             stats.probplot(residuals, dist="norm", plot=ax3)
-            ax3.set_title(f'[{plot_number}]: Q-Q Plot of Residuals')
-            ax3.grid(True)
-
-            # Add R^2 as text
-            param_text = f"R² = {r_squared:.4f}"
-            ax1.text(0.95, 0.95, param_text, transform=ax1.transAxes,
-                    va='top', ha='right',
-                    bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
+            ax3.set_title('Q-Q Plot')
+            ax3.grid(True, alpha=0.3)
 
             fig.tight_layout()
 
-            # Store figure instead of showing it
             plots_dict[name] = (fig, {
-                'popt': popt,
-                'perr': perr,
+                'Gamma': Gamma,
+                'Gamma_error': se,
                 'r_squared': r_squared,
-                'residuals': residuals
+                'residuals': np.array(residuals),
             })
 
             plot_number += 1
-
-            # Store all results
             all_fit_results.append(fit_result)
 
-        except Exception as e:
-            print(f"Error processing DataFrame '{name}': {type(e).__name__}: {e}")
+        except (KeyError, TypeError) as e:
+            print(f"Error processing DataFrame '{name}': {e}")
             fit_result['Error'] = str(e)
             all_fit_results.append(fit_result)
 
@@ -126,18 +136,7 @@ def plot_processed_correlations_no_show(dataframes_dict, fit_function, fit_x_lim
 def _fit_single_dataset_method_c(name, df, fit_function, fit_limits, initial_parameters,
                                   method, max_iterations, tolerance, plot_number):
     """
-    Worker function to fit a single dataset for Method C (for multiprocessing)
-
-    Args:
-        name: Dataset name
-        df: DataFrame with 't (s)' and 'g(2)' columns
-        fit_function: The fit function to use
-        fit_limits: Tuple of (min, max) time limits
-        initial_parameters: Initial parameter guesses
-        method: Optimization method ('lm', 'trf', 'dogbox')
-        max_iterations: Maximum number of iterations
-        tolerance: Convergence tolerance for R-squared
-        plot_number: Plot number for labeling
+    Worker for parallel Method C fitting (joblib). Implements JADE 2.2 zoom-grid search.
 
     Returns:
         tuple: (fit_result dict, plot_data tuple)
@@ -147,15 +146,22 @@ def _fit_single_dataset_method_c(name, df, fit_function, fit_limits, initial_par
     from scipy import stats
     import inspect
     from matplotlib.figure import Figure
+    from ade_dls.analysis.cumulants_C import (
+        _BOUNDS_LOWER, _BOUNDS_UPPER, get_meaningful_parameters
+    )
 
     fit_result = {'filename': name}
+    param_names = inspect.getfullargspec(fit_function).args[1:]
+
+    _ZOOM_ROUNDS = [
+        dict(half_decades=1.5, n_points=5, maxfev=1_000),
+        dict(half_decades=0.5, n_points=5, maxfev=5_000),
+        dict(half_decades=0.15, n_points=5, maxfev=50_000),
+    ]
 
     try:
-        # Get data
         x_data = df['t [s]'].values
         y_data = df['g(2)-1'].values
-
-        # Filter data by fit limits
         mask = (x_data >= fit_limits[0]) & (x_data <= fit_limits[1])
         x_fit = x_data[mask]
         y_fit = y_data[mask]
@@ -164,480 +170,298 @@ def _fit_single_dataset_method_c(name, df, fit_function, fit_limits, initial_par
             print(f"[Worker] Not enough data points in range for {name}. Skipping.")
             return (fit_result, None)
 
-        # Determine which parameters to use
-        param_names = inspect.getfullargspec(fit_function).args[1:]
-        num_params = len(param_names)
+        def _metrics(popt):
+            yc = fit_function(x_fit, *popt)
+            res = y_fit - yc
+            ss_res = np.sum(res**2)
+            ss_tot = np.sum((y_fit - np.mean(y_fit))**2)
+            r2 = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0
+            n = len(y_fit)
+            k = len(popt) + 1
+            return r2, float(np.sqrt(ss_res / n)), float(n * np.log(ss_res / n) + 2 * k)
 
-        # Get initial parameters
-        if isinstance(initial_parameters, dict):
-            current_guess = initial_parameters.get(name, initial_parameters.get('default', []))[:num_params].copy()
-        elif isinstance(initial_parameters, list):
-            current_guess = initial_parameters[:num_params].copy()
-        else:
-            current_guess = initial_parameters
+        def _do_fit(p0, maxfev_override=None):
+            mfev = maxfev_override if maxfev_override is not None else 50000
+            if method == 'lm':
+                return curve_fit(fit_function, x_fit, y_fit, p0=p0, maxfev=mfev)
+            bounds = ([_BOUNDS_LOWER[pn] for pn in param_names],
+                      [_BOUNDS_UPPER[pn] for pn in param_names])
+            return curve_fit(fit_function, x_fit, y_fit, p0=p0,
+                             method=method, bounds=bounds, maxfev=mfev)
 
-        # Storage for iterations
         all_y_fits = []
         all_r_squared = []
-        all_rmse = []
-        all_aic = []
-        all_popt = []
-        all_pcov = []
+        best_popt = None
+        best_pcov = None
+        pcov = None
+        _is_adaptive = isinstance(initial_parameters, dict)
 
-        # Iterative fitting loop
-        for i in range(max_iterations):
-            try:
-                # Perform fit - suppress OptimizeWarning about covariance
-                with warnings.catch_warnings():
-                    warnings.filterwarnings('ignore', category=OptimizeWarning)
-                    if method == 'lm':
-                        popt, pcov = curve_fit(fit_function, x_fit, y_fit,
-                                              p0=current_guess, maxfev=5000)
-                    else:
-                        bounds = ([-np.inf] * len(current_guess), [np.inf] * len(current_guess))
-                        popt, pcov = curve_fit(fit_function, x_fit, y_fit,
-                                              p0=current_guess, method=method,
-                                              bounds=bounds, maxfev=5000)
+        if _is_adaptive:
+            guess = initial_parameters.get(name, list(initial_parameters.values())[0]).copy()
+            b_center = float(guess[1])
+            a_base   = float(guess[0])
+            f_base   = float(guess[-1])
+            c_base   = float(guess[param_names.index('c')]) if 'c' in param_names else None
+            d_base   = float(guess[param_names.index('d')]) if 'd' in param_names else None
+            e_base   = float(guess[param_names.index('e')]) if 'e' in param_names else None
 
-                # Generate fit curve
-                y_fit_values = fit_function(x_data, *popt)
-                all_y_fits.append(y_fit_values)
-                all_popt.append(popt)
-                all_pcov.append(pcov)
+            best_r2 = -np.inf
+            prev_r2 = -np.inf
 
-                # Use fitted parameters as next initial guess
-                current_guess = popt.copy()
+            for rnd in _ZOOM_ROUNDS:
+                b_grid = b_center * np.logspace(-rnd['half_decades'], rnd['half_decades'], rnd['n_points'])
+                rnd_best_popt = None
+                rnd_best_pcov = None
+                rnd_best_r2   = -np.inf
 
-                # Calculate metrics
-                y_fit_current = fit_function(x_fit, *popt)
-                residuals = y_fit - y_fit_current
+                for b_i in b_grid:
+                    scale = b_i / b_center
+                    p0 = []
+                    for pn in param_names:
+                        if   pn == 'a': p0.append(a_base)
+                        elif pn == 'b': p0.append(float(b_i))
+                        elif pn == 'c': p0.append(c_base * scale**2)
+                        elif pn == 'd': p0.append(d_base * scale**3)
+                        elif pn == 'e': p0.append(e_base * scale**4)
+                        elif pn == 'f': p0.append(f_base)
+                    try:
+                        popt_i, pcov_i = _do_fit(p0, rnd['maxfev'])
+                        r2_i, _, _     = _metrics(popt_i)
+                        all_y_fits.append((popt_i, fit_function(x_data, *popt_i)))
+                        all_r_squared.append(r2_i)
+                        if r2_i > rnd_best_r2:
+                            rnd_best_r2   = r2_i
+                            rnd_best_popt = popt_i
+                            rnd_best_pcov = pcov_i
+                    except RuntimeError:
+                        continue
 
-                ss_res = np.sum(residuals**2)
-                ss_tot = np.sum((y_fit - np.mean(y_fit))**2)
-                r_squared = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0
-                all_r_squared.append(r_squared)
+                if rnd_best_popt is None:
+                    continue
+                if rnd_best_r2 > best_r2:
+                    best_r2   = rnd_best_r2
+                    best_popt = rnd_best_popt
+                    best_pcov = rnd_best_pcov
 
-                n = len(y_fit)
-                rmse = np.sqrt(ss_res / n)
-                all_rmse.append(rmse)
+                b_center = float(best_popt[1])
+                a_base   = float(best_popt[0])
+                f_base   = float(best_popt[-1])
+                if 'c' in param_names: c_base = float(best_popt[param_names.index('c')])
+                if 'd' in param_names: d_base = float(best_popt[param_names.index('d')])
+                if 'e' in param_names: e_base = float(best_popt[param_names.index('e')])
 
-                k = len(popt) + 1
-                aic = n * np.log(ss_res / n) + 2 * k
-                all_aic.append(aic)
+                if (best_r2 - prev_r2) < tolerance:
+                    break
+                prev_r2 = best_r2
 
-                # Store iteration metrics
-                fit_result[f'R-squared_iter{i+1}'] = r_squared
-                fit_result[f'RMSE_iter{i+1}'] = rmse
-                fit_result[f'AIC_iter{i+1}'] = aic
+            if best_popt is None:
+                raise RuntimeError("All zoom grid points failed to converge.")
+            pcov = best_pcov
 
-                for j, param_name in enumerate(param_names):
-                    fit_result[f'{param_name}_iter{i+1}'] = popt[j]
+        else:
+            current_guess = get_meaningful_parameters(fit_function, initial_parameters)
+            for i in range(max_iterations):
+                try:
+                    popt, pcov = _do_fit(current_guess)
+                except RuntimeError as e:
+                    print(f"[Worker] Fit error in iteration {i+1} for {name}: {e}")
+                    break
+                all_y_fits.append((popt, fit_function(x_data, *popt)))
+                current_guess = popt
+                r2, _, _ = _metrics(popt)
+                all_r_squared.append(r2)
+                if i > 0 and abs(all_r_squared[-1] - all_r_squared[-2]) < tolerance:
+                    break
 
-                # Check convergence
-                if i > 0:
-                    delta_r_squared = abs(all_r_squared[i] - all_r_squared[i-1])
-                    if delta_r_squared < tolerance:
-                        break
+        if not all_r_squared:
+            raise RuntimeError("No successful fit attempts.")
 
-            except RuntimeError as e:
-                print(f"[Worker] Fit error in iteration {i+1} for {name}: {e}")
-                break
+        best_idx              = int(np.argmax(all_r_squared))
+        best_popt_final, best_y_fit = all_y_fits[best_idx]
+        best_r2_val           = all_r_squared[best_idx]
 
-        # Find best iteration
-        if len(all_r_squared) == 0:
-            print(f"[Worker] No successful fits for {name}")
-            return (fit_result, None)
+        yc_best       = fit_function(x_fit, *best_popt_final)
+        best_residuals = y_fit - yc_best
+        ss_res_best   = np.sum(best_residuals**2)
+        n             = len(y_fit)
+        k             = len(best_popt_final) + 1
 
-        best_iteration_index = np.argmax(all_r_squared)
-        best_y_fit = all_y_fits[best_iteration_index]
-        best_popt = all_popt[best_iteration_index]
-        best_pcov = all_pcov[best_iteration_index]
-        best_iteration = best_iteration_index + 1
+        fit_result['best_R-squared'] = best_r2_val
+        fit_result['best_RMSE']      = float(np.sqrt(ss_res_best / n))
+        fit_result['best_AIC']       = float(n * np.log(ss_res_best / n) + 2 * k)
 
-        # Calculate errors
-        perr = np.sqrt(np.diag(best_pcov))
+        for j, pn in enumerate(param_names):
+            pv = best_popt_final[j]
+            fit_result['best_' + pn] = float(pv.item() if isinstance(pv, np.ndarray) and pv.size == 1 else pv)
 
-        # Calculate best residuals
-        best_y_fit_in_range = fit_function(x_fit, *best_popt)
-        residuals = y_fit - best_y_fit_in_range
+        if pcov is not None:
+            perr = np.sqrt(np.diag(pcov))
+            for j, pn in enumerate(param_names):
+                if j < len(perr):
+                    ev = perr[j]
+                    fit_result['err_' + pn] = float(ev.item() if isinstance(ev, np.ndarray) and ev.size == 1 else ev)
 
-        # Store best results
-        r_squared = all_r_squared[best_iteration_index]
-        rmse = all_rmse[best_iteration_index]
-        aic = all_aic[best_iteration_index]
-
-        for i, param_name in enumerate(param_names):
-            fit_result[f'best_{param_name}'] = best_popt[i]
-            fit_result[f'best_{param_name}_error'] = perr[i]
-
-        fit_result['R_squared'] = r_squared
-        fit_result['RMSE'] = rmse
-        fit_result['AIC'] = aic
+        if fit_function.__name__ == 'fit_function4':
+            c_p = best_popt_final[2]
+            e_p = best_popt_final[4]
+            fit_result['kurtosis'] = float(e_p / c_p**2) if c_p != 0 else float('nan')
 
         # Create figure
         fig = Figure(figsize=(20, 5))
         ax1, ax2, ax3 = fig.subplots(1, 3)
+        fig.suptitle(f'[{plot_number}]: Method C ({fit_function.__name__}) — {name}', fontsize=12)
 
-        # Left plot: Data and fits
-        ax1.plot(x_data, y_data, marker='.', linestyle='', label='Data')
-
-        for i, y_fit_iter in enumerate(all_y_fits):
-            if i == best_iteration_index:
-                ax1.plot(x_data, y_fit_iter, 'r-', linewidth=2,
-                        label=f'Best Fit (Iter {i+1})')
-            else:
-                opacity = 0.3 + 0.5 * (i / len(all_y_fits))
-                ax1.plot(x_data, y_fit_iter, '-', alpha=opacity,
-                        color='gray', linewidth=1)
-
-        ax1.set_xlabel('lag time [s]')
-        ax1.set_ylabel('g(2)-1')
-        ax1.set_title(f'[{plot_number}]: g(2)-1 vs. lag time for {name}')
-        ax1.grid(True)
+        ax1.plot(x_data, y_data, 'o', alpha=0.6, markersize=4, label='Data')
+        ax1.plot(x_data, best_y_fit, 'r-', linewidth=2, label='Best fit')
+        ax1.set_xlabel(r'lag time τ [s]')
+        ax1.set_ylabel(r'$g^{(2)}(\tau) - 1$')
+        ax1.set_title('Data & Fit')
+        ax1.grid(True, alpha=0.3)
         ax1.set_xscale('log')
-        ax1.set_xlim(left=x_data.min()*0.9, right=x_data.max()*1.1)
+        ax1.set_xlim(1e-6, 10)
         ax1.legend()
+        ax1.text(0.95, 0.95,
+                 f"R² = {best_r2_val:.4f}\n⟨Γ⟩ = {best_popt_final[1]:.3e} s⁻¹",
+                 transform=ax1.transAxes, va='top', ha='right',
+                 bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
 
-        param_text = f"Best Fit (Iteration {best_iteration}):\n"
-        param_text += f"R² = {r_squared:.4f}\n"
-        param_text += f"RMSE = {rmse:.4e}\n"
-        param_text += f"AIC = {aic:.2f}"
-        ax1.text(0.95, 0.95, param_text, transform=ax1.transAxes,
-                va='top', ha='right',
-                bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
-
-        # Middle plot: residuals timeseries
-        ax2.plot(np.arange(len(residuals)), residuals, marker='.', linestyle='-', markersize=4)
+        ax2.plot(best_residuals)
         ax2.axhline(0, color='r', linestyle='--', linewidth=1)
         ax2.set_xlabel('Sample Index')
         ax2.set_ylabel('Residuals')
-        ax2.set_title(f'[{plot_number}]: Residuals (Best Fit: Iter {best_iteration})')
-        ax2.grid(True)
+        ax2.set_title('Residuals')
+        ax2.grid(True, alpha=0.3)
 
-        # Right plot: Q-Q plot
-        stats.probplot(residuals, dist="norm", plot=ax3)
-        ax3.set_title(f'[{plot_number}]: Q-Q Plot of Residuals (Best Fit: Iter {best_iteration})')
-        ax3.grid(True)
+        stats.probplot(best_residuals, dist="norm", plot=ax3)
+        ax3.set_title('Q-Q Plot')
+        ax3.grid(True, alpha=0.3)
 
         fig.tight_layout()
 
-        # Return figure and metadata
-        plot_data = (fig, {
-            'popt': best_popt,
-            'perr': perr,
-            'r_squared': r_squared,
-            'rmse': rmse,
-            'aic': aic,
-            'residuals': residuals,
-            'x_data': x_data,
-            'y_data': y_data,
-            'y_fit': best_y_fit
-        })
+        return (fit_result, (fig, {
+            'popt': best_popt_final,
+            'r_squared': best_r2_val,
+            'residuals': best_residuals,
+        }))
 
-        return (fit_result, plot_data)
+    except RuntimeError as e:
+        print(f"[WARNING] Worker '{name}': fit failed — {e}. Filling with NaN.")
+        fit_result['Error'] = str(e)
+        for col in ['best_R-squared', 'best_RMSE', 'best_AIC']:
+            fit_result.setdefault(col, np.nan)
+        for pn in param_names:
+            fit_result.setdefault('best_' + pn, np.nan)
+            fit_result.setdefault('err_'  + pn, np.nan)
+        return (fit_result, None)
 
     except Exception as e:
-        print(f"[Worker] Error processing {name}: {e}")
+        print(f"[Worker] Error processing '{name}': {e}")
         import traceback
         traceback.print_exc()
+        fit_result['Error'] = str(e)
         return (fit_result, None)
 
 
 def plot_processed_correlations_iterative_no_show(dataframes_dict, fit_function, fit_limits,
                                                    initial_parameters, method='lm',
-                                                   max_iterations=5, tolerance=1e-4,
+                                                   max_iterations=10, tolerance=1e-4,
                                                    use_multiprocessing=False):
     """
-    Optimized iterative non-linear fit without showing plots
-
-    Performance improvements:
-    - Reduced default max_iterations from 10 to 5 (usually converges earlier)
-    - Reduced maxfev from 50000 to 5000 (sufficient for most cases)
-    - Added progress logging
-    - Optional multiprocessing support for faster processing
-
-    Args:
-        dataframes_dict: Dictionary of dataframes with 't (s)' and 'g(2)' columns
-        fit_function: The fit function to use
-        fit_limits: Tuple of (min, max) time limits
-        initial_parameters: Initial parameter guesses (dict or list)
-        method: Optimization method ('lm', 'trf', 'dogbox')
-        max_iterations: Maximum number of iterations (default: 5, optimized from 10)
-        tolerance: Convergence tolerance for R-squared (default: 1e-4)
-        use_multiprocessing: Enable parallel processing (default: False)
+    Adaptive zoom-grid search for Method C (JADE 2.2), GUI-optimised.
+    Delegates fitting to cumulants_C.plot_processed_correlations_iterative,
+    then builds matplotlib.figure.Figure objects (no plt.show) per dataset.
 
     Returns:
         tuple: (results_df, plots_dict)
+            - results_df: DataFrame with best_b, best_c, best_R-squared, best_RMSE, …
+            - plots_dict: {filename: (fig, {'popt', 'r_squared', 'residuals'})}
     """
-    all_fit_results = []
-    plots_dict = {}
-    plot_number = 1
+    from matplotlib.figure import Figure
+    from ade_dls.analysis.cumulants_C import plot_processed_correlations_iterative
+
     total = len(dataframes_dict)
+    print(f"[Method C] Fitting {total} datasets (JADE 2.2 adaptive zoom-grid search)...")
 
-    # Try multiprocessing if requested and enough datasets
-    if use_multiprocessing and total > 3:
+    # Run the fitting without plots — uses adaptive/expert mode, zoom-grid, correct bounds
+    results_df = plot_processed_correlations_iterative(
+        dataframes_dict, fit_function, fit_limits, initial_parameters,
+        max_iterations=max_iterations, tolerance=tolerance,
+        method=method, show_plots=False
+    )
+
+    # Build GUI figures from fit results
+    param_names = inspect.getfullargspec(fit_function).args[1:]
+    plots_dict  = {}
+    plot_number = 1
+
+    for name, df in dataframes_dict.items():
+        rows = results_df[results_df['filename'] == name]
+        if rows.empty:
+            continue
+        row = rows.iloc[0]
+
+        # Skip datasets where the fit failed
+        if 'Error' in results_df.columns and pd.notna(row.get('Error', np.nan)):
+            continue
+
         try:
-            from joblib import Parallel, delayed
-            import multiprocessing as mp
+            x_data = df['t [s]'].values
+            y_data = df['g(2)-1'].values
+            mask   = (x_data >= fit_limits[0]) & (x_data <= fit_limits[1])
+            x_fit  = x_data[mask]
+            y_fit  = y_data[mask]
 
-            n_jobs = mp.cpu_count()
-            print(f"[Method C] Using parallel processing with {n_jobs} CPU cores")
+            # Reconstruct best popt from result columns
+            best_popt      = np.array([float(row[f'best_{pn}']) for pn in param_names])
+            best_y_fit     = fit_function(x_data, *best_popt)
+            best_residuals = y_fit - fit_function(x_fit, *best_popt)
+            r_squared      = float(row['best_R-squared'])
 
-            # Prepare arguments for workers
-            args_list = []
-            for idx, (name, df) in enumerate(dataframes_dict.items(), 1):
-                args_list.append((name, df, fit_function, fit_limits, initial_parameters,
-                                method, max_iterations, tolerance, idx))
+            fig = Figure(figsize=(20, 5))
+            ax1, ax2, ax3 = fig.subplots(1, 3)
+            fig.suptitle(f'[{plot_number}]: Method C ({fit_function.__name__}) — {name}',
+                         fontsize=12)
 
-            # Process in parallel
-            results_list = Parallel(n_jobs=n_jobs, backend='loky', verbose=5)(
-                delayed(_fit_single_dataset_method_c)(*args)
-                for args in args_list
-            )
+            ax1.plot(x_data, y_data, 'o', alpha=0.6, markersize=4, label='Data')
+            ax1.plot(x_data, best_y_fit, 'r-', linewidth=2, label='Best fit')
+            ax1.set_xlabel(r'lag time τ [s]')
+            ax1.set_ylabel(r'$g^{(2)}(\tau) - 1$')
+            ax1.set_title('Data & Fit')
+            ax1.grid(True, alpha=0.3)
+            ax1.set_xscale('log')
+            ax1.set_xlim(1e-6, 10)
+            ax1.legend()
+            ax1.text(0.95, 0.95,
+                     f"R² = {r_squared:.4f}\n⟨Γ⟩ = {best_popt[1]:.3e} s⁻¹",
+                     transform=ax1.transAxes, va='top', ha='right',
+                     bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
 
-            # Collect results
-            for fit_result, plot_data in results_list:
-                all_fit_results.append(fit_result)
-                if plot_data is not None:
-                    plots_dict[fit_result['filename']] = plot_data
+            ax2.plot(best_residuals)
+            ax2.axhline(0, color='r', linestyle='--', linewidth=1)
+            ax2.set_xlabel('Sample Index')
+            ax2.set_ylabel('Residuals')
+            ax2.set_title('Residuals')
+            ax2.grid(True, alpha=0.3)
 
-            print(f"[Method C] Parallel processing complete: {len(all_fit_results)} datasets processed")
+            stats.probplot(best_residuals, dist="norm", plot=ax3)
+            ax3.set_title('Q-Q Plot')
+            ax3.grid(True, alpha=0.3)
 
-        except ImportError as e:
-            print(f"[Method C] Warning: joblib not available ({e})")
-            print("[Method C] Install required packages: pip install joblib")
-            print("[Method C] Falling back to sequential processing")
-            use_multiprocessing = False
+            fig.tight_layout()
+
+            plots_dict[name] = (fig, {
+                'popt':       best_popt,
+                'r_squared':  r_squared,
+                'residuals':  best_residuals,
+            })
+
+            plot_number += 1
+
         except Exception as e:
-            print(f"[Method C] Warning: Parallel processing failed: {type(e).__name__}: {str(e)}")
-            print("[Method C] Falling back to sequential processing")
-            use_multiprocessing = False
-            import traceback
-            traceback.print_exc()
+            print(f"[Method C] Figure creation failed for '{name}': {e}")
 
-    # Sequential processing (fallback or if multiprocessing disabled)
-    if not use_multiprocessing or total <= 3:
-        print(f"[Method C] Using sequential processing for {total} datasets")
-
-        for idx, (name, df) in enumerate(dataframes_dict.items(), 1):
-            print(f"[Method C: {idx}/{total}] Fitting {name}...")
-            try:
-                fit_result = {'filename': name}
-
-                # Get data
-                x_data = df['t [s]'].values
-                y_data = df['g(2)-1'].values
-
-                # Filter data by fit limits
-                mask = (x_data >= fit_limits[0]) & (x_data <= fit_limits[1])
-                x_fit = x_data[mask]
-                y_fit = y_data[mask]
-
-                if len(x_fit) < 2:
-                    print(f"Not enough data points in the specified range for fitting {name}. Skipping Fit.")
-                    all_fit_results.append(fit_result)
-                    continue
-
-                # Determine which parameters to use based on fit_function
-                param_names = inspect.getfullargspec(fit_function).args[1:]
-                num_params = len(param_names)
-
-                # Get initial parameters for this function
-                if isinstance(initial_parameters, dict):
-                    # If it's a dict, use parameters for this specific dataset (adaptive mode)
-                    current_guess = initial_parameters.get(name, initial_parameters.get('default', []))[:num_params].copy()
-                elif isinstance(initial_parameters, list):
-                    current_guess = initial_parameters[:num_params].copy()
-                else:
-                    current_guess = initial_parameters
-
-                # Store iterations for analysis
-                all_y_fits = []
-                all_r_squared = []
-                all_rmse = []
-                all_aic = []
-                all_popt = []
-                all_pcov = []
-
-                # Iterative fitting loop (key difference from simple fit!)
-                for i in range(max_iterations):
-                    try:
-                        # Perform fit with current guess (optimized: maxfev reduced from 50000 to 5000)
-                        if method == 'lm':
-                            popt, pcov = curve_fit(fit_function, x_fit, y_fit,
-                                                  p0=current_guess, maxfev=5000)
-                        else:
-                            # For 'trf' and 'dogbox', use wide bounds
-                            bounds = ([-np.inf] * len(current_guess), [np.inf] * len(current_guess))
-                            popt, pcov = curve_fit(fit_function, x_fit, y_fit,
-                                                  p0=current_guess, method=method,
-                                                  bounds=bounds, maxfev=5000)
-
-                        # Generate fit curve
-                        y_fit_values = fit_function(x_data, *popt)
-                        all_y_fits.append(y_fit_values)
-                        all_popt.append(popt)
-                        all_pcov.append(pcov)
-
-                        # Use fitted parameters as next initial guess
-                        current_guess = popt.copy()
-
-                        # Calculate residuals (only in fitting range)
-                        y_fit_current = fit_function(x_fit, *popt)
-                        residuals = y_fit - y_fit_current
-
-                        # Calculate R-squared
-                        ss_res = np.sum(residuals**2)
-                        ss_tot = np.sum((y_fit - np.mean(y_fit))**2)
-                        r_squared = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0
-                        all_r_squared.append(r_squared)
-
-                        # Calculate RMSE
-                        n = len(y_fit)
-                        rmse = np.sqrt(ss_res / n)
-                        all_rmse.append(rmse)
-
-                        # Calculate AIC (Akaike Information Criterion)
-                        k = len(popt) + 1
-                        aic = n * np.log(ss_res / n) + 2 * k
-                        all_aic.append(aic)
-
-                        # Store metrics for this iteration
-                        fit_result[f'R-squared_iter{i+1}'] = r_squared
-                        fit_result[f'RMSE_iter{i+1}'] = rmse
-                        fit_result[f'AIC_iter{i+1}'] = aic
-
-                        # Store parameters for this iteration
-                        for j, param_name in enumerate(param_names):
-                            fit_result[f'{param_name}_iter{i+1}'] = popt[j]
-
-                        # Check for convergence
-                        if i > 0:
-                            delta_r_squared = abs(all_r_squared[i] - all_r_squared[i-1])
-                            if delta_r_squared < tolerance:
-                                print(f"  Converged after {i+1} iterations.")
-                                break
-
-                    except RuntimeError as e:
-                        print(f"  Fit error in iteration {i+1}: {e}")
-                        break
-
-                # Find the best iteration (using R-squared)
-                if len(all_r_squared) > 0:
-                    best_iteration_index = np.argmax(all_r_squared)
-                    best_y_fit = all_y_fits[best_iteration_index]
-                    best_popt = all_popt[best_iteration_index]
-                    best_pcov = all_pcov[best_iteration_index]
-                    best_iteration = best_iteration_index + 1
-
-                    # Calculate errors from best fit
-                    perr = np.sqrt(np.diag(best_pcov))
-
-                    # Calculate best residuals
-                    best_y_fit_in_range = fit_function(x_fit, *best_popt)
-                    residuals = y_fit - best_y_fit_in_range
-
-                    # Generate smooth fit curve for plotting
-                    x_plot = np.logspace(np.log10(x_data.min()), np.log10(x_data.max()), 1000)
-                    y_fit_plot = fit_function(x_plot, *best_popt)
-
-                    # Store best fit results
-                    r_squared = all_r_squared[best_iteration_index]
-                    rmse = all_rmse[best_iteration_index]
-                    aic = all_aic[best_iteration_index]
-
-                    # Store results with 'best_' prefix
-                    for i, param_name in enumerate(param_names):
-                        fit_result[f'best_{param_name}'] = best_popt[i]
-                        fit_result[f'best_{param_name}_error'] = perr[i]
-
-                    fit_result['R_squared'] = r_squared
-                    fit_result['RMSE'] = rmse
-                    fit_result['AIC'] = aic
-                else:
-                    # No successful iterations
-                    print(f"No successful fits for {name}")
-                    all_fit_results.append(fit_result)
-                    continue
-
-                # Create figure (3x1 layout: fit | residuals | Q-Q)
-                # Use Figure() instead of plt.subplots() to avoid memory leak
-                from matplotlib.figure import Figure
-                fig = Figure(figsize=(20, 5))
-                ax1, ax2, ax3 = fig.subplots(1, 3)
-
-                # Left plot: Data and all fit iterations
-                ax1.plot(x_data, y_data, marker='.', linestyle='', label='Data')
-
-                # Plot all iterations with increasing opacity
-                for i, y_fit_iter in enumerate(all_y_fits):
-                    if i == best_iteration_index:
-                        # Highlight the best fit
-                        ax1.plot(x_data, y_fit_iter, 'r-', linewidth=2,
-                                label=f'Best Fit (Iter {i+1})')
-                    else:
-                        # Plot other iterations with lower opacity
-                        opacity = 0.3 + 0.5 * (i / len(all_y_fits))
-                        ax1.plot(x_data, y_fit_iter, '-', alpha=opacity,
-                                color='gray', linewidth=1)
-
-                ax1.set_xlabel('lag time [s]')
-                ax1.set_ylabel('g(2)-1')
-                ax1.set_title(f'[{plot_number}]: g(2)-1 vs. lag time for {name}')
-                ax1.grid(True)
-                ax1.set_xscale('log')
-                ax1.set_xlim(left=x_data.min()*0.9, right=x_data.max()*1.1)
-                ax1.legend()
-
-                # Add parameters of best fit as text
-                param_text = f"Best Fit (Iteration {best_iteration}):\n"
-                param_text += f"R² = {r_squared:.4f}\n"
-                param_text += f"RMSE = {rmse:.4e}\n"
-                param_text += f"AIC = {aic:.2f}"
-                ax1.text(0.95, 0.95, param_text, transform=ax1.transAxes,
-                        va='top', ha='right',
-                        bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
-
-                # Middle plot: residuals timeseries
-                ax2.plot(np.arange(len(residuals)), residuals, marker='.', linestyle='-', markersize=4)
-                ax2.axhline(0, color='r', linestyle='--', linewidth=1)
-                ax2.set_xlabel('Sample Index')
-                ax2.set_ylabel('Residuals')
-                ax2.set_title(f'[{plot_number}]: Residuals (Best Fit: Iter {best_iteration})')
-                ax2.grid(True)
-
-                # Right plot: Q-Q plot for the best fit
-                stats.probplot(residuals, dist="norm", plot=ax3)
-                ax3.set_title(f'[{plot_number}]: Q-Q Plot of Residuals (Best Fit: Iter {best_iteration})')
-                ax3.grid(True)
-
-                fig.tight_layout()
-
-                # Store figure
-                plots_dict[name] = (fig, {
-                    'popt': best_popt,
-                    'perr': perr,
-                    'r_squared': r_squared,
-                    'rmse': rmse,
-                    'aic': aic,
-                    'residuals': residuals,
-                    'num_iterations': len(all_y_fits),
-                    'best_iteration': best_iteration
-                })
-
-                plot_number += 1
-                all_fit_results.append(fit_result)
-
-            except Exception as e:
-                print(f"[CUMULANT METHOD C ERROR] Failed to fit '{name}': {e}")
-                import traceback
-                traceback.print_exc()
-                fit_result['Error'] = str(e)
-                all_fit_results.append(fit_result)
-
-    final_results_df = pd.DataFrame(all_fit_results)
-    print(f"[CUMULANT METHOD C] Generated {len(plots_dict)} plots from {len(dataframes_dict)} datasets")
-    return final_results_df, plots_dict
+    print(f"[Method C] Generated {len(plots_dict)} plots from {total} datasets")
+    return results_df, plots_dict
 
 
 def create_summary_plot(data_df, q_squared_col, gamma_cols, method_names=None, gamma_unit='1/s'):

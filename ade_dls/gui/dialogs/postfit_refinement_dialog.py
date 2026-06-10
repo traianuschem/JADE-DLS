@@ -49,6 +49,7 @@ class InteractivePlotWidget(QWidget):
         self.ax = self.figure.add_subplot(1, 1, 1)
         self.canvas = FigureCanvas(self.figure)
         self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.canvas.setMinimumHeight(300)
 
         # Add navigation toolbar
         self.toolbar = NavigationToolbar(self.canvas, self)
@@ -76,33 +77,53 @@ class InteractivePlotWidget(QWidget):
         self.setLayout(layout)
 
     def plot_data(self):
-        """Plot Γ vs q² data"""
+        """Plot Γ vs q² data (NaN-safe)"""
         self.ax.clear()
 
-        # Extract data
-        q_squared = self.data[self.q_squared_col].values
-        gamma = self.data[self.gamma_col].values
+        try:
+            # Extract data and convert to numpy (avoids pandas overhead)
+            q_squared = np.asarray(self.data[self.q_squared_col].values, dtype=float)
+            gamma = np.asarray(self.data[self.gamma_col].values, dtype=float)
 
-        # Sort by q²
-        sort_idx = np.argsort(q_squared)
-        q_squared = q_squared[sort_idx]
-        gamma = gamma[sort_idx]
+            # Filter out NaN values for a clean plot
+            valid = ~np.isnan(q_squared) & ~np.isnan(gamma)
+            q_valid = q_squared[valid]
+            g_valid = gamma[valid]
 
-        # Plot data points
-        self.ax.plot(q_squared, gamma, 'o', markersize=8, label='Data', color='#2196F3', alpha=0.7)
+            if len(q_valid) == 0:
+                self.ax.text(0.5, 0.5, 'No valid data available',
+                             transform=self.ax.transAxes, ha='center', va='center',
+                             fontsize=12, color='gray')
+                self.canvas.draw()
+                return
 
-        # If we have a linear fit, show it
-        if len(q_squared) > 1:
-            # Simple linear regression for visualization
-            coeffs = np.polyfit(q_squared, gamma, 1)
-            fit_line = np.poly1d(coeffs)
-            q_fit = np.linspace(q_squared.min(), q_squared.max(), 100)
-            self.ax.plot(q_fit, fit_line(q_fit), '--', color='#FF5722',
-                        linewidth=2, label=f'Linear fit (slope={coeffs[0]:.2e})', alpha=0.8)
+            # Sort by q²
+            sort_idx = np.argsort(q_valid)
+            q_valid = q_valid[sort_idx]
+            g_valid = g_valid[sort_idx]
+
+            # Plot data points
+            self.ax.plot(q_valid, g_valid, 'o', markersize=8, label='Data',
+                         color='#2196F3', alpha=0.7)
+
+            # Linear fit for visualization
+            if len(q_valid) > 1:
+                coeffs = np.polyfit(q_valid, g_valid, 1)
+                fit_line = np.poly1d(coeffs)
+                q_fit = np.linspace(q_valid.min(), q_valid.max(), 100)
+                self.ax.plot(q_fit, fit_line(q_fit), '--', color='#FF5722',
+                             linewidth=2,
+                             label=f'Linear fit (D∝{coeffs[0]:.2e})',
+                             alpha=0.8)
+
+        except Exception as e:
+            self.ax.text(0.5, 0.5, f'Plot error:\n{e}',
+                         transform=self.ax.transAxes, ha='center', va='center',
+                         fontsize=10, color='red')
 
         self.ax.set_xlabel('q² [nm⁻²]', fontsize=11, fontweight='bold')
-        self.ax.set_ylabel('Γ [ms⁻¹]', fontsize=11, fontweight='bold')
-        self.ax.set_title(f'{self.method_name}: Diffusion Coefficient Fit', fontsize=12, fontweight='bold')
+        self.ax.set_ylabel('Γ [s⁻¹]', fontsize=11, fontweight='bold')
+        self.ax.set_title(f'{self.method_name}: Γ vs q²', fontsize=12, fontweight='bold')
         self.ax.legend(loc='best')
         self.ax.grid(True, alpha=0.3)
 
@@ -186,7 +207,8 @@ class PostFitRefinementDialog(QDialog):
             'C': None
         }
 
-        # Store excluded fits for Method C
+        # Store excluded fits (per method)
+        self.excluded_fits_b = []
         self.excluded_fits_c = []
 
         self.setWindowTitle("Post-Fit Refinement")
@@ -329,7 +351,7 @@ class PostFitRefinementDialog(QDialog):
         if hasattr(self.analyzer, 'method_b_data') and self.analyzer.method_b_data is not None:
             self.plot_widget_b = InteractivePlotWidget(
                 self.analyzer.method_b_data,
-                'b',  # Gamma column for Method B
+                'Gamma',  # Gamma column for Method B (JADE 2.2 linregress)
                 'q^2',
                 'Method B',
                 self
@@ -370,15 +392,32 @@ class PostFitRefinementDialog(QDialog):
         q_range_group.setLayout(q_range_layout)
         layout.addWidget(q_range_group)
 
+        # Fit exclusion group (analogous to Method C)
+        exclusion_group = QGroupBox("Exclude Individual Fits")
+        exclusion_layout = QVBoxLayout()
+
+        self.inspect_fits_btn_b = QPushButton("Inspect & Exclude Fits...")
+        self.inspect_fits_btn_b.clicked.connect(self.open_fit_inspector_b)
+        exclusion_layout.addWidget(self.inspect_fits_btn_b)
+
+        self.excluded_label_b = QLabel("No fits excluded")
+        self.excluded_label_b.setStyleSheet("font-style: italic; color: #666;")
+        exclusion_layout.addWidget(self.excluded_label_b)
+
+        exclusion_group.setLayout(exclusion_layout)
+        layout.addWidget(exclusion_group)
+
         # Info
         info = QLabel(
             "<b>Effect:</b> Re-calculate diffusion coefficient using only data points "
-            "within the specified q² range. Individual linear fits remain unchanged."
+            "within the specified q² range AND excluding selected fits. "
+            "Individual linear fits remain unchanged."
         )
         info.setWordWrap(True)
         info.setStyleSheet("padding: 10px; background-color: #e3f2fd; border-radius: 4px;")
         layout.addWidget(info)
 
+        layout.addStretch()
         tab.setLayout(layout)
         return tab
 
@@ -461,6 +500,41 @@ class PostFitRefinementDialog(QDialog):
         tab.setLayout(layout)
         return tab
 
+    def open_fit_inspector_b(self):
+        """Open fit inspection dialog for Method B (same 3-panel dialog as Method C)"""
+        from gui.dialogs.method_c_postfit_dialog import MethodCPostFitDialog
+
+        if not hasattr(self.analyzer, 'method_b_plots') or not self.analyzer.method_b_plots:
+            QMessageBox.warning(
+                self,
+                "No Plots Available",
+                "No Method B fit plots are available for inspection.\n"
+                "Please run Method B analysis first."
+            )
+            return
+
+        fit_quality = getattr(self.analyzer, 'method_b_fit_quality', {})
+
+        dialog = MethodCPostFitDialog(
+            self.analyzer.method_b_plots,
+            fit_quality,
+            self.excluded_fits_b,
+            self
+        )
+        dialog.setWindowTitle("Method B - Post-Fit Filtering")
+        # Update the recompute button label to match Method B
+        dialog.recompute_btn.setText("Apply Exclusion")
+
+        if dialog.exec_() == QDialog.Accepted:
+            self.excluded_fits_b = dialog.get_excluded_files()
+
+            if self.excluded_fits_b:
+                self.excluded_label_b.setText(f"{len(self.excluded_fits_b)} fits excluded")
+                self.excluded_label_b.setStyleSheet("font-weight: bold; color: #d32f2f;")
+            else:
+                self.excluded_label_b.setText("No fits excluded")
+                self.excluded_label_b.setStyleSheet("font-style: italic; color: #666;")
+
     def open_fit_inspector_c(self):
         """Open fit inspection dialog for Method C"""
         from gui.dialogs.method_c_postfit_dialog import MethodCPostFitDialog
@@ -520,6 +594,9 @@ class PostFitRefinementDialog(QDialog):
             if 'B' in self.available_methods:
                 self.b_q_min.setValue(min_q)
                 self.b_q_max.setValue(max_q)
+                self.excluded_fits_b = []
+                self.excluded_label_b.setText("No fits excluded")
+                self.excluded_label_b.setStyleSheet("font-style: italic; color: #666;")
 
             # Reset Method C
             if 'C' in self.available_methods:
@@ -594,5 +671,6 @@ class PostFitRefinementDialog(QDialog):
         """
         return {
             'q_ranges': self.q_ranges,
+            'excluded_fits_b': self.excluded_fits_b,
             'excluded_fits_c': self.excluded_fits_c
         }

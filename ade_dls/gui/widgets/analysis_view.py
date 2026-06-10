@@ -478,16 +478,21 @@ class AnalysisView(QWidget):
         # Capture prior detail HTML before any row removal (for refinement history chain)
         prior_html = None
 
-        # For Method C, determine order-specific tag for row identity
+        # For Method C, determine order-specific tag for row identity.
+        # "filtered" in the Fit text means it is a post-refinement (filtered) result —
+        # that gets a distinct tag so the original row is preserved alongside it.
         _method_c_order_tag = None
         if 'Method C' in method_name and not results_df.empty:
             import re as _re
             _fit_text = str(results_df['Fit'].iloc[0])
             _m = _re.search(r'(2nd|3rd|4th) order', _fit_text)
-            _method_c_order_tag = f"Method C ({_m.group(1)} order)" if _m else "Method C (unknown)"
+            _order_str = f"{_m.group(1)} order" if _m else "unknown"
+            _is_filtered = 'filtered' in _fit_text.lower()
+            _method_c_order_tag = f"Method C ({_order_str}{'| filtered' if _is_filtered else ''})"
 
         if 'Method C' in method_name and _method_c_order_tag:
-            # Replace existing row with the same order; append if new order
+            # Replace existing row with the same tag; preserves rows with a different tag
+            # (e.g. the original unfiltered row is kept when a filtered row is added).
             for r in reversed(range(self.results_table.rowCount())):
                 cell = self.results_table.item(r, 0)
                 if cell and cell.data(Qt.UserRole + 2) == _method_c_order_tag:
@@ -1571,11 +1576,20 @@ class AnalysisView(QWidget):
         image_bytes = buf.read()
         if not image_bytes:
             return
+        # Capture as PDF bytes for vector export (LaTeX)
+        pdf_buf = io.BytesIO()
+        try:
+            self.figure.savefig(pdf_buf, format='pdf', bbox_inches='tight')
+            pdf_buf.seek(0)
+            pdf_bytes = pdf_buf.read()
+        except Exception:
+            pdf_bytes = b""
         payload = {
             "block_type": "plot",
             "title": title,
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "image_bytes": image_bytes,
+            "pdf_bytes": pdf_bytes,
         }
         self.send_to_report.emit(payload)
 
@@ -1960,34 +1974,75 @@ class AnalysisView(QWidget):
                         }
                         self._update_results_table('Method A', result_a,
                                                    regression_stats=refinement_stats_a)
+                        # Register post-refinement in pipeline/provenance
+                        try:
+                            _parent = self.parent()
+                            while _parent is not None:
+                                if hasattr(_parent, 'pipeline') and hasattr(_parent, 'inspector_panel'):
+                                    break
+                                _parent = _parent.parent()
+                            if _parent is not None:
+                                _parent.pipeline.add_post_refinement_step(
+                                    method_name="Method A",
+                                    q_range=q_range_a,
+                                    excluded_files=[],
+                                    is_laplace=False,
+                                )
+                        except Exception:
+                            pass
 
-                # Method B
-                if 'B' in available_methods and params['q_ranges']['B'] is not None:
-                    print(f"\nRe-computing Method B with q² range: {params['q_ranges']['B']}")
-                    # Get original fit limits from analyzer
-                    if hasattr(self.cumulant_analyzer, 'method_b_fit_limits'):
-                        fit_limits = self.cumulant_analyzer.method_b_fit_limits
-                    else:
-                        fit_limits = (0.0, 0.0002)  # Default
-                    result_b = self.cumulant_analyzer.run_method_b(
-                        fit_limits=fit_limits,
-                        q_range=params['q_ranges']['B']
-                    )
-                    if result_b is not None:
-                        results_updated.append(('Method B', result_b))
-                        q_range_b = params['q_ranges']['B']
-                        q_str_b = (f"{q_range_b[0]:.3e} \u2013 {q_range_b[1]:.3e} nm\u207b\u00b2"
-                                   if q_range_b is not None else "Full range")
-                        refinement_stats_b = {
-                            'refinement_info': {
-                                'q_range_str': q_str_b,
-                                'q_range': q_range_b,
-                                'excluded_files': [],
-                                'n_total': None, 'n_included': None, 'n_excluded': 0,
+                # Method B -- refine via stored method_b_data (no re-fitting individual correlations)
+                excluded_fits_b = params.get('excluded_fits_b', [])
+                q_range_b = params['q_ranges']['B']
+                if 'B' in available_methods and (q_range_b is not None or excluded_fits_b):
+                    print('Refining Method B...')
+                    if q_range_b:
+                        print(f'  q² range: {q_range_b}')
+                    if excluded_fits_b:
+                        print(f'  Excluded fits: {len(excluded_fits_b)}')
+                    try:
+                        result_b = self.cumulant_analyzer.refine_method_b(
+                            q_range=q_range_b,
+                            excluded_files=excluded_fits_b if excluded_fits_b else None,
+                        )
+                        if result_b is not None:
+                            results_updated.append(('Method B', result_b))
+                            ref_info_b = getattr(
+                                self.cumulant_analyzer, '_method_b_refinement_info', {}
+                            )
+                            q_str_b = (f'{q_range_b[0]:.3e} - {q_range_b[1]:.3e} nm-2'
+                                       if q_range_b is not None else 'Full range')
+                            refinement_stats_b = {
+                                'refinement_info': {
+                                    'q_range_str': q_str_b,
+                                    'q_range': q_range_b,
+                                    'excluded_files': excluded_fits_b,
+                                    'n_total': ref_info_b.get('n_total'),
+                                    'n_included': ref_info_b.get('n_included'),
+                                    'n_excluded': ref_info_b.get('n_excluded', 0),
+                                }
                             }
-                        }
-                        self._update_results_table('Method B', result_b,
-                                                   regression_stats=refinement_stats_b)
+                            self._update_results_table('Method B', result_b,
+                                                       regression_stats=refinement_stats_b)
+                            # Register post-refinement in pipeline/provenance
+                            try:
+                                _parent = self.parent()
+                                while _parent is not None:
+                                    if hasattr(_parent, 'pipeline') and hasattr(_parent, 'inspector_panel'):
+                                        break
+                                    _parent = _parent.parent()
+                                if _parent is not None:
+                                    _parent.pipeline.add_post_refinement_step(
+                                        method_name="Method B",
+                                        q_range=q_range_b,
+                                        excluded_files=excluded_fits_b,
+                                        is_laplace=False,
+                                    )
+                            except Exception:
+                                pass
+                    except Exception as e_b:
+                        print(f'  [Method B refine] Error: {e_b}')
+                        import traceback; traceback.print_exc()
 
                 # Method C
                 if 'C' in available_methods:
@@ -2007,24 +2062,28 @@ class AnalysisView(QWidget):
                         if recompute_output is not None:
                             result_c, refinement_stats = recompute_output
                             results_updated.append(('Method C', result_c))
-                            # Update the existing row in-place (values + appended HTML detail)
-                            _pending_tag = getattr(self, '_pending_method_c_order_tag', None)
-                            self._update_method_c_row_in_place(_pending_tag, result_c,
-                                                               refinement_stats)
+                            # Add a new row to the results overview (original row is preserved).
+                            # The "filtered" marker in result_c['Fit'] gives it a distinct tag
+                            # so _update_results_table appends rather than replacing the original.
+                            self._update_results_table('Method C', result_c,
+                                                       regression_stats=refinement_stats)
 
                             # Add post-refinement step to pipeline
-                            from gui.main_window import JADEDLSMainWindow
-                            parent = self.parent()
-                            while parent and not isinstance(parent, JADEDLSMainWindow):
-                                parent = parent.parent()
-
-                            if parent and hasattr(parent, 'pipeline'):
-                                parent.pipeline.add_post_refinement_step(
-                                    method_name="Method C",
-                                    q_range=q_range,
-                                    excluded_files=excluded_fits,
-                                    is_laplace=False
-                                )
+                            try:
+                                _parent = self.parent()
+                                while _parent is not None:
+                                    if hasattr(_parent, 'pipeline') and hasattr(_parent, 'inspector_panel'):
+                                        break
+                                    _parent = _parent.parent()
+                                if _parent is not None:
+                                    _parent.pipeline.add_post_refinement_step(
+                                        method_name="Method C",
+                                        q_range=q_range,
+                                        excluded_files=excluded_fits,
+                                        is_laplace=False
+                                    )
+                            except Exception:
+                                pass
 
                 print("="*60 + "\n")
 
@@ -2076,6 +2135,16 @@ class AnalysisView(QWidget):
                 print("POST-FIT REFINEMENT – METHOD D")
                 print("="*60)
 
+                excluded_files_d = ref_params.get('excluded_files', [])
+
+                # Apply fit exclusion: remove excluded files from method_d_data before re-clustering
+                if excluded_files_d and hasattr(self.cumulant_analyzer, 'method_d_data') \
+                        and self.cumulant_analyzer.method_d_data is not None:
+                    print(f"  Excluding {len(excluded_files_d)} file(s) from Method D data")
+                    self.cumulant_analyzer.method_d_data = self.cumulant_analyzer.method_d_data[
+                        ~self.cumulant_analyzer.method_d_data['filename'].isin(excluded_files_d)
+                    ].reset_index(drop=True)
+
                 result_d = self.cumulant_analyzer.refine_method_d(
                     clustering_params=ref_params.get('clustering'),
                     mode_params=ref_params.get('mode_params') or None,
@@ -2089,15 +2158,16 @@ class AnalysisView(QWidget):
 
                 # Add post-refinement step to pipeline
                 try:
-                    from gui.main_window import JADEDLSMainWindow
-                    parent = self.parent()
-                    while parent and not isinstance(parent, JADEDLSMainWindow):
-                        parent = parent.parent()
-                    if parent and hasattr(parent, 'pipeline'):
-                        parent.pipeline.add_post_refinement_step(
+                    _parent = self.parent()
+                    while _parent is not None:
+                        if hasattr(_parent, 'pipeline') and hasattr(_parent, 'inspector_panel'):
+                            break
+                        _parent = _parent.parent()
+                    if _parent is not None:
+                        _parent.pipeline.add_post_refinement_step(
                             method_name="Method D",
                             q_range=ref_params.get('combined_q_range'),
-                            excluded_files=[],
+                            excluded_files=excluded_files_d,
                             is_laplace=False,
                         )
                 except Exception:
@@ -2185,6 +2255,12 @@ class AnalysisView(QWidget):
             print(f"  Clustering: {clustering_params}")
 
         try:
+            # Restore from snapshot before applying exclusions (idempotent: always start from original data)
+            if is_nnls and the_analyzer._nnls_data_snapshot is not None:
+                the_analyzer.nnls_data = the_analyzer._nnls_data_snapshot.copy()
+            elif not is_nnls and the_analyzer._regularized_data_snapshot is not None:
+                the_analyzer.regularized_data = the_analyzer._regularized_data_snapshot.copy()
+
             # Filter data by excluded files if specified
             if excluded_files:
                 if is_nnls and hasattr(the_analyzer, 'nnls_data'):
@@ -2216,22 +2292,22 @@ class AnalysisView(QWidget):
                 )
 
                 # Update display with replace_existing=False to append plots
-                from gui.main_window import JADEDLSMainWindow
-                parent = self.parent()
-                while parent and not isinstance(parent, JADEDLSMainWindow):
-                    parent = parent.parent()
+                _parent = self.parent()
+                while _parent is not None:
+                    if hasattr(_parent, 'pipeline') and hasattr(_parent, 'inspector_panel'):
+                        break
+                    _parent = _parent.parent()
 
-                if parent:
-                    parent.laplace_analyzer = the_analyzer
-                    parent._display_nnls_results(replace_existing=False)
+                if _parent is not None:
+                    _parent.laplace_analyzer = the_analyzer
+                    _parent._display_nnls_results(replace_existing=False)
                     # Add post-refinement step to pipeline
-                    if hasattr(parent, 'pipeline'):
-                        parent.pipeline.add_post_refinement_step(
-                            method_name="NNLS",
-                            q_range=q_range,
-                            excluded_files=excluded_files,
-                            is_laplace=True
-                        )
+                    _parent.pipeline.add_post_refinement_step(
+                        method_name="NNLS",
+                        q_range=q_range,
+                        excluded_files=excluded_files,
+                        is_laplace=True
+                    )
 
             else:  # Regularized
                 the_analyzer.calculate_regularized_diffusion_coefficients(
@@ -2246,22 +2322,22 @@ class AnalysisView(QWidget):
                 )
 
                 # Update display with replace_existing=False to append plots
-                from gui.main_window import JADEDLSMainWindow
-                parent = self.parent()
-                while parent and not isinstance(parent, JADEDLSMainWindow):
-                    parent = parent.parent()
+                _parent = self.parent()
+                while _parent is not None:
+                    if hasattr(_parent, 'pipeline') and hasattr(_parent, 'inspector_panel'):
+                        break
+                    _parent = _parent.parent()
 
-                if parent:
-                    parent.laplace_analyzer = the_analyzer
-                    parent._display_regularized_results(replace_existing=False)
+                if _parent is not None:
+                    _parent.laplace_analyzer = the_analyzer
+                    _parent._display_regularized_results(replace_existing=False)
                     # Add post-refinement step to pipeline
-                    if hasattr(parent, 'pipeline'):
-                        parent.pipeline.add_post_refinement_step(
-                            method_name="Regularized",
-                            q_range=q_range,
-                            excluded_files=excluded_files,
-                            is_laplace=True
-                        )
+                    _parent.pipeline.add_post_refinement_step(
+                        method_name="Regularized",
+                        q_range=q_range,
+                        excluded_files=excluded_files,
+                        is_laplace=True
+                    )
 
             print("="*60 + "\n")
 

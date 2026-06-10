@@ -5,6 +5,70 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0] - 2026-06-09
+
+### Added
+
+#### FAIR Provenance Tracking – new module
+
+- New module `ade_dls/gui/core/provenance.py` — PROV-inspired JSON provenance record:
+  - `ProvenanceRecord` class with UUID4 record ID, schema URI, software/platform metadata
+  - SHA-256 hashing of all input files at load time for unambiguous data traceability
+  - Activity DAG: every analysis step (load, filter, cumulant fit, regularized NNLS, refinement, …) is appended as a timestamped activity node with inferred semantic type (`data_loading` / `filter` / `analysis` / `refinement`)
+  - JSON export embeds the record ID in every exported artifact so reports can be traced back to their provenance record
+- New widget `ade_dls/gui/widgets/provenance_panel.py` — live JSON viewer:
+  - JSON syntax highlighting (keys, strings, numbers, booleans) with light/dark-mode support
+  - "Copy JSON" and "Export JSON…" toolbar buttons
+  - Updates live as analysis steps are added
+- **"Export Provenance JSON…"** menu action in the File menu (shortcut: `Ctrl+Shift+P`)
+- `MainWindow` initialises the provenance record immediately after data load and emits `step_added` for the load step so it is captured as the first activity
+
+#### Report – LaTeX/PDF export
+
+- All `ReportBlock` sub-classes now implement `to_latex()` for direct LaTeX rendering:
+  - `MetadataBlock.to_latex()` — two-column `tblr` key/value table
+  - `PreprocessingBlock.to_latex()` — four-column `tblr` steps table (no., time, step, parameters)
+  - `ResultSummaryBlock.to_latex()` — header + value row `tblr` with bold column names
+  - `ResultDetailBlock.to_latex()` — parses HTML detail tables and re-renders them as `tblr`
+- `_tex_escape()` — comprehensive LaTeX escaping: the 10 LaTeX special characters plus a Unicode→LaTeX mapping table covering:
+  - Super/subscript digits (`²` → `$^{2}$`, `₂` → `$_{2}$`, …)
+  - Math and unit symbols (`±`, `µ`, `°`, `×`, `≈`, `≤`, `≥`, `≠`, `∞`)
+  - DLS-relevant Greek letters (`α β γ δ ε η κ λ ν π σ τ φ ω Γ Λ Σ`)
+  - Punctuation/dashes (`…`, `–`, `—`, `→`, `←`)
+- `_table_to_latex()` — renders parsed HTML tables as full-width `tblr` environments with bold header row and `\hline`
+
+#### Method B – post-fit refinement
+
+- `CumulantAnalyzer.refine_method_b()` — re-runs only the Γ vs q² OLS regression on the stored `method_b_data` snapshot, applying optional file exclusion and q² range filter; returns a results DataFrame with the same structure as `run_method_b()`
+- `PostfitRefinementDialog` extended for Method B:
+  - **q² range** selection with interactive plot and drag-to-select (mirrors Method C)
+  - **"Inspect & Exclude Fits…"** button — opens a per-file fit inspector to remove individual correlation-function fits from the regression
+  - **Γ vs q² preview plot** in the dialog (NaN-safe, sorted, with linear fit overlay)
+
+#### NNLS / Regularized post-fit refinement – per-population improvements
+
+- `LaplacePostFitDialog` population tabs now include:
+  - **Outlier threshold (k×σ)** spinbox — points with `|residual| > k·σ` are excluded (0 = disabled, matches Method D behaviour)
+  - **Minimum data points for regression** spinbox
+
+### Changed
+
+- **BREAKING – Method B column name**: `R-squared` renamed to `R_squared` in all DataFrames and plots; code that reads the old column name must be updated
+- **BREAKING – Method B fit engine**: `curve_fit` (non-linear least squares) replaced by `scipy.stats.linregress` (linear OLS) — fit parameters `popt`/`perr` no longer exist; use `Gamma`, `Gamma_error`, `R_squared` instead
+- **Inspector panel**: Python Code tab removed and replaced by the Provenance tab; the syntax highlighter is now JSON-focused
+- **View menu**: "Show Code" renamed to "Show Provenance"
+- **Method B plots**: default x-axis limits now match the fit window (linear region visible by default); annotation box shows R² and Γ directly in the Data & Fit panel; plot style updated (`alpha=0.6`, `markersize=4`, `grid alpha=0.3`)
+- **`LaplacePostFitDialog` clustering/population tabs**: per-population outlier threshold and minimum-points fields added (consistent with `MethodDPostFitDialog`)
+- **Jupyter notebook removed**: `JADE-DLS_vers1-0.ipynb` (v1.0 legacy notebook) deleted from the repository
+
+### Fixed
+
+- **`laplace_postfit_dialog.py` pyplot conflict**: Matplotlib figure construction switched from `plt.figure()` to `matplotlib.figure.Figure()` for both the q² range selector and the clustering preview — eliminates Qt event-loop interference
+- **Method B `None`-data guard**: `plot_processed_correlations` and `plot_processed_correlations_no_show` now skip `None` DataFrames with a console message instead of raising `AttributeError`
+- **Method B residuals plot**: residuals are now plotted by sample index (sequential) rather than by log-scale lag time, making normality visually assessable
+
+---
+
 ## [2.1.1dev] - 2026-03-18
 
 ### Added
@@ -303,6 +367,7 @@ All functionality remains the same; only import paths have changed.
 
 ---
 
+[3.0.0]: https://github.com/traianuschem/JADE-DLS/compare/v2.1.1dev...v3.0.0
 [2.1.1dev]: https://github.com/traianuschem/JADE-DLS/compare/v2.1.0dev...v2.1.1dev
 [2.1dev]: https://github.com/traianuschem/JADE-DLS/compare/v2.0.3dev...v2.1dev
 [2.0.3dev]: https://github.com/traianuschem/JADE-DLS/compare/v2.0.2dev...v2.0.3dev

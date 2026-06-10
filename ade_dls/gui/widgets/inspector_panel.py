@@ -1,120 +1,114 @@
 """
 Inspector Panel Widget
-Shows code, parameters, and documentation for transparency
+Shows provenance record, parameters, and documentation for transparency.
 """
 
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QTabWidget, QTextEdit,
                              QTableWidget, QTableWidgetItem, QLabel,
-                             QPushButton, QToolButton, QMenu, QHBoxLayout,
-                             QGroupBox)
+                             QPushButton, QToolButton, QMenu, QHBoxLayout)
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont, QSyntaxHighlighter, QTextCharFormat, QColor
 import re
 
 from .report_panel import ReportPanel
+from .provenance_panel import ProvenancePanel
 
 
 class PythonHighlighter(QSyntaxHighlighter):
-    """Syntax highlighter for Python code"""
+    """Syntax highlighter for Python code (used in hidden Code tab)."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-
-        # Define highlighting rules
         self.highlighting_rules = []
 
-        # Keywords
         keyword_format = QTextCharFormat()
         keyword_format.setForeground(QColor("#0000FF"))
         keyword_format.setFontWeight(QFont.Bold)
-        keywords = [
-            'def', 'class', 'import', 'from', 'return', 'if', 'else', 'elif',
-            'for', 'while', 'try', 'except', 'with', 'as', 'lambda', 'yield',
-            'True', 'False', 'None', 'and', 'or', 'not', 'in', 'is'
-        ]
-        for word in keywords:
-            pattern = f'\\b{word}\\b'
-            self.highlighting_rules.append((re.compile(pattern), keyword_format))
+        for word in ['def', 'class', 'import', 'from', 'return', 'if', 'else', 'elif',
+                     'for', 'while', 'try', 'except', 'with', 'as', 'lambda', 'yield',
+                     'True', 'False', 'None', 'and', 'or', 'not', 'in', 'is']:
+            self.highlighting_rules.append(
+                (re.compile(f'\\b{word}\\b'), keyword_format)
+            )
 
-        # Strings
         string_format = QTextCharFormat()
         string_format.setForeground(QColor("#008000"))
         self.highlighting_rules.append((re.compile(r'"[^"\\]*(\\.[^"\\]*)*"'), string_format))
         self.highlighting_rules.append((re.compile(r"'[^'\\]*(\\.[^'\\]*)*'"), string_format))
 
-        # Comments
         comment_format = QTextCharFormat()
         comment_format.setForeground(QColor("#808080"))
         comment_format.setFontItalic(True)
         self.highlighting_rules.append((re.compile(r'#[^\n]*'), comment_format))
 
-        # Numbers
         number_format = QTextCharFormat()
         number_format.setForeground(QColor("#FF8C00"))
         self.highlighting_rules.append((re.compile(r'\b[0-9]+\.?[0-9]*\b'), number_format))
 
     def highlightBlock(self, text):
-        """Apply syntax highlighting to a block of text"""
-        for pattern, format in self.highlighting_rules:
+        for pattern, fmt in self.highlighting_rules:
             for match in pattern.finditer(text):
-                self.setFormat(match.start(), match.end() - match.start(), format)
+                self.setFormat(match.start(), match.end() - match.start(), fmt)
 
 
 class InspectorPanel(QWidget):
     """
-    Right panel showing code, parameters, and documentation
-    Provides transparency into what the GUI is doing
+    Right panel with four tabs:
+      0. 📄 Report   — modular block-based report builder
+      1. 🔍 Provenance — live PROV-JSON provenance record (replaces old Code tab)
+      2. ⚙️ Parameters — parameter history table
+      3. 📖 Docs      — inline method documentation
+
+    The old Python-code view is still available via File > Export as Python Script /
+    Jupyter Notebook in the menu bar.
     """
 
-    def __init__(self, pipeline, parent=None):
+    def __init__(self, pipeline, version: str = "unknown", parent=None):
         super().__init__(parent)
         self.pipeline = pipeline
+        self._version = version
         self.init_ui()
 
-        # Connect to pipeline signals
-        self.pipeline.step_added.connect(self.update_code_view)
+        # Connect pipeline signals
+        self.pipeline.step_added.connect(self._on_step_added)
 
     def init_ui(self):
-        """Initialize the UI"""
         layout = QVBoxLayout()
 
-        # Title
         title = QLabel("Inspector")
         title.setStyleSheet("font-size: 14pt; font-weight: bold;")
         layout.addWidget(title)
 
-        # Create tab widget
         self.tabs = QTabWidget()
 
-        # Tab 0: Report (first — most commonly used for export)
+        # Tab 0: Report
         self.report_panel = ReportPanel(self.pipeline, parent=self)
         self.tabs.addTab(self.report_panel, "📄 Report")
 
-        # Tab 1: Code View
-        self.code_tab = self.create_code_tab()
-        self.tabs.addTab(self.code_tab, "💻 Code")
+        # Tab 1: Provenance (replaces old Code tab)
+        self.provenance_panel = ProvenancePanel(version=self._version, parent=self)
+        self.tabs.addTab(self.provenance_panel, "🔍 Provenance")
+
+        # Wire provenance panel into report panel so "Add Block → Provenance" works
+        self.report_panel.set_provenance_panel(self.provenance_panel)
 
         # Tab 2: Parameters
-        self.params_tab = self.create_params_tab()
+        self.params_tab = self._create_params_tab()
         self.tabs.addTab(self.params_tab, "⚙️ Parameters")
 
         # Tab 3: Documentation
-        self.docs_tab = self.create_docs_tab()
+        self.docs_tab = self._create_docs_tab()
         self.tabs.addTab(self.docs_tab, "📖 Docs")
 
         layout.addWidget(self.tabs)
 
-        # Export buttons
-        export_layout = QHBoxLayout()
+        # Bottom toolbar
+        btn_row = QHBoxLayout()
 
-        self.copy_code_btn = QPushButton("📋 Copy Code")
-        self.copy_code_btn.clicked.connect(self.copy_code)
-        export_layout.addWidget(self.copy_code_btn)
-
-        self.export_btn = QToolButton()
-        self.export_btn.setText("💾 Export Report")
-        self.export_btn.setToolButtonStyle(Qt.ToolButtonTextOnly)
-        self.export_btn.setPopupMode(QToolButton.InstantPopup)
+        export_btn = QToolButton()
+        export_btn.setText("💾 Export Report")
+        export_btn.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        export_btn.setPopupMode(QToolButton.InstantPopup)
         export_menu = QMenu(self)
         export_menu.addAction("Export as TXT…").triggered.connect(
             self.report_panel._export_txt
@@ -129,74 +123,97 @@ class InspectorPanel(QWidget):
         export_menu.addAction("Export as PDF (Landscape)…").triggered.connect(
             lambda: self.report_panel._export_pdf(landscape=True)
         )
-        self.export_btn.setMenu(export_menu)
-        export_layout.addWidget(self.export_btn)
+        export_menu.addSeparator()
+        export_menu.addAction("Export as LaTeX package…").triggered.connect(
+            self.report_panel._export_tex
+        )
+        export_btn.setMenu(export_menu)
+        btn_row.addWidget(export_btn)
 
-        layout.addLayout(export_layout)
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
 
         self.setLayout(layout)
 
-    def create_code_tab(self):
-        """Create code viewer tab"""
+    # ------------------------------------------------------------------
+    # Signal handlers
+    # ------------------------------------------------------------------
+
+    def _on_step_added(self, step_dict: dict) -> None:
+        """Forward new pipeline steps to the provenance panel and update params."""
+        self.provenance_panel.on_step_added(step_dict)
+        self.update_params_table()
+
+    # Keep legacy name so main_window.py's existing call doesn't break
+    def update_code_view(self) -> None:
+        pass
+
+    # ------------------------------------------------------------------
+    # Parameters tab
+    # ------------------------------------------------------------------
+
+    def _create_params_tab(self):
         widget = QWidget()
         layout = QVBoxLayout()
+        layout.addWidget(QLabel("Current analysis parameters:"))
 
-        # Description
-        desc = QLabel("Generated Python code for reproducibility:")
-        desc.setWordWrap(True)
-        layout.addWidget(desc)
-
-        # Code editor
-        self.code_view = QTextEdit()
-        self.code_view.setReadOnly(True)
-        self.code_view.setFont(QFont("Courier", 10))
-        self.code_view.setPlainText("# No analysis steps yet\n# Load data to begin")
-
-        # Apply syntax highlighting
-        self.highlighter = PythonHighlighter(self.code_view.document())
-
-        layout.addWidget(self.code_view)
-
-        widget.setLayout(layout)
-        return widget
-
-    def create_params_tab(self):
-        """Create parameters tab"""
-        widget = QWidget()
-        layout = QVBoxLayout()
-
-        # Description
-        desc = QLabel("Current analysis parameters:")
-        layout.addWidget(desc)
-
-        # Parameters table
         self.params_table = QTableWidget()
         self.params_table.setColumnCount(3)
         self.params_table.setHorizontalHeaderLabels(["Step", "Parameter", "Value"])
         layout.addWidget(self.params_table)
 
-        # Add some default parameters
         self.update_params_table()
-
         widget.setLayout(layout)
         return widget
 
-    def create_docs_tab(self):
-        """Create documentation tab"""
+    def update_params_table(self):
+        param_history = self.pipeline.get_parameter_history()
+        if not param_history.empty:
+            self.params_table.setRowCount(len(param_history))
+            for i, row in param_history.iterrows():
+                self.params_table.setItem(i, 0, QTableWidgetItem(str(row['step'])))
+                self.params_table.setItem(i, 1, QTableWidgetItem(str(row['parameter'])))
+                self.params_table.setItem(i, 2, QTableWidgetItem(str(row['value'])))
+            self.params_table.resizeColumnsToContents()
+        else:
+            self.params_table.setRowCount(3)
+            for i, (step, param, value) in enumerate([
+                ("General", "Temperature", "297.94 K"),
+                ("General", "Viscosity", "0.894 cP"),
+                ("Cumulant", "Fit Range", "1e-9 to 10 s"),
+            ]):
+                self.params_table.setItem(i, 0, QTableWidgetItem(step))
+                self.params_table.setItem(i, 1, QTableWidgetItem(param))
+                self.params_table.setItem(i, 2, QTableWidgetItem(value))
+            self.params_table.resizeColumnsToContents()
+
+    # ------------------------------------------------------------------
+    # Documentation tab
+    # ------------------------------------------------------------------
+
+    def _create_docs_tab(self):
         widget = QWidget()
         layout = QVBoxLayout()
-
-        # Documentation text
         self.docs_text = QTextEdit()
         self.docs_text.setReadOnly(True)
         self.docs_text.setHtml(self.get_default_docs())
         layout.addWidget(self.docs_text)
-
         widget.setLayout(layout)
         return widget
 
+    def update_for_step(self, step_name):
+        docs_map = {
+            'load_data': self.get_load_data_docs(),
+            'preprocess': self.get_preprocess_docs(),
+            'cumulant_a': self.get_cumulant_a_docs(),
+            'cumulant_b': self.get_cumulant_b_docs(),
+            'cumulant_c': self.get_cumulant_c_docs(),
+            'nnls': self.get_nnls_docs(),
+            'regularized': self.get_regularized_docs(),
+        }
+        self.docs_text.setHtml(docs_map.get(step_name, self.get_default_docs()))
+
     def get_default_docs(self):
-        """Get default documentation text"""
         return """
 <h3>JADE-DLS Analysis Methods</h3>
 
@@ -220,61 +237,11 @@ class InspectorPanel(QWidget):
 <p>Hydrodynamic radius: R<sub>h</sub> = k<sub>B</sub>T / (6πηD)</p>
 <p>Polydispersity Index: PDI = μ₂/Γ²</p>
 
-<h4>Tips</h4>
-<ul>
-<li>For monodisperse samples, cumulant methods are faster and reliable</li>
-<li>For polydisperse samples, use regularized inverse Laplace</li>
-<li>Always check R² and residuals for fit quality</li>
-</ul>
+<h4>Provenance</h4>
+<p>The <b>🔍 Provenance</b> tab records every step in a FAIR-compliant JSON
+record (PROV-inspired schema).  Export it alongside your report so that any
+output can be traced back to its exact input files and analysis parameters.</p>
 """
-
-    def update_code_view(self):
-        """Update code view with current pipeline code"""
-        code = self.pipeline.get_current_code()
-        self.code_view.setPlainText(code)
-
-    def update_params_table(self):
-        """Update parameters table with current parameters"""
-        param_history = self.pipeline.get_parameter_history()
-
-        if not param_history.empty:
-            self.params_table.setRowCount(len(param_history))
-
-            for i, row in param_history.iterrows():
-                self.params_table.setItem(i, 0, QTableWidgetItem(str(row['step'])))
-                self.params_table.setItem(i, 1, QTableWidgetItem(str(row['parameter'])))
-                self.params_table.setItem(i, 2, QTableWidgetItem(str(row['value'])))
-
-            self.params_table.resizeColumnsToContents()
-        else:
-            # Show default parameters
-            self.params_table.setRowCount(3)
-            defaults = [
-                ("General", "Temperature", "297.94 K"),
-                ("General", "Viscosity", "0.894 cP"),
-                ("Cumulant", "Fit Range", "1e-9 to 10 s")
-            ]
-            for i, (step, param, value) in enumerate(defaults):
-                self.params_table.setItem(i, 0, QTableWidgetItem(step))
-                self.params_table.setItem(i, 1, QTableWidgetItem(param))
-                self.params_table.setItem(i, 2, QTableWidgetItem(value))
-
-            self.params_table.resizeColumnsToContents()
-
-    def update_for_step(self, step_name):
-        """Update documentation for specific step"""
-        docs_map = {
-            'load_data': self.get_load_data_docs(),
-            'preprocess': self.get_preprocess_docs(),
-            'cumulant_a': self.get_cumulant_a_docs(),
-            'cumulant_b': self.get_cumulant_b_docs(),
-            'cumulant_c': self.get_cumulant_c_docs(),
-            'nnls': self.get_nnls_docs(),
-            'regularized': self.get_regularized_docs(),
-        }
-
-        docs = docs_map.get(step_name, self.get_default_docs())
-        self.docs_text.setHtml(docs)
 
     def get_load_data_docs(self):
         return """
@@ -282,6 +249,8 @@ class InspectorPanel(QWidget):
 <p>Load .asc files from ALV DLS instrument.</p>
 <p><b>Expected format:</b> ALV-5000/E correlator .asc files</p>
 <p><b>Files are filtered to exclude:</b> *averaged.asc files</p>
+<p><b>Provenance:</b> Input files are SHA-256 hashed and registered
+in the provenance record for integrity verification.</p>
 """
 
     def get_preprocess_docs(self):
@@ -340,28 +309,21 @@ class InspectorPanel(QWidget):
 <p><b>Tip:</b> Use alpha analyzer to find optimal α value</p>
 """
 
-    def copy_code(self):
-        """Copy code to clipboard"""
-        from PyQt5.QtWidgets import QApplication
-        clipboard = QApplication.clipboard()
-        clipboard.setText(self.code_view.toPlainText())
+    # ------------------------------------------------------------------
+    # Compatibility stubs for main_window.py
+    # ------------------------------------------------------------------
 
-    def set_code_view_visible(self, visible):
-        """Set code view tab visibility"""
-        if visible:
-            if self.tabs.indexOf(self.code_tab) == -1:
-                self.tabs.insertTab(0, self.code_tab, "💻 Code")
-        else:
-            index = self.tabs.indexOf(self.code_tab)
-            if index != -1:
-                self.tabs.removeTab(index)
+    def set_code_view_visible(self, visible: bool) -> None:
+        """Show/hide the Provenance tab (was: Code tab)."""
+        idx = self.tabs.indexOf(self.provenance_panel)
+        if visible and idx == -1:
+            self.tabs.insertTab(1, self.provenance_panel, "🔍 Provenance")
+        elif not visible and idx != -1:
+            self.tabs.removeTab(idx)
 
-    def set_params_view_visible(self, visible):
-        """Set parameters view tab visibility"""
-        if visible:
-            if self.tabs.indexOf(self.params_tab) == -1:
-                self.tabs.insertTab(1, self.params_tab, "⚙️ Parameters")
-        else:
-            index = self.tabs.indexOf(self.params_tab)
-            if index != -1:
-                self.tabs.removeTab(index)
+    def set_params_view_visible(self, visible: bool) -> None:
+        idx = self.tabs.indexOf(self.params_tab)
+        if visible and idx == -1:
+            self.tabs.insertTab(2, self.params_tab, "⚙️ Parameters")
+        elif not visible and idx != -1:
+            self.tabs.removeTab(idx)

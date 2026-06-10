@@ -9,8 +9,7 @@ cumulant analysis: general, methods A and B
 import pandas as pd
 import re
 import numpy as np
-from scipy.optimize import curve_fit
-import inspect
+from scipy.stats import linregress
 import matplotlib.pyplot as plt
 import scipy.stats as stats
 import statsmodels.api as sm
@@ -353,97 +352,86 @@ def remove_rows_by_index(df, indices_str):
         print("Invalid input. Please provide comma-separated integers.")
     return df
 
-#plot and fit for method B
-def plot_processed_correlations(dataframes_dict, fit_function, fit_x_limits):
+#plot and fit for method B (JADE 2.2: linregress instead of curve_fit)
+def plot_processed_correlations(dataframes_dict, fit_x_limits, xlim=None, ylim=None):
     all_fit_results = []
     plot_number = 1
-    
+
     for name, df in dataframes_dict.items():
+        if df is None:
+            print(f"Skipping '{name}': no data (None).")
+            continue
         try:
             fit_result = {'filename': name}
 
-            #main processing
             x_data = df['t [s]']
             y_data = df['g(2)_mod']
             x_fit = x_data[(x_data >= fit_x_limits[0]) & (x_data <= fit_x_limits[1])]
             y_fit = y_data[(x_data >= fit_x_limits[0]) & (x_data <= fit_x_limits[1])]
-                
-            #perform the fit with bounds
-            popt, pcov = curve_fit(fit_function, x_fit, y_fit, method='lm', maxfev=50000)
-                
-            #calculate parameter errors from covariance matrix
-            perr = np.sqrt(np.diag(pcov))
-                
-            #generate fit curve
-            y_fit_values = fit_function(x_data, *popt)
-                
-            #calculate residuals for Q-Q plot
-            residuals = y_fit - fit_function(x_fit, *popt)
-                
-            #extract parameter names and store fit parameters
-            param_names = inspect.getfullargspec(fit_function).args[1:]
-            for i, param_name in enumerate(param_names):
-                fit_result[param_name] = popt[i]
-                fit_result[f'{param_name}_error'] = perr[i]
-                fit_result[f'{param_name}_relative_error'] = (perr[i] / abs(popt[i])) * 100 if popt[i] != 0 else np.inf
-                
-            # Calculate fit quality metrics
+
+            slope, intercept, r, p, se = linregress(x_fit, y_fit)
+
+            # Γ = −slope,  a = exp(2·intercept)
+            Gamma = -slope
+            a     = np.exp(2 * intercept)
+
+            fit_result['Gamma']                = Gamma
+            fit_result['Gamma_error']          = se
+            fit_result['Gamma_relative_error'] = (se / abs(Gamma)) * 100 if Gamma != 0 else np.inf
+            fit_result['a']                    = a
+
+            # Fit line over full x range
+            y_fit_values = slope * x_data + intercept
+
+            # Residuals (in fit window)
+            residuals = y_fit - (slope * x_fit + intercept)
             ss_res = np.sum(residuals**2)
             ss_tot = np.sum((y_fit - np.mean(y_fit))**2)
             r_squared = 1 - (ss_res / ss_tot)
-            fit_result['R-squared'] = r_squared
-                
-            #create subplot layout: data+fit | residuals | Q-Q
+            fit_result['R_squared'] = r_squared
+
+            #3-panel layout: data+fit | residuals | Q-Q
             fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(20, 5))
+            fig.suptitle(f'[{plot_number}]: Method B — {name}', fontsize=12)
 
-            #left plot: original data and fit
-            ax1.plot(x_data, y_data, marker='.', linestyle='', label='Data')
-            ax1.plot(x_data, y_fit_values, 'r-', label='Fit')
+            ax1.plot(x_data, y_data, 'o', alpha=0.6, markersize=4, label='Data')
+            ax1.plot(x_data, y_fit_values, 'r-', linewidth=2, label='Fit')
             ax1.set_xlabel(r'lag time τ [s]')
-            ax1.set_ylabel(r'$\ln\sqrt{g^{(2)}(\tau)-1}$')
-            ax1.set_title(f'[{plot_number}]: Method B — {name}')
-            ax1.grid(True)
-            ax1.set_xscale('log')
-            # Limit x-axis to fitting range + 10% extension on each side (log scale → factors)
-            ax1.set_xlim(fit_x_limits[0] / 1.10, fit_x_limits[1] * 1.10)
+            ax1.set_ylabel(r'ln$\sqrt{g^{(2)}(\tau)-1}$')
+            ax1.set_title('Data & Fit')
+            ax1.grid(True, alpha=0.3)
+            if xlim is not None:
+                ax1.set_xlim(*xlim)
+            if ylim is not None:
+                ax1.set_ylim(*ylim)
             ax1.legend()
+            ax1.text(0.95, 0.95,
+                     f"R² = {r_squared:.4f}\n⟨Γ⟩ = {Gamma:.3e} s⁻¹",
+                     transform=ax1.transAxes, va='top', ha='right',
+                     bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
 
-            #add R^2 as text in the left plot
-            param_text = f"R² = {r_squared:.4f}"
-            ax1.text(0.95, 0.95, param_text, transform=ax1.transAxes,
-                verticalalignment='top', horizontalalignment='right',
-                bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
-
-            #middle plot: residuals
-            ax2.plot(x_fit, residuals, marker='.', linestyle='', color='steelblue')
+            ax2.plot(residuals.values if hasattr(residuals, 'values') else residuals)
             ax2.axhline(0, color='r', linestyle='--', linewidth=1)
-            ax2.set_xlabel(r'lag time τ [s]')
+            ax2.set_xlabel('Sample Index')
             ax2.set_ylabel('Residuals')
-            ax2.set_title(f'[{plot_number}]: Residuals')
-            ax2.set_xscale('log')
-            ax2.grid(True)
+            ax2.set_title('Residuals')
+            ax2.grid(True, alpha=0.3)
 
-            #right plot: Q-Q plot
             stats.probplot(residuals, dist="norm", plot=ax3)
-            ax3.set_title(f'[{plot_number}]: Q-Q Plot of Residuals')
-            ax3.grid(True)
-                
+            ax3.set_title('Q-Q Plot')
+            ax3.grid(True, alpha=0.3)
+
             plt.tight_layout()
             plt.show()
             plot_number += 1
-                
-            #store all results
+
             all_fit_results.append(fit_result)
-                
+
         except (KeyError, TypeError) as e:
             print(f"Error processing DataFrame '{name}': {e}")
             fit_result['Error'] = str(e)
             all_fit_results.append(fit_result)
-        except RuntimeError as e:
-            print(f"Fit error for DataFrame '{name}': {e}")
-            fit_result['Error'] = str(e)
-            all_fit_results.append(fit_result)
-    
+
     final_results_df = pd.DataFrame(all_fit_results)
     return final_results_df
 

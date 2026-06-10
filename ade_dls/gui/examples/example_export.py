@@ -91,7 +91,7 @@ processed_correlations = process_correlation_data(all_correlations, columns_to_d
 
 # Define fit function (4th order cumulant)
 def fit_function4(x, a, b, c, d, e, f):
-    inner_term = 1 + 0.5 * c * x**2 - (d * x**3) / 6 + ((e - 3 * c**2) * x**4) / 24
+    inner_term = 1 + 0.5 * c * x**2 - (d * x**3) / 6 + (e * x**4) / 24
     term = f + a * (np.exp(-b * x) * inner_term)**2
     return term
 

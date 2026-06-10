@@ -153,6 +153,87 @@ def _table_to_markdown(table) -> str:
     return "\n".join(lines)
 
 
+# Mapping of Unicode characters that need a LaTeX equivalent.
+# Applied by _tex_escape() after the 10 special-character substitutions.
+_UNICODE_LATEX: dict = {
+    # Superscript digits
+    '²': '$^{2}$', '³': '$^{3}$', '¹': '$^{1}$', '⁰': '$^{0}$',
+    '⁴': '$^{4}$', '⁵': '$^{5}$', '⁶': '$^{6}$',
+    '⁷': '$^{7}$', '⁸': '$^{8}$', '⁹': '$^{9}$',
+    # Subscript digits
+    '₀': '$_{0}$', '₁': '$_{1}$', '₂': '$_{2}$', '₃': '$_{3}$',
+    '₄': '$_{4}$', '₅': '$_{5}$', '₆': '$_{6}$',
+    '₇': '$_{7}$', '₈': '$_{8}$', '₉': '$_{9}$',
+    # Common math/unit symbols
+    '±': '$\\pm$',
+    'µ': '$\\mu$',       # U+00B5 MICRO SIGN
+    'μ': '$\\mu$',       # U+03BC GREEK SMALL LETTER MU
+    '°': '$^{\\circ}$',
+    '×': '$\\times$',
+    '≈': '$\\approx$',
+    '≤': '$\\leq$',
+    '≥': '$\\geq$',
+    '≠': '$\\neq$',
+    '∞': '$\\infty$',
+    # Punctuation / dashes
+    '…': '\\ldots{}',
+    '–': '--',
+    '—': '---',
+    '→': '$\\rightarrow$',
+    '←': '$\\leftarrow$',
+    # Greek letters relevant for DLS
+    'α': '$\\alpha$',    'β': '$\\beta$',   'γ': '$\\gamma$',
+    'δ': '$\\delta$',    'ε': '$\\varepsilon$',
+    'η': '$\\eta$',      'κ': '$\\kappa$',  'λ': '$\\lambda$',
+    'ν': '$\\nu$',       'π': '$\\pi$',     'σ': '$\\sigma$',
+    'τ': '$\\tau$',      'φ': '$\\phi$',    'ω': '$\\omega$',
+    'Γ': '$\\Gamma$',    'Λ': '$\\Lambda$', 'Σ': '$\\Sigma$',
+}
+
+
+def _tex_escape(s: str) -> str:
+    """Escape special LaTeX characters and convert common Unicode to LaTeX equivalents."""
+    # Use a placeholder so that the {} in \textbackslash{} survive the brace escaping below
+    _BS = '\x00'
+    s = s.replace('\\', _BS)
+    s = s.replace('&',  r'\&')
+    s = s.replace('%',  r'\%')
+    s = s.replace('$',  r'\$')
+    s = s.replace('#',  r'\#')
+    s = s.replace('_',  r'\_')
+    s = s.replace('{',  r'\{')
+    s = s.replace('}',  r'\}')
+    s = s.replace('~',  r'\textasciitilde{}')
+    s = s.replace('^',  r'\textasciicircum{}')
+    s = s.replace(_BS,  r'\textbackslash{}')
+    for char, latex in _UNICODE_LATEX.items():
+        s = s.replace(char, latex)
+    return s
+
+
+def _table_to_latex(table) -> str:
+    """Render a parsed HTML table as a full-width tabularray tblr environment."""
+    if not table:
+        return ""
+    col_count = max(len(row) for row in table)
+    # X columns fill available width equally; width=\linewidth pins the table to the text column
+    col_spec = f"width=\\linewidth, colspec={{{'X' * col_count}}}"
+    first_row_is_header = any(is_hdr for _, is_hdr in table[0])
+    lines = [f"\\begin{{tblr}}{{{col_spec}}}"]
+    for row_idx, row in enumerate(table):
+        cells = [cell for cell, _ in row]
+        cells += [""] * (col_count - len(cells))
+        escaped = [_tex_escape(c) for c in cells]
+        row_content = " & ".join(escaped)
+        if row_idx == 0 and first_row_is_header:
+            lines.append(f"  \\SetRow{{font=\\bfseries}} {row_content} \\\\")
+            lines.append("  \\hline")
+        else:
+            lines.append(f"  {row_content} \\\\")
+    lines.append("\\end{tblr}")
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # Base block
 # ---------------------------------------------------------------------------
@@ -266,8 +347,10 @@ class ReportBlock(QFrame):
     def to_html(self) -> str:
         raise NotImplementedError
 
-    # Future hooks (not yet implemented)
-    # def to_latex(self) -> str: raise NotImplementedError
+    def to_latex(self, **kwargs) -> str:
+        raise NotImplementedError
+
+    # Future hook (not yet implemented)
     # def to_notebook_cell(self) -> dict: raise NotImplementedError
 
 
@@ -358,6 +441,18 @@ class MetadataBlock(ReportBlock):
             "<h3>Experiment Metadata</h3>"
             f"<table cellspacing='4'>{rows}</table>"
             "</div>"
+        )
+
+    def to_latex(self, **kwargs) -> str:
+        rows = "\n".join(
+            f"  \\textbf{{{_tex_escape(label)}}} & {_tex_escape(str(value))} \\\\"
+            for label, value in self._fields
+        )
+        return (
+            "\\section*{Experiment Metadata}\n"
+            "\\begin{tblr}{width=\\linewidth, colspec={lX}}\n"
+            f"{rows}\n"
+            "\\end{tblr}"
         )
 
 
@@ -528,6 +623,29 @@ class PreprocessingBlock(ReportBlock):
             f"{rows}</table></div>"
         )
 
+    def to_latex(self, **kwargs) -> str:
+        if not self._steps:
+            return (
+                "\\section*{Preprocessing \\& Analysis Steps}\n"
+                "\\emph{No steps recorded.}"
+            )
+        header = (
+            "  \\SetRow{font=\\bfseries} "
+            "\\# & Time & Step & Key Parameters \\\\\n"
+            "  \\hline"
+        )
+        rows = "\n".join(
+            f"  {i} & {_tex_escape(ts)} & {_tex_escape(name)} & {_tex_escape(params)} \\\\"
+            for i, (name, ts, params) in enumerate(self._steps, 1)
+        )
+        return (
+            "\\section*{Preprocessing \\& Analysis Steps}\n"
+            "\\begin{tblr}{width=\\linewidth, colspec={rllX}}\n"
+            f"{header}\n"
+            f"{rows}\n"
+            "\\end{tblr}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Result Summary block
@@ -607,6 +725,25 @@ class ResultSummaryBlock(ReportBlock):
             "</table></div>"
         )
 
+    def to_latex(self, **kwargs) -> str:
+        data = self._payload.get("data", {})
+        method = _tex_escape(self._payload.get("method_name", "Unknown"))
+        ts = self._payload.get("timestamp", "")
+        ts_str = f"\n\\emph{{{_tex_escape(ts)}}}" if ts else ""
+        if not data:
+            return f"\\section*{{Result Summary --- {method}}}\n\\emph{{No data.}}"
+        col_spec = f"width=\\linewidth, colspec={{{'X' * len(data)}}}"
+        header_cells = " & ".join(f"\\textbf{{{_tex_escape(k)}}}" for k in data.keys())
+        value_cells = " & ".join(_tex_escape(str(v)) for v in data.values())
+        return (
+            f"\\section*{{Result Summary --- {method}}}{ts_str}\n"
+            f"\\begin{{tblr}}{{{col_spec}}}\n"
+            f"  {header_cells} \\\\\n"
+            "  \\hline\n"
+            f"  {value_cells} \\\\\n"
+            "\\end{tblr}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Result Detail block
@@ -674,6 +811,22 @@ class ResultDetailBlock(ReportBlock):
             f"{ts_str}"
             f"{html}"
             "</div>"
+        )
+
+    def to_latex(self, **kwargs) -> str:
+        method = _tex_escape(self._payload.get("method_name", "Unknown"))
+        ts = self._payload.get("timestamp", "")
+        ts_str = f"\n\\emph{{{_tex_escape(ts)}}}" if ts else ""
+        html = self._payload.get("html", "")
+        tables = _parse_html_tables(html)
+        if tables:
+            table_parts = [_table_to_latex(t) for t in tables]
+            tables_str = "\n\n".join(table_parts)
+        else:
+            tables_str = "\\emph{No detail tables available.}"
+        return (
+            f"\\section*{{Result Details --- {method}}}{ts_str}\n\n"
+            f"{tables_str}"
         )
 
 
@@ -802,6 +955,130 @@ class PlotBlock(ReportBlock):
             "</div>"
         )
 
+    def to_latex(self, figures_dir=None, fig_index: int = 1, **kwargs) -> str:
+        from pathlib import Path
+        title = self._payload.get("title", "Plot")
+        ts = self._payload.get("timestamp", "")
+        pdf_bytes: bytes = self._payload.get("pdf_bytes", b"")
+        image_bytes: bytes = self._payload.get("image_bytes", b"")
+        stem = f"plot_{fig_index:02d}_{self._safe_filename(title)}"
+        escaped_title = _tex_escape(title)
+        ts_comment = f"  % {ts}\n" if ts else ""
+
+        if figures_dir is None:
+            return f"% Plot '{title}' — run export via 'Export as LaTeX' to save figures"
+
+        figures_dir = Path(figures_dir)
+        if pdf_bytes:
+            fig_file = f"{stem}.pdf"
+            (figures_dir / fig_file).write_bytes(pdf_bytes)
+        elif image_bytes:
+            # Fallback: no pdf_bytes (payload from before this feature)
+            fig_file = f"{stem}.png"
+            (figures_dir / fig_file).write_bytes(image_bytes)
+        else:
+            return f"% Plot '{title}' — no image data available"
+
+        return (
+            "\\begin{figure}[htbp]\n"
+            "  \\centering\n"
+            f"{ts_comment}"
+            f"  \\includegraphics[width=\\linewidth]{{figures/{fig_file}}}\n"
+            f"  \\caption{{{escaped_title}}}\n"
+            f"  \\label{{fig:{stem}}}\n"
+            "\\end{figure}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Provenance block
+# ---------------------------------------------------------------------------
+
+class ProvenanceBlock(ReportBlock):
+    """
+    Block embedding a JADE-DLS provenance record (JSON) into the report.
+
+    The ``record_id`` links this report to the provenance JSON file exported
+    alongside it.  The full JSON is included in TXT/Markdown exports; a
+    compact header is shown in the GUI and PDF.
+    """
+
+    def __init__(self, payload: dict, pipeline=None):
+        self._record_id = payload.get("record_id", "")
+        self._json_str = payload.get("json_str", "{}")
+        self._timestamp = payload.get("timestamp", "")
+        short_id = self._record_id[:8] + "…" if len(self._record_id) > 8 else self._record_id
+        super().__init__(f"Provenance Record  [{short_id}]")
+
+    def _fill_content(self, layout: QVBoxLayout):
+        from PyQt5.QtCore import Qt as _Qt
+
+        id_label = QLabel(f"<b>Record ID:</b> <code>{self._record_id}</code>")
+        id_label.setTextInteractionFlags(_Qt.TextSelectableByMouse)
+        id_label.setTextFormat(_Qt.RichText)
+        layout.addWidget(id_label)
+
+        if self._timestamp:
+            ts_label = QLabel(f"<i>Created: {self._timestamp}</i>")
+            ts_label.setTextFormat(_Qt.RichText)
+            layout.addWidget(ts_label)
+
+        note = QLabel(
+            "Full provenance JSON is included in TXT and Markdown exports. "
+            "Export the provenance JSON separately via the Provenance tab."
+        )
+        note.setWordWrap(True)
+        note.setStyleSheet("color: gray; font-size: 8pt;")
+        layout.addWidget(note)
+
+        # Compact JSON preview (first 20 lines)
+        preview = QTextEdit()
+        preview.setReadOnly(True)
+        preview.setFont(QFont("Courier New", 8))
+        preview.setMaximumHeight(160)
+        lines = self._json_str.split("\n")
+        preview_text = "\n".join(lines[:20])
+        if len(lines) > 20:
+            preview_text += f"\n... ({len(lines) - 20} more lines)"
+        preview.setPlainText(preview_text)
+        layout.addWidget(preview)
+
+    def to_text(self, **kwargs) -> str:
+        sep = "=" * 60
+        return (
+            f"{sep}\nPROVENANCE RECORD\n{sep}\n"
+            f"Record ID : {self._record_id}\n"
+            f"Created   : {self._timestamp}\n\n"
+            f"{self._json_str}\n{sep}"
+        )
+
+    def to_markdown(self, **kwargs) -> str:
+        return (
+            f"## Provenance Record\n\n"
+            f"**Record ID:** `{self._record_id}`  \n"
+            f"*Created: {self._timestamp}*\n\n"
+            f"```json\n{self._json_str}\n```"
+        )
+
+    def to_html(self, **kwargs) -> str:
+        import html as _html
+        escaped = _html.escape(self._json_str)
+        return (
+            "<div style='page-break-inside:avoid;'>"
+            "<h3>Provenance Record</h3>"
+            f"<p><b>Record ID:</b> <code>{self._record_id}</code></p>"
+            f"<p><i>Created: {self._timestamp}</i></p>"
+            "<pre style='font-family: monospace; font-size: 8pt; "
+            "background: #f5f5f5; padding: 8px; overflow-x: auto; "
+            "white-space: pre-wrap; word-break: break-all;'>"
+            f"{escaped}</pre>"
+            "</div>"
+        )
+
+    def to_latex(self, **kwargs) -> str:
+        short_id = self._record_id[:8] if self._record_id else "unknown"
+        return f"% Provenance record omitted from TeX export --- see provenance_{short_id}.json"
+
 
 # ---------------------------------------------------------------------------
 # Factory
@@ -813,6 +1090,7 @@ _BLOCK_REGISTRY = {
     "result_summary": ResultSummaryBlock,
     "result_detail": ResultDetailBlock,
     "plot": PlotBlock,
+    "provenance": ProvenanceBlock,
 }
 
 
@@ -844,6 +1122,7 @@ class ReportPanel(QWidget):
     def __init__(self, pipeline=None, parent=None):
         super().__init__(parent)
         self._pipeline = pipeline
+        self._provenance_panel = None   # set by InspectorPanel after construction
         self._blocks: list = []
         self._init_ui()
 
@@ -867,6 +1146,10 @@ class ReportPanel(QWidget):
         )
         add_menu.addAction("Preprocessing Steps").triggered.connect(
             lambda: self.add_block_from_payload({"block_type": "preprocessing"})
+        )
+        add_menu.addSeparator()
+        add_menu.addAction("Provenance Record").triggered.connect(
+            self._add_provenance_block
         )
         add_btn.setMenu(add_menu)
         toolbar.addWidget(add_btn)
@@ -962,6 +1245,29 @@ class ReportPanel(QWidget):
         if reply == QMessageBox.Yes:
             for block in list(self._blocks):
                 self.remove_block(block)
+
+    def set_provenance_panel(self, panel) -> None:
+        """Store a reference to the ProvenancePanel so we can snapshot it."""
+        self._provenance_panel = panel
+
+    def _add_provenance_block(self) -> None:
+        """Add the current provenance record as a report block."""
+        if self._provenance_panel is None:
+            QMessageBox.information(
+                self,
+                "Provenance",
+                "No provenance data available yet. Load data and run an analysis first.",
+            )
+            return
+        from datetime import datetime as _dt
+        record = self._provenance_panel.get_record()
+        payload = {
+            "block_type": "provenance",
+            "record_id": record.record_id,
+            "json_str": record.to_json(),
+            "timestamp": record.created,
+        }
+        self.add_block_from_payload(payload)
 
     # ------------------------------------------------------------------
     # Export helpers
@@ -1109,5 +1415,72 @@ class ReportPanel(QWidget):
             doc.print_(printer)
 
             QMessageBox.information(self, "Export", f"PDF saved to:\n{filepath}")
+        except Exception as exc:
+            QMessageBox.critical(self, "Export Error", str(exc))
+
+    # ------------------------------------------------------------------
+    # Export: LaTeX
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _tex_preamble() -> str:
+        return (
+            "\\documentclass[a4paper, 11pt]{scrartcl}\n"
+            "\\usepackage[T1]{fontenc}\n"
+            "\\usepackage[utf8]{inputenc}\n"
+            "\\usepackage[english]{babel}\n"
+            "\\usepackage[a4paper, margin=25mm]{geometry}\n"
+            "\\usepackage{microtype}\n"
+            "\\usepackage{graphicx}\n"
+            "\\usepackage{tabularray}\n"
+            "\\usepackage{booktabs}\n"
+            "\\usepackage{siunitx}\n"
+            "\\usepackage[hidelinks]{hyperref}\n"
+            "\n"
+            "\\title{DLS Analysis Report}\n"
+            "\\author{}\n"
+            "\\date{\\today}\n"
+        )
+
+    def _collect_latex(self, figures_dir=None) -> str:
+        """Collect LaTeX output from all blocks. PlotBlocks receive figures_dir."""
+        parts = []
+        fig_index = 1
+        for block in self._blocks:
+            if isinstance(block, PlotBlock):
+                parts.append(block.to_latex(figures_dir=figures_dir,
+                                             fig_index=fig_index))
+                fig_index += 1
+            else:
+                parts.append(block.to_latex())
+        return "\n\n".join(parts)
+
+    def _export_tex(self):
+        if not self._blocks:
+            QMessageBox.information(self, "Export", "No blocks in report.")
+            return
+        filepath, _ = QFileDialog.getSaveFileName(
+            self, "Export Report as LaTeX", "report.tex", "TeX files (*.tex)"
+        )
+        if not filepath:
+            return
+        try:
+            from pathlib import Path
+            base = Path(filepath)
+            tex_dir = base.parent / (base.stem + "_tex")
+            figures_dir = tex_dir / "figures"
+            figures_dir.mkdir(parents=True, exist_ok=True)
+
+            body = self._collect_latex(figures_dir)
+            content = (
+                self._tex_preamble()
+                + "\n\\begin{document}\n"
+                + "\\maketitle\n\n"
+                + body
+                + "\n\n\\end{document}\n"
+            )
+            (tex_dir / "report.tex").write_text(content, encoding="utf-8")
+            QMessageBox.information(self, "Export",
+                                    f"LaTeX package saved to:\n{tex_dir}")
         except Exception as exc:
             QMessageBox.critical(self, "Export Error", str(exc))

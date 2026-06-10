@@ -43,8 +43,9 @@ import matplotlib.pyplot as plt
 import scipy.stats as stats
 
 #physical parameter bounds used when method='trf' or 'dogbox'
-#c = μ₂ (variance) and e = μ₄ (4th moment) are mathematically non-negative;
-#d = μ₃ (3rd moment) is unconstrained in sign (left/right skew both valid)
+#c = μ₂ (2nd cumulant / variance) is non-negative;
+#e = κ₄ (4th cumulant, excess kurtosis numerator) is non-negative for unimodal distributions;
+#d = μ₃ (3rd cumulant) is unconstrained in sign (left/right skew both valid)
 _BOUNDS_LOWER = {'a':  0.0, 'b':  0.0, 'c':  0.0, 'd': -np.inf, 'e':  0.0, 'f': -0.1}
 _BOUNDS_UPPER = {'a':  1.0, 'b':  1e6, 'c':  np.inf, 'd': np.inf, 'e': np.inf, 'f':  0.1}
 
@@ -102,7 +103,7 @@ def estimate_parameters_from_data(x_data, y_data, base_parameters):
 
         c_estimate = 0.05 * decay_rate_estimate**2   # PDI ≈ 0.05 starting point
         d_estimate = 0.01 * decay_rate_estimate**3   # small positive asymmetry prior
-        e_estimate = 3    * c_estimate**2             # Gaussian-distribution assumption
+        e_estimate = 0.5 * c_estimate**2             # κ₄ prior: moderate polydispersity (excess kurtosis ≈ 0.5)
 
         #apply physical bounds as a safety net
         decay_rate_estimate = np.clip(decay_rate_estimate, 1,    1e6)
@@ -184,11 +185,13 @@ def plot_processed_correlations_iterative(dataframes_dict, fit_function2, fit_x_
     for name, df in dataframes_dict.items():
         fit_result = {'filename': name}
         try:
-            x_data = df['t [s]']
-            y_data = df['g(2)-1']
+            # Use numpy arrays throughout to avoid pandas ufunc overhead/overflow warnings
+            x_data = np.asarray(df['t [s]'], dtype=float)
+            y_data = np.asarray(df['g(2)-1'], dtype=float)
 
-            x_fit = x_data[(x_data >= fit_x_limits[0]) & (x_data <= fit_x_limits[1])]
-            y_fit = y_data[(x_data >= fit_x_limits[0]) & (x_data <= fit_x_limits[1])]
+            mask_fit = (x_data >= fit_x_limits[0]) & (x_data <= fit_x_limits[1])
+            x_fit = x_data[mask_fit]
+            y_fit = y_data[mask_fit]
 
             if len(x_fit) < 2:
                 print(f"Not enough data points in the specified range for fitting {name}. Skipping.")
@@ -297,7 +300,7 @@ def plot_processed_correlations_iterative(dataframes_dict, fit_function2, fit_x_
 
                 #warn if user's b deviates from data estimate by more than 1 decade
                 try:
-                    _, b_pre, _ = _simple_exp_prefit(x_fit.to_numpy(), y_fit.to_numpy())
+                    _, b_pre, _ = _simple_exp_prefit(x_fit, y_fit)
                     b_user = current_guess[1]
                     if b_pre > 0 and b_user > 0 and abs(np.log10(b_user) - np.log10(b_pre)) > 1.0:
                         print(f"[INFO] '{name}': provided b={b_user:.2e} deviates from "
