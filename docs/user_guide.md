@@ -1,241 +1,167 @@
-# JADE-DLS GUI
+# User Guide
 
-**J**upyter-based **A**ngular **D**ependent **E**valuator for **D**ynamic **L**ight **S**cattering - GUI Edition
+## Overview
 
-A transparent, user-friendly graphical interface for Dynamic Light Scattering (DLS) data analysis.
-
-## Features
-
-### ✨ Core Capabilities
-
-- **Multi-Method Analysis**: Cumulant (A/B/C), NNLS, and Regularized inverse Laplace fitting
-- **Interactive Visualization**: Real-time plotting of correlation data, fits, and results
-- **Transparent Pipeline**: See exactly what code is being executed
-- **Reproducible Research**: Export analysis as Jupyter notebooks or Python scripts
-- **Parameter Tracking**: Full history of all analysis parameters
-
-### 🔍 Transparency Features
-
-Unlike "black box" software, JADE-DLS GUI shows you:
-- **Generated Code**: View the exact Python code for every analysis step
-- **Parameter Inspector**: See all parameters and their values
-- **Built-in Documentation**: Understand what each method does
-- **Export Workflow**: Generate reproducible Jupyter notebooks or scripts
-
-## Installation
-
-### Prerequisites
-
-- Python 3.7 or higher
-- Existing JADE-DLS analysis modules (cumulants.py, preprocessing.py, etc.)
-
-### Install Dependencies
-
-```bash
-pip install -r requirements_gui.txt
-```
-
-Or install individually:
-
-```bash
-pip install PyQt5 numpy pandas scipy matplotlib nbformat
-```
-
-## Usage
-
-### Quick Start
-
-1. **Launch the GUI:**
-
-```bash
-python jade_dls_gui.py
-```
-
-2. **Load Data:**
-   - Click `File > Load Data...` or use `Ctrl+O`
-   - Select folder containing `.asc` files from ALV correlator
-
-3. **Run Analysis:**
-   - Select analysis method from the workflow panel
-   - Click "▶ Run Selected" or "▶ Run All"
-   - View results in the central panel
-
-4. **Export Results:**
-   - `File > Export as Jupyter Notebook...` (Ctrl+J)
-   - `File > Export as Python Script...` (Ctrl+P)
-
-### Workflow Panel (Left)
-
-The workflow panel shows available analysis steps:
-
-- 📂 **Load Data** - Load .asc data files
-- 🔍 **Preprocess** - Extract and filter data
-- 📊 **Cumulant A** - ALV software cumulant data
-- 📈 **Cumulant B** - Linear cumulant fit
-- 📉 **Cumulant C** - Iterative non-linear fit
-- 🔬 **NNLS** - Inverse Laplace NNLS
-- ⚙️ **Regularized** - Tikhonov-Phillips regularization
-- 📋 **Compare** - Compare all methods
-
-### Analysis View (Center)
-
-Tabbed interface showing:
-
-- **Data Overview** - Loaded files and statistics
-- **Plots** - Interactive visualization
-- **Results** - Analysis results table
-- **Comparison** - Side-by-side method comparison
-
-### Inspector Panel (Right)
-
-Transparency features:
-
-- **💻 Code** - Auto-generated Python code
-- **⚙️ Parameters** - All analysis parameters
-- **📖 Docs** - Method documentation
-
-## Analysis Methods
-
-### Cumulant Analysis
-
-**Method A:** Uses pre-calculated cumulant fits from ALV software
-- Fast, reliable for monodisperse samples
-- Provides 1st, 2nd, and 3rd order fits
-
-**Method B:** Linear fit of ln[g(τ)^0.5] vs τ
-- Simple, transparent approach
-- Best for quick analysis
-
-**Method C:** Iterative non-linear least squares
-- Most accurate for monodisperse samples
-- Adaptive parameter estimation
-
-### Inverse Laplace Methods
-
-**NNLS:** Non-Negative Least Squares
-- Provides size distributions
-- Good starting point for polydisperse samples
-
-**Regularized:** NNLS with Tikhonov-Phillips regularization
-- Smooth, stable distributions
-- Tunable regularization parameter (α)
-
-## Export Options
-
-### Jupyter Notebook (.ipynb)
-
-Exports include:
-- Markdown documentation of each step
-- Executable code cells
-- Parameter documentation
-- Ready to run or modify
-
-### Python Script (.py)
-
-Standalone script with:
-- All imports
-- Step-by-step code
-- Comments explaining each step
-
-### PDF Report (Coming Soon)
-
-Complete analysis report with:
-- Plots and visualizations
-- Results tables
-- Parameter summary
-
-## Transparency Philosophy
-
-JADE-DLS GUI is designed to prevent "black box" analysis:
-
-1. **Code Visibility**: Every action generates visible Python code
-2. **Parameter Tracking**: All parameters are logged and displayed
-3. **Export Capability**: Export to reproducible notebooks/scripts
-4. **Documentation**: Built-in explanations of methods and equations
-5. **Open Source**: All code is visible and modifiable
-
-## Project Structure
-
-```
-JADE-DLS/
-├── jade_dls_gui.py           # Main application launcher
-├── gui/
-│   ├── main_window.py        # Main GUI window
-│   ├── core/
-│   │   └── pipeline.py       # Transparent pipeline system
-│   ├── widgets/
-│   │   ├── workflow_panel.py # Left panel (workflow steps)
-│   │   ├── analysis_view.py  # Center panel (plots, results)
-│   │   └── inspector_panel.py # Right panel (code, params)
-│   └── dialogs/              # Dialog windows
-├── preprocessing.py          # Data loading (existing)
-├── cumulants.py             # Cumulant analysis (existing)
-├── cumulants_C.py           # Iterative cumulant (existing)
-├── regularized.py           # NNLS & regularized (existing)
-└── intensity.py             # Intensity processing (existing)
-```
-
-## Tips
-
-- **Check R² values**: Good fits should have R² > 0.99
-- **Inspect residuals**: Look for normal distribution
-- **Compare methods**: Use the comparison tab to validate results
-- **Export your work**: Always export notebooks for documentation
-- **Use alpha analyzer**: Find optimal regularization for your data
-
-## Troubleshooting
-
-### GUI won't start
-
-```bash
-# Check PyQt5 installation
-python -c "import PyQt5; print(PyQt5.__version__)"
-
-# Reinstall if needed
-pip install --upgrade PyQt5
-```
-
-### Import errors
-
-Ensure you're running from the JADE-DLS directory:
-
-```bash
-cd /path/to/JADE-DLS
-python jade_dls_gui.py
-```
-
-### Plots not showing
-
-Install matplotlib for Qt5:
-
-```bash
-pip install matplotlib PyQt5
-```
-
-## Future Enhancements
-
-- [ ] Batch processing multiple experiments
-- [ ] Custom fit function editor
-- [ ] Advanced plotting options
-- [ ] Database integration for data management
-- [ ] PDF report generation with plots
-- [ ] Interactive tutorial system
-- [ ] Cloud data storage integration
-
-## Contributing
-
-This is a transparent, scientific tool. Contributions welcome!
-
-## License
-
-See main JADE-DLS README for license information.
-
-## Credits
-
-Based on the original JADE-DLS Jupyter notebook analysis framework.
-
-GUI Development: 2025
+ADE-DLS provides a PyQt5 GUI for analyzing Dynamic Light Scattering (DLS) data from multi-angle ALV correlators. The interface is organized into three panels and follows a linear workflow: load → preprocess → analyze → export.
 
 ---
 
-**Philosophy:** Science should be transparent, reproducible, and accessible.
+## The Three-Panel Layout
+
+### Left: Workflow Panel
+
+Contains categorized buttons for each processing step. Steps are ordered top to bottom. Click a step to select it, then click **Run** to execute. Steps that require a prerequisite (e.g., analysis before export) are disabled until that prerequisite is met.
+
+Categories:
+- **Load** — data loading and instrument file selection
+- **Preprocess** — filtering dialogs for count rates and correlation functions
+- **Analysis** — all fitting methods (Cumulant B/C/D, NNLS, Regularized)
+- **Export** — CSV, Excel, Jupyter, Python script
+
+### Center: Analysis View
+
+A `QTabWidget` with four tabs:
+
+| Tab | Content |
+|-----|---------|
+| **Data Overview** | Table of loaded files: path, angle, count rate, intercept, measurement duration |
+| **Plots** | Per-dataset diagnostic plots (correlation function, fit, residuals, Q-Q, τ distribution) |
+| **Results** | Results table; click a row to expand the full fit report |
+| **Comparison** | Side-by-side comparison of all methods for each dataset |
+
+### Right: Inspector Panel
+
+A `QTabWidget` with four tabs:
+
+| Tab | Content |
+|-----|---------|
+| **Report** | Modular report builder — add summary blocks, detail blocks, and plots from any result; export as TXT, Markdown, or PDF |
+| **Code** | Auto-generated Python code for the current pipeline state; copy or export |
+| **Parameters** | All active parameters (wavelength, temperature, viscosity, refractive index, fit ranges, regularization, clustering settings) |
+| **Provenance** | W3C PROV-compliant provenance record for the current session |
+
+---
+
+## Loading Data
+
+**File > Load Data** opens the load dialog. Select the folder with `.ASC` files. The dialog detects instrument format (ALV or LS Instruments) automatically.
+
+Required physical parameters:
+- **Wavelength** (nm) — laser wavelength, e.g. 632.8 nm for He-Ne
+- **Temperature** (K) — sample temperature, e.g. 298.15 K
+- **Viscosity** (cP) — solvent dynamic viscosity
+- **Refractive index** — solvent refractive index (used to compute q²)
+
+After loading, two sequential filtering dialogs open:
+
+1. **Count Rate Filtering** — inspect detector count rates over time; exclude files with instabilities
+2. **Correlation Filtering** — inspect g₂(τ) curves; exclude curves with artifacts
+
+Both dialogs offer checkboxes per file and a preview plot. Excluded files are marked but kept in memory; they can be re-included by re-running the filtering step.
+
+---
+
+## Preprocessing
+
+After filtering, **Preprocess** extracts g₁(τ) from the raw g₂(τ) via the Siegert relation:
+
+```
+g₁(τ) = sqrt((g₂(τ) − 1) / β)
+```
+
+where β is the intercept (coherence factor). Baseline correction and noise floor subtraction are applied if enabled in Parameters.
+
+---
+
+## Analysis Methods
+
+See [analysis_methods.md](analysis_methods.md) for mathematical details.
+
+### Cumulant B
+
+Linear fit of ln[g₁(τ)] vs. τ over a user-defined lag-time range. Returns Γ (decay rate), D, and Rh. Simple and fast, suitable as a sanity check.
+
+### Cumulant C
+
+Iterative non-linear least squares fit of g₁(τ) to a cumulant expansion (2nd, 3rd, or 4th order). Adaptive parameter bounds. Most accurate single-population method.
+
+### Cumulant D
+
+Multi-exponential fit decomposing g₁(τ) into two or more populations. Followed by Ward hierarchical clustering across angles to track populations consistently.
+
+### NNLS
+
+Non-negative least squares inverse Laplace transform. Produces a discrete relaxation time distribution τ→A(τ) on a logarithmic grid. No regularization; sparse solutions.
+
+### Regularized NNLS
+
+Tikhonov-Phillips regularization applied to the NNLS problem. The regularization parameter α controls smoothness vs. data fidelity. Use the **alpha analysis dialog** (accessible via the post-fit refinement button) to select α from an L-curve or GCV criterion.
+
+### Static Light Scattering (SLS)
+
+Available after running Regularized NNLS. Decomposes the total static intensity into per-population contributions using monitor-corrected count rates. Performs Guinier analysis (I₀, Rg, qRg_max, R²) per population and for the total.
+
+---
+
+## Post-Fit Refinement
+
+All methods expose a **post-fit refinement dialog** (button next to the result row, or via right-click). Refinement lets you:
+- Adjust the fit range (τ_min, τ_max)
+- Change the cumulant order (Method C)
+- Re-run clustering with different distance thresholds (Methods D, NNLS)
+- Change α and re-run regularization
+- Exclude individual angles from the result
+
+Refinement re-runs only the selected method on the stored preprocessed data — no reload required.
+
+---
+
+## Export
+
+### CSV
+
+**File > Export CSV** writes one `.csv` per method with all results. A separate clustering file is written for Methods D and NNLS.
+
+### Excel
+
+**File > Export Excel** writes an `.xlsx` with one sheet per method, plus a metadata sheet.
+
+### Jupyter Notebook
+
+**File > Export Jupyter Notebook** (`Ctrl+J`) generates a self-contained `.ipynb` that reproduces the entire analysis from raw data. All parameters are embedded as code cells.
+
+### Python Script
+
+**File > Export Python Script** (`Ctrl+P`) generates a standalone `.py` equivalent of the notebook.
+
+### Report Panel
+
+The **Report** tab (right panel) lets you compose a custom document:
+1. Click **Add Summary** or **Add Detail** on any result row to insert a block
+2. Drag blocks to reorder
+3. Click **Export** to save as TXT, Markdown, or PDF (portrait or landscape)
+
+---
+
+## Provenance
+
+ADE-DLS records a W3C PROV-compliant provenance graph for the current session. Each loading, filtering, preprocessing, and analysis step is recorded as an `Activity` with input `Entity` (raw data) and output `Entity` (result), linked by `wasDerivedFrom` and `wasGeneratedBy` relations.
+
+The **Provenance** tab (right panel) shows the current graph. It can be exported as JSON-LD.
+
+---
+
+## Transparency Features
+
+- **Code tab**: Every action in the GUI corresponds to a Python code snippet shown in real time. The code is self-contained and can be pasted into a script.
+- **Parameters tab**: All active parameter values are listed with their current settings and any per-step overrides.
+- **Jupyter export**: The exported notebook is executable without the GUI.
+
+---
+
+## Tips
+
+- **Multi-angle data**: ADE-DLS treats each `.ASC` file as one angle. For a series at different angles, load the entire folder — the software groups files by sample automatically.
+- **R² check**: Cumulant fits with R² < 0.99 usually indicate a poor fit range or a contaminated sample. Narrow the fit range in the post-fit dialog.
+- **PDI > 0.2**: High PDI with Cumulant C suggests polydispersity. Switch to Regularized NNLS for a size distribution.
+- **Regularization α**: Start with the GCV suggestion, then check the L-curve. Over-regularized solutions (too large α) are too smooth; under-regularized solutions are noisy and unstable.

@@ -1,110 +1,79 @@
-# JADE-DLS Installation Guide
+# Installation
 
 ## Requirements
 
-- Python 3.8 or higher
-- pip package manager
+- Python 3.8 or later
+- Core dependencies (installed automatically): NumPy ≥ 1.22, SciPy ≥ 1.8, Pandas ≥ 1.5, Matplotlib ≥ 3.5, scikit-learn ≥ 1.0, statsmodels ≥ 0.13, joblib ≥ 1.2
+- GUI dependencies (optional): PyQt5 ≥ 5.15, nbformat ≥ 5.1, jupyter, ipywidgets
 
-## Installation Steps
+## Installing from Source
 
-### 1. Install Python Dependencies
-
-Open a terminal/command prompt in the JADE-DLS directory and run:
-
-```bash
-pip install -r requirements.txt
-```
-
-This will install all required packages:
-- numpy: Numerical computing
-- scipy: Scientific computing
-- pandas: Data manipulation
-- matplotlib: Plotting
-- statsmodels: Statistical analysis
-- PyQt5: GUI framework
-- scikit-learn: Machine learning (for peak clustering and robust regression)
-- joblib: Parallel processing
-- openpyxl: Excel file support
-
-### 2. Verify Installation
-
-Test that all packages are installed correctly:
+Clone the repository and install in editable mode:
 
 ```bash
-python -c "import numpy, scipy, pandas, matplotlib, statsmodels, PyQt5, sklearn, joblib, openpyxl; print('All packages installed successfully!')"
+git clone https://github.com/traianuschem/JADE-DLS.git
+cd JADE-DLS
 ```
 
-### 3. Run JADE-DLS
+### Core library only (no GUI)
 
 ```bash
-python main.py
+pip install -e .
 ```
+
+### With GUI support
+
+```bash
+pip install -e .[gui]
+```
+
+### Full installation (GUI + Excel/CSV export)
+
+```bash
+pip install -e .[all]
+```
+
+### Development setup
+
+```bash
+pip install -e .[all,dev]
+```
+
+This additionally installs pytest, black, isort, flake8, mypy, and pre-commit hooks.
+
+## Verifying the Installation
+
+```bash
+python -c "import ade_dls; print(ade_dls.__version__)"
+```
+
+Launch the GUI:
+
+```bash
+ade-dls
+```
+
+## Platform Notes
+
+### Windows
+
+The `ade-dls` command is available after installation via the Scripts folder in your Python environment. If the command is not found, ensure your Python Scripts directory is on `PATH`, or run:
+
+```bash
+python -m ade_dls.gui.main_window
+```
+
+### Linux / macOS
+
+Same as above. If you use a virtual environment, activate it before running `ade-dls`.
 
 ## Troubleshooting
 
-### "No module named 'sklearn'" Error
+**`ModuleNotFoundError: No module named 'PyQt5'`**
+Install the GUI extras: `pip install -e .[gui]`
 
-This means scikit-learn is not installed. Install it with:
+**`ade-dls` command not found**
+Run `python -m ade_dls.gui.main_window` as a fallback, or check that your Python Scripts/bin directory is on `PATH`.
 
-```bash
-pip install scikit-learn
-```
-
-### "joblib not available" Warning
-
-This means joblib is not installed, which will disable multiprocessing. Install it with:
-
-```bash
-pip install joblib
-```
-
-### Multiprocessing Not Working on Windows
-
-If you see "falling back to sequential processing" on Windows:
-
-1. Make sure joblib is installed: `pip install joblib`
-2. Check the console output for the specific error message
-3. Try reinstalling the dependencies: `pip install --upgrade --force-reinstall -r requirements.txt`
-
-### PyQt5 Issues
-
-If you have problems with PyQt5:
-
-```bash
-pip install --upgrade PyQt5
-```
-
-On Linux, you might need system packages:
-```bash
-sudo apt-get install python3-pyqt5
-```
-
-### Slow Performance
-
-For best performance with large datasets:
-
-1. Ensure joblib is installed for multiprocessing
-2. Ensure scikit-learn is installed for optimized algorithms
-3. Use an SSD for data storage
-4. Close other applications to free up RAM
-
-## Optional Dependencies
-
-For better Excel export performance:
-
-```bash
-pip install xlsxwriter
-```
-
-## Development Setup
-
-For development, you may also want:
-
-```bash
-pip install pytest  # For running tests
-pip install black   # For code formatting
-```
-
-## Contact
-
-For issues and bug reports, please contact the JADE-DLS development team.
+**Matplotlib plots not rendering in the GUI**
+Ensure PyQt5 is installed. Matplotlib selects the Qt5Agg backend automatically when PyQt5 is present.

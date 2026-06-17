@@ -5,6 +5,65 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.1] - 2026-06-16
+
+### Added
+
+- **W3C PROV-JSON serialisation** (`ade_dls/gui/core/provenance.py`): new method `to_prov_json()` on `ProvenanceRecord` produces a second, standards-compliant serialisation alongside the existing `to_json()` / `to_dict()` (which remain unchanged and continue to drive the GUI panel). The PROV-JSON output follows the [W3C PROV-JSON specification](https://www.w3.org/TR/prov-json/) and is compatible with the `prov` Python library and W3C PROV-Toolbox. Top-level keys: `prefix`, `entity`, `activity`, `agent`, `wasGeneratedBy`, `wasDerivedFrom`, `wasInformedBy`, `wasAssociatedWith`, plus a `jade:sessionMetadata` extension block. Companion method `export_prov_json_to_file()` writes the file and registers it in the output catalog.
+- **"Export PROV-JSON" button** (`ade_dls/gui/widgets/provenance_panel.py`): second export button in the provenance panel toolbar opens a save-file dialog and calls `export_prov_json_to_file()`.
+
+### Fixed
+
+- **PROV-DM relation correction in `add_output`** (`ade_dls/gui/core/provenance.py`): the output catalog entry previously stored `wasDerivedFrom` pointing at activity IDs, which violates the W3C PROV-DM specification (`wasDerivedFrom` is an Entity→Entity relation). The entry now correctly carries:
+  - `wasGeneratedBy`: ID of the last activity (the one that triggered the export) — Entity←Activity.
+  - `wasDerivedFrom`: IDs of the SHA-256 input entities — Entity→Entity.
+
+---
+
+## [3.2.0] - 2026-06-12
+
+### Added
+
+- **CSV plot-data export** (`ade_dls/gui/export/csv_export.py`): export the raw data behind plots as CSV tables so users can assemble their own comparison tables across measurement series. International CSV format (comma separator, dot decimal); each export writes one CSV per table into a user-chosen folder. Three plot types are supported:
+  - **Diffusion coefficient (Γ vs q²)** — three tables: `diffusion_datapoints.csv` (q², Γ and D = Γ/q²·1e-15 per cumulant order), `diffusion_fitcurve.csv` (densely sampled linear-fit line per order) and `diffusion_fit_parameters.csv` (slope, intercept, D, standard errors, R² and fitted q² range — enough to re-plot the line via a function tool). Exposed via the "📤 Diffusionsdaten als CSV" button in the analysis view (Cumulants Method A); reuses `cumulant_analyzer.method_a_data` / `method_a_regression_stats`.
+  - **Clustering (multimodal Method D)** — `clustering_populations.csv` (populations as columns, statistic fields as rows) and `clustering_points.csv` (per-point raw clustering data). Exposed via the "📤 Clusterdaten als CSV" button; reuses `method_d_clustered_df` / `method_d_cluster_info`.
+  - **Distributions (multimodal NNLS / Regularized)** — one intensity column per distribution, with presets chosen via a new `DistributionExportDialog`: *all*, *random X* (reproducible via seed) or *one averaged distribution per scattering angle* (mirrors `plot_distributions` average mode). Exposed via the "📤 Verteilungen als CSV" button in the NNLS and Regularized result dialogs.
+- **Provenance for exported CSVs**: every written CSV is registered in the FAIR provenance record (`output_type="plot_data_csv"`) so its SHA-256 hash is captured, via `register_outputs_in_provenance()` → `ProvenanceRecord.add_output()`.
+
+### Changed
+
+- The ScatterForge export buttons in the analysis view (Γ/D → ScatterForge) are replaced by the CSV plot-data export buttons; the ScatterForge integration is deferred in favour of the CSV intermediate step. The `scatterforge_bridge` module remains in the tree but is no longer wired into the GUI.
+
+---
+
+## [3.1.1] - 2026-06-12
+
+### Added
+
+- **Centralised cumulant store in the data loader** (`ade_dls/gui/core/data_loader.py`): the loader now extracts instrument-software cumulant fit results alongside basedata/correlations/countrates and exposes them as `all_data['cumulants']` (dict keyed by measurement label) plus `all_data['cumulant_mode']`. Cumulant Method A is no longer the only consumer that re-reads raw files — the parser is now the single source of truth for the cumulant format. A new `load_cumulants` flag (default `True`) mirrors the existing `load_correlations`/`load_countrates` switches; extraction is non-critical (failures are logged, not fatal).
+- **Parser cumulant contract** (`ade_dls/core/parsers/base_parser.py`): new `extract_cumulants()` method (default `None`) and `CUMULANT_MODE` class attribute (`"frequency"` or `"radius"`) declaring the column schema each instrument returns.
+  - `ALVParser` (`CUMULANT_MODE = "frequency"`): wraps the existing `ade_dls.analysis.cumulants.extract_cumulants` (Γ orders 1–3 + µ₂/µ₃), unchanged numerics.
+  - `LSInstrumentsParser` (`CUMULANT_MODE = "radius"`): reads the per-order hydrodynamic radius (value, CoV, std) from `Cumulants Results.csv`.
+- **Cumulant schema test** (`tests/test_parser_contract.py`): the parser contract test now verifies `extract_cumulants()` returns the columns declared by `CUMULANT_MODE` for both ALV and LS Instruments.
+
+### Fixed
+
+- **Cumulant Method A for LS Instruments** (`ade_dls/gui/analysis/cumulant_analyzer.py`): `run_method_a()` was hard-wired to ALV — it globbed `*.asc`/`*.ASC` in the data folder and called the ALV text parser, so LS Instruments folders (no `.asc` files) raised `ValueError: No cumulant data could be extracted from files!`. Method A now reads from the loader's `cumulants` store and branches on `cumulant_mode`:
+  - `"frequency"` (ALV): unchanged Γ-vs-q² OLS regression path.
+  - `"radius"` (LS Instruments): new `_method_a_radius()` aggregates the software-reported Rh per cumulant order across all measurements (mean ± standard error of the mean), back-calculates D via Stokes–Einstein, and uses the LS coefficient of variation (CoV²) as the polydispersity proxy. Produces the same results schema as the ALV path, so the GUI, report and export layers stay instrument-agnostic.
+- **Method A plot handling** (`ade_dls/gui/main_window.py`): the "Method A Summary" plot is now skipped when `None`, so the radius path (which produces no Γ-vs-q² plots) no longer pushes an empty figure into the results view.
+
+---
+
+## [3.1.0] - 2026-06-11
+
+### Fixed
+
+- **Single-channel correlation support** (`ade_dls/core/preprocessing.py`): `process_correlation_data()` now handles single-channel correlation DataFrames (e.g. from LS Instruments hardware, which exports one correlation column). Previously the function unconditionally averaged `correlation 1` and `correlation 2`, raising `KeyError: 'correlation 2'` for single-channel data and silently dropping all datasets (0 fits). Multi-channel behaviour (ALV: mean of channels 1 and 2) is unchanged.
+- **Filter/noise preview for single-channel data** (`ade_dls/gui/dialogs/filtering_dialogs.py`): `_get_raw_g2()` no longer returns `None, None` when `correlation 2` is absent. It now falls back to `correlation 1` directly, so the preview curve is displayed correctly for LS Instruments datasets.
+
+---
+
 ## [3.0.0] - 2026-06-09
 
 ### Added

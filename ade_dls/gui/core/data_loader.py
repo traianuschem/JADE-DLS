@@ -4,18 +4,13 @@ Handles loading and processing of DLS data files
 """
 
 import os
-import glob
 import pandas as pd
 import numpy as np
 from PyQt5.QtCore import QObject, pyqtSignal, QThread
 
-# Import preprocessing functions
+# Ensure the package root is importable (parsers wrap the preprocessing layer).
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-
-from ade_dls.core.preprocessing import (extract_data, extract_correlation, extract_countrate,
-                          find_correlation_row, find_countrate_row,
-                          process_correlation_data)
 
 
 class DataLoadWorker(QThread):
@@ -34,11 +29,14 @@ class DataLoadWorker(QThread):
     finished = pyqtSignal(dict)  # all_data
     error = pyqtSignal(str)  # error_message
 
-    def __init__(self, data_folder, load_countrates=True, load_correlations=True):
+    def __init__(self, data_folder, parser, load_countrates=True, load_correlations=True,
+                 load_cumulants=True):
         super().__init__()
         self.data_folder = data_folder
+        self.parser = parser  # InstrumentParser instance (selected by format detection)
         self.load_countrates = load_countrates
         self.load_correlations = load_correlations
+        self.load_cumulants = load_cumulants
         self.is_cancelled = False
         self.errors = []  # Track all errors for reporting
 
@@ -46,41 +44,21 @@ class DataLoadWorker(QThread):
         """Run the data loading process"""
         try:
             print(f"[DATA LOADER] Starting data loading from: {self.data_folder}")
+            print(f"[DATA LOADER] Using parser: {self.parser.INSTRUMENT_NAME}")
             all_data = {}
             all_data['data_folder'] = self.data_folder
+            all_data['instrument'] = self.parser.INSTRUMENT_NAME
 
-            # Step 1: Find files (case-insensitive for Linux compatibility)
-            self.progress.emit(0, 5, "Searching for .asc/.ASC files...")
-            print(f"[DATA LOADER] Searching for .asc/.ASC files...")
-            datafiles = []
-            datafiles.extend(glob.glob(os.path.join(self.data_folder, "*.asc")))
-            datafiles.extend(glob.glob(os.path.join(self.data_folder, "*.ASC")))
+            # Step 1: Find measurement units via the parser plugin
+            self.progress.emit(0, 5, "Searching for data files...")
+            print(f"[DATA LOADER] Searching for data files...")
+            filtered_files = self.parser.get_file_list(self.data_folder)
 
-            # Remove duplicates (case-insensitive on Windows can cause duplicates)
-            # Use a set to track unique absolute paths
-            seen = set()
-            unique_files = []
-            for f in datafiles:
-                abs_path = os.path.abspath(f).lower()
-                if abs_path not in seen:
-                    seen.add(abs_path)
-                    unique_files.append(f)
-
-            if len(datafiles) != len(unique_files):
-                print(f"[DATA LOADER] Removed {len(datafiles) - len(unique_files)} duplicate file entries")
-            datafiles = unique_files
-
-            # Filter out averaged files
-            filtered_files = [f for f in datafiles
-                            if "averaged" not in os.path.basename(f).lower()]
-
-            print(f"[DATA LOADER] Found {len(datafiles)} total .asc files")
-            if len(datafiles) != len(filtered_files):
-                print(f"[DATA LOADER] Filtered out {len(datafiles) - len(filtered_files)} averaged files")
+            print(f"[DATA LOADER] Found {len(filtered_files)} measurement units")
 
             if not filtered_files:
-                print(f"[DATA LOADER ERROR] No .asc files found in {self.data_folder}")
-                self.error.emit(f"No .asc files found in {self.data_folder}")
+                print(f"[DATA LOADER ERROR] No data files found in {self.data_folder}")
+                self.error.emit(f"No data files found in {self.data_folder}")
                 return
 
             all_data['files'] = filtered_files
@@ -149,6 +127,22 @@ class DataLoadWorker(QThread):
             if self.is_cancelled:
                 return
 
+            # Step 4b: Extract instrument-software cumulant fit results (Method A).
+            # Non-critical: instruments without a cumulant export just yield {}.
+            all_data['cumulant_mode'] = self.parser.CUMULANT_MODE
+            if self.load_cumulants:
+                print(f"[DATA LOADER] Step 4b: Extracting cumulant results...")
+                all_cumulants = self._extract_cumulants(filtered_files)
+                print(f"[DATA LOADER] Extracted cumulant results from {len(all_cumulants)} files")
+                all_data['cumulants'] = all_cumulants
+                self.step_complete.emit("cumulants", all_cumulants)
+            else:
+                print(f"[DATA LOADER] Step 4b: Skipping cumulant extraction")
+                all_data['cumulants'] = {}
+
+            if self.is_cancelled:
+                return
+
             # Step 5: Calculate q and q^2
             print(f"[DATA LOADER] Step 5: Calculating scattering vectors...")
             self.progress.emit(5, 5, "Calculating scattering vectors...")
@@ -198,18 +192,16 @@ class DataLoadWorker(QThread):
                 self.progress.emit(2, 5, f"Extracting base data: {i+1}/{total} files")
 
             try:
-                # Extract data with timeout protection
-                extracted_data = extract_data(file)
+                # Extract data via the parser plugin (sets filename/folder itself)
+                extracted_data = self.parser.extract_basedata(file)
 
                 if extracted_data is not None and not extracted_data.empty:
-                    filename = os.path.basename(file)
-                    extracted_data['filename'] = filename
-                    extracted_data['folder'] = os.path.dirname(os.path.abspath(file))
+                    filename = self.parser.get_label(file)
                     all_data.append(extracted_data)
                     print(f"[DATA LOADER]   ✓ {filename}")
                 else:
                     # File couldn't be processed
-                    filename = os.path.basename(file)
+                    filename = self.parser.get_label(file)
                     error_msg = f"No data extracted (file may be corrupt or empty)"
                     self.errors.append({
                         'file': filename,
@@ -220,7 +212,7 @@ class DataLoadWorker(QThread):
                     print(f"[DATA LOADER]   ✗ {filename} - {error_msg}")
 
             except MemoryError:
-                filename = os.path.basename(file)
+                filename = self.parser.get_label(file)
                 error_msg = "Out of memory"
                 self.errors.append({
                     'file': filename,
@@ -234,7 +226,7 @@ class DataLoadWorker(QThread):
                 continue
 
             except Exception as e:
-                filename = os.path.basename(file)
+                filename = self.parser.get_label(file)
                 error_msg = f"{type(e).__name__}: {str(e)}"
                 self.errors.append({
                     'file': filename,
@@ -300,28 +292,19 @@ class DataLoadWorker(QThread):
             self.progress.emit(3, 5, f"Extracting count rates: {i+1}/{total} files")
 
             try:
-                extracted_countrate = extract_countrate(file)
+                extracted_countrate = self.parser.extract_countrates(file)
                 if extracted_countrate is not None:
-                    filename = os.path.basename(file)
-                    # Rename columns
-                    new_column_names = {
-                        0: 'time [s]',
-                        1: 'detectorslot 1',
-                        2: 'detectorslot 2',
-                        3: 'detectorslot 3',
-                        4: 'detectorslot 4'
-                    }
-                    extracted_countrate = extracted_countrate.rename(columns=new_column_names)
+                    filename = self.parser.get_label(file)
                     all_countrates[filename] = extracted_countrate
                 else:
                     # File couldn't be processed but not critical
                     error_msg = f"Could not extract countrate data"
-                    self.errors.append({'file': os.path.basename(file), 'step': 'countrates', 'error': error_msg})
-                    print(f"[DATA LOADER WARNING] {error_msg} for {os.path.basename(file)}")
+                    self.errors.append({'file': self.parser.get_label(file), 'step': 'countrates', 'error': error_msg})
+                    print(f"[DATA LOADER WARNING] {error_msg} for {self.parser.get_label(file)}")
             except Exception as e:
                 error_msg = f"Failed to extract countrate: {str(e)}"
-                self.errors.append({'file': os.path.basename(file), 'step': 'countrates', 'error': error_msg})
-                print(f"[DATA LOADER ERROR] Failed to extract countrate from {os.path.basename(file)}: {e}")
+                self.errors.append({'file': self.parser.get_label(file), 'step': 'countrates', 'error': error_msg})
+                print(f"[DATA LOADER ERROR] Failed to extract countrate from {self.parser.get_label(file)}: {e}")
                 import traceback
                 traceback.print_exc()
                 continue
@@ -340,33 +323,55 @@ class DataLoadWorker(QThread):
             self.progress.emit(4, 5, f"Extracting correlations: {i+1}/{total} files")
 
             try:
-                extracted_correlation = extract_correlation(file)
+                extracted_correlation = self.parser.extract_correlations(file)
                 if extracted_correlation is not None:
-                    filename = os.path.basename(file)
-                    # Rename columns
-                    new_column_names = {
-                        0: 'time [ms]',
-                        1: 'correlation 1',
-                        2: 'correlation 2',
-                        3: 'correlation 3',
-                        4: 'correlation 4'
-                    }
-                    extracted_correlation = extracted_correlation.rename(columns=new_column_names)
+                    filename = self.parser.get_label(file)
                     all_correlations[filename] = extracted_correlation
                 else:
                     # File couldn't be processed but not critical
                     error_msg = f"Could not extract correlation data"
-                    self.errors.append({'file': os.path.basename(file), 'step': 'correlations', 'error': error_msg})
-                    print(f"[DATA LOADER WARNING] {error_msg} for {os.path.basename(file)}")
+                    self.errors.append({'file': self.parser.get_label(file), 'step': 'correlations', 'error': error_msg})
+                    print(f"[DATA LOADER WARNING] {error_msg} for {self.parser.get_label(file)}")
             except Exception as e:
                 error_msg = f"Failed to extract correlation: {str(e)}"
-                self.errors.append({'file': os.path.basename(file), 'step': 'correlations', 'error': error_msg})
-                print(f"[DATA LOADER ERROR] Failed to extract correlation from {os.path.basename(file)}: {e}")
+                self.errors.append({'file': self.parser.get_label(file), 'step': 'correlations', 'error': error_msg})
+                print(f"[DATA LOADER ERROR] Failed to extract correlation from {self.parser.get_label(file)}: {e}")
                 import traceback
                 traceback.print_exc()
                 continue
 
         return all_correlations
+
+    def _extract_cumulants(self, files):
+        """Extract instrument-software cumulant fit results from all files.
+
+        Non-critical (like correlations/countrates): failures are logged in
+        self.errors and the file is skipped. Keyed by parser label so it lines
+        up with basedata['filename'] and the correlations/countrates dicts."""
+        all_cumulants = {}
+        total = len(files)
+
+        for i, file in enumerate(files):
+            if self.is_cancelled:
+                return all_cumulants
+
+            self.progress.emit(4, 5, f"Extracting cumulants: {i+1}/{total} files")
+
+            try:
+                extracted = self.parser.extract_cumulants(file)
+                if extracted is not None:
+                    all_cumulants[self.parser.get_label(file)] = extracted
+                else:
+                    error_msg = "Could not extract cumulant data"
+                    self.errors.append({'file': self.parser.get_label(file), 'step': 'cumulants', 'error': error_msg})
+                    print(f"[DATA LOADER WARNING] {error_msg} for {self.parser.get_label(file)}")
+            except Exception as e:
+                error_msg = f"Failed to extract cumulants: {str(e)}"
+                self.errors.append({'file': self.parser.get_label(file), 'step': 'cumulants', 'error': error_msg})
+                print(f"[DATA LOADER ERROR] Failed to extract cumulants from {self.parser.get_label(file)}: {e}")
+                continue
+
+        return all_cumulants
 
     def _calculate_q_vectors(self, df):
         """
@@ -442,17 +447,32 @@ class DataLoader(QObject):
         super().__init__()
         self.worker = None
 
-    def load_data(self, data_folder, load_countrates=True, load_correlations=True):
+    def load_data(self, data_folder, parser=None, load_countrates=True, load_correlations=True,
+                  load_cumulants=True):
         """
-        Load data from folder
+        Load data from folder.
 
         Args:
-            data_folder: Path to folder with .asc files
-            load_countrates: Whether to load count rate data
-            load_correlations: Whether to load correlation data
+            data_folder: Path to the data folder.
+            parser: Optional pre-selected InstrumentParser instance (from the
+                    load dialog). When None, format detection runs automatically.
+            load_countrates: Whether to load count rate data.
+            load_correlations: Whether to load correlation data.
+            load_cumulants: Whether to load instrument-software cumulant fits.
         """
+        if parser is None:
+            from ade_dls.core.parsers import detect_parser
+            parser = detect_parser(data_folder)
+            if parser is None:
+                self.error.emit(
+                    f"No known instrument format detected in:\n{data_folder}"
+                )
+                return
+        print(f"[DATA LOADER] Format: {parser.INSTRUMENT_NAME}")
+
         # Create worker thread
-        self.worker = DataLoadWorker(data_folder, load_countrates, load_correlations)
+        self.worker = DataLoadWorker(data_folder, parser, load_countrates, load_correlations,
+                                     load_cumulants)
 
         # Connect signals
         self.worker.progress.connect(self.progress.emit)

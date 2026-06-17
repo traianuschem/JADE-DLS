@@ -123,32 +123,19 @@ class CumulantAnalyzer:
 
         This is required for all cumulant methods
         """
-        from ade_dls.core.preprocessing import extract_data
-
         # Get list of files from correlations (these are the filtered ones)
         filtered_files = list(self.loaded_data['correlations'].keys())
 
-        # Create mapping from filename to full path (case-insensitive for Linux)
-        import glob
-        datafiles = []
-        datafiles.extend(glob.glob(os.path.join(self.data_folder, "*.asc")))
-        datafiles.extend(glob.glob(os.path.join(self.data_folder, "*.ASC")))
-        file_to_path = {os.path.basename(f): f for f in datafiles}
-
-        # Extract base data for filtered files only
-        all_data = []
-        for filename in filtered_files:
-            if filename in file_to_path:
-                file_path = file_to_path[filename]
-                extracted_data = extract_data(file_path)
-                if extracted_data is not None:
-                    extracted_data['filename'] = filename
-                    all_data.append(extracted_data)
-
-        if all_data:
-            self.df_basedata = pd.concat(all_data, ignore_index=True)
+        # Use pre-loaded basedata from the data loader (supports all instruments)
+        if 'basedata' in self.loaded_data and self.loaded_data['basedata'] is not None:
+            df_all = self.loaded_data['basedata']
+            mask = df_all['filename'].isin(filtered_files)
+            self.df_basedata = df_all[mask].copy().reset_index(drop=True)
             self.df_basedata.index = self.df_basedata.index + 1
         else:
+            raise ValueError("No basedata extracted!")
+
+        if self.df_basedata.empty:
             raise ValueError("No basedata extracted!")
 
         # Calculate q and q^2
@@ -221,14 +208,13 @@ class CumulantAnalyzer:
         Returns:
             DataFrame with results (Rh, errors, R^2, PDI)
         """
-        from ade_dls.analysis.cumulants import extract_cumulants
         from ade_dls.gui.analysis.cumulant_plotting import create_summary_plot
         import statsmodels.api as sm
         import matplotlib.pyplot as plt
         from scipy import stats as scipy_stats
 
         print("\n" + "="*60)
-        print("CUMULANT METHOD A - ALV SOFTWARE CUMULANT DATA")
+        print("CUMULANT METHOD A - INSTRUMENT SOFTWARE CUMULANT DATA")
         print("="*60)
         if q_range:
             print(f"q² range restriction: {q_range[0]:.4e} - {q_range[1]:.4e} nm⁻²")
@@ -238,33 +224,32 @@ class CumulantAnalyzer:
             print("[Step 1/4] Preparing basedata...")
             self.prepare_basedata()
 
-        # Get mapping from filename to full path (case-insensitive for Linux)
-        print("[Step 2/4] Extracting cumulant data from ALV files...")
-        import glob
-        datafiles = []
-        datafiles.extend(glob.glob(os.path.join(self.data_folder, "*.asc")))
-        datafiles.extend(glob.glob(os.path.join(self.data_folder, "*.ASC")))
-        file_to_path = {os.path.basename(f): f for f in datafiles}
+        # Read cumulant data from the central loader store (parser-provided),
+        # keyed by the same labels as the (filtered) correlations.
+        print("[Step 2/4] Reading cumulant results from loader...")
+        cmode = self.loaded_data.get('cumulant_mode', 'frequency')
+        cumulants_store = self.loaded_data.get('cumulants', {})
+        if not cumulants_store:
+            raise ValueError(
+                "No cumulant data available. Reload the data so the loader can "
+                "extract the instrument-software cumulant results."
+            )
 
-        # Extract cumulant data
-        all_cumulant_data = []
-        for filename in self.loaded_data['correlations'].keys():
-            if filename in file_to_path:
-                file_path = file_to_path[filename]
-                extracted_cumulants = extract_cumulants(file_path)
-                if extracted_cumulants is not None:
-                    extracted_cumulants['filename'] = filename
-                    all_cumulant_data.append(extracted_cumulants)
-
+        all_cumulant_data = [
+            cumulants_store[fn]
+            for fn in self.loaded_data['correlations'].keys()
+            if fn in cumulants_store
+        ]
         if not all_cumulant_data:
             raise ValueError("No cumulant data could be extracted from files!")
 
-        print(f"            Extracted cumulant data from {len(all_cumulant_data)} files")
+        print(f"            Read cumulant data from {len(all_cumulant_data)} files "
+              f"(mode: {cmode})")
 
         df_extracted_cumulants = pd.concat(all_cumulant_data, ignore_index=True)
         df_extracted_cumulants.index = df_extracted_cumulants.index + 1
 
-        # Merge with basedata
+        # Merge with basedata (q^2, angle, temperature, …)
         cumulant_method_A_data = pd.merge(
             self.df_basedata,
             df_extracted_cumulants,
@@ -276,6 +261,11 @@ class CumulantAnalyzer:
 
         # Store unfiltered data for post-fit refinement
         self.method_a_data = cumulant_method_A_data.copy()
+
+        # LS Instruments report Rh per order directly (no Γ): aggregate those
+        # instead of running the Γ-vs-q² regression.
+        if cmode == "radius":
+            return self._method_a_radius(cumulant_method_A_data, q_range)
 
         # Apply q-range filter if specified
         if q_range is not None:
@@ -463,6 +453,95 @@ class CumulantAnalyzer:
             'gamma_cols':         gamma_cols,
             'regression_results': results_list,
             'diffusion_data':     A_diff,
+        }
+
+        return self.method_a_results
+
+    def _method_a_radius(self, cumulant_data: pd.DataFrame, q_range=None) -> pd.DataFrame:
+        """Method A for instruments that report Rh per cumulant order directly
+        (e.g. LS Instruments). No Γ-vs-q² regression: aggregate the software's
+        per-order Rh across all measurements and back-calculate D.
+
+        Produces the same results schema as the frequency (ALV) path so the GUI,
+        report and export layers stay agnostic to the instrument.
+        """
+        # Apply the optional q² range filter (same semantics as the freq. path).
+        if q_range is not None and 'q^2' in cumulant_data.columns:
+            min_q, max_q = q_range
+            mask = (cumulant_data['q^2'] >= min_q) & (cumulant_data['q^2'] <= max_q)
+            cumulant_data = cumulant_data[mask].reset_index(drop=True)
+            cumulant_data.index = cumulant_data.index + 1
+            print(f"            Applied q² range filter: {min_q:.4e} - {max_q:.4e} nm⁻²")
+            print(f"            {len(cumulant_data)} data points remaining")
+
+        order_specs = [
+            ('1st', 'Rh from 1st order cumulant fit'),
+            ('2nd', 'Rh from 2nd order cumulant fit'),
+            ('3rd', 'Rh from 3rd order cumulant fit'),
+        ]
+
+        print("[Step 3/3] Aggregating LS Instruments Rh per order...")
+        result_rows = []
+        for label, fit_name in order_specs:
+            rh_col = f'{label} order Rh [nm]'
+            cov_col = f'{label} order Rh CoV'
+            if rh_col not in cumulant_data.columns:
+                continue
+
+            rh_vals = pd.to_numeric(cumulant_data[rh_col], errors='coerce').dropna()
+            if rh_vals.empty:
+                continue
+
+            rh_mean = float(rh_vals.mean())
+            # Standard error of the mean (sample std / sqrt(N)): the uncertainty
+            # of the aggregated mean Rh, not the spread across repetitions.
+            rh_err = (float(rh_vals.std(ddof=1)) / np.sqrt(len(rh_vals))
+                      if len(rh_vals) > 1 else 0.0)
+
+            # Stokes-Einstein (inverse of the freq. path: Rh[nm] = c/D · 1e9).
+            if rh_mean > 0:
+                D_val = self.c_value / (rh_mean * 1e-9)
+                D_err = D_val * (rh_err / rh_mean) if rh_mean else 0.0
+            else:
+                D_val, D_err = 0.0, 0.0
+
+            # LS reports a CoV of the size distribution, not µ₂/Γ²; use CoV² as
+            # the polydispersity proxy for orders 2/3 (1st order has none).
+            pdi = np.nan
+            if label != '1st' and cov_col in cumulant_data.columns:
+                cov_vals = pd.to_numeric(cumulant_data[cov_col], errors='coerce').dropna()
+                if not cov_vals.empty:
+                    pdi = float((cov_vals ** 2).mean())
+
+            print(f"            {label} order: Rh = {rh_mean:.2f} ± {rh_err:.2f} nm "
+                  f"(N = {len(rh_vals)}, D = {D_val:.4e} m²/s)")
+
+            result_rows.append({
+                'Fit':               fit_name,
+                'Rh [nm]':           rh_mean,
+                'Rh error [nm]':     rh_err,
+                'D [m^2/s]':         D_val,
+                'std err D [m^2/s]': D_err,
+                'R_squared':         np.nan,   # no regression in radius mode
+                'Residuals':         'n/a (LS Rh direct)',
+                'PDI':               pdi,
+                'Skewness':          np.nan,   # LS cumulant export has no µ₃
+            })
+
+        if not result_rows:
+            raise ValueError("No valid Rh values found in LS cumulant results!")
+
+        self.method_a_results = pd.DataFrame(result_rows)
+
+        # No regression / plots in radius mode — keep attributes present but empty
+        # so the GUI/report/export layers degrade gracefully.
+        self.method_a_summary_plot = None
+        self.method_a_order_plots = {}
+        self.method_a_regression_stats = {
+            'gamma_cols':         [],
+            'regression_results': [],
+            'diffusion_data':     None,
+            'mode':               'radius',
         }
 
         return self.method_a_results

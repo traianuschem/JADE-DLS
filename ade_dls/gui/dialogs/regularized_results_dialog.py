@@ -83,6 +83,18 @@ class RegularizedResultsDialog(QDialog):
         export_btn.clicked.connect(self.export_results)
         button_layout.addWidget(export_btn)
 
+        dist_csv_btn = QPushButton("📤 Export Distributions as CSV")
+        dist_csv_btn.setToolTip(
+            "Export distribution plots as CSV (all / random X / averaged per angle)")
+        dist_csv_btn.clicked.connect(self.export_distributions_csv)
+        button_layout.addWidget(dist_csv_btn)
+
+        cluster_csv_btn = QPushButton("📤 Export Clustering as CSV")
+        cluster_csv_btn.setToolTip(
+            "Export regularized NNLS peak clustering populations and raw data points as CSV tables")
+        cluster_csv_btn.clicked.connect(self.export_clustering_csv)
+        button_layout.addWidget(cluster_csv_btn)
+
         refine_btn = QPushButton("🔧 Refine Results")
         refine_btn.setToolTip("Remove outliers and recalculate")
         refine_btn.clicked.connect(self.refine_results)
@@ -671,6 +683,119 @@ class RegularizedResultsDialog(QDialog):
                                         f"SLS summary saved to:\n{filename}")
             except Exception as e:
                 QMessageBox.critical(self, "Export Error", str(e))
+
+    def export_distributions_csv(self):
+        """Export the regularized distribution plots as CSV tables with presets."""
+        import os
+        from ade_dls.gui.dialogs.distribution_export_dialog import DistributionExportDialog
+        from ade_dls.gui.export.csv_export import (
+            build_distribution_tables, write_tables, register_outputs_in_provenance,
+        )
+
+        full_results = getattr(self.laplace_analyzer, 'regularized_full_results', None)
+        if not full_results:
+            QMessageBox.warning(self, "No Data",
+                                "No distribution data available. Please run "
+                                "Regularized analysis first.")
+            return
+
+        preset_dialog = DistributionExportDialog(n_available=len(full_results), parent=self)
+        if not preset_dialog.exec_():
+            return
+        mode, n_random = preset_dialog.get_selection()
+
+        try:
+            tables = build_distribution_tables(
+                full_results,
+                df_basedata=getattr(self.laplace_analyzer, 'df_basedata', None),
+                mode=mode,
+                n_random=n_random,
+            )
+        except ValueError as exc:
+            QMessageBox.warning(self, "Export not possible", str(exc))
+            return
+
+        target_dir = QFileDialog.getExistingDirectory(
+            self, "Select destination folder for distribution CSV")
+        if not target_dir:
+            return
+        try:
+            written = write_tables(tables, target_dir, prefix="regularized_")
+            provenance_panel = self._find_provenance_panel()
+            from ade_dls.gui.export.csv_export import build_export_metadata, write_metadata
+            metadata = build_export_metadata(
+                "distributions_csv", written,
+                analyzer=self.laplace_analyzer,
+                provenance_panel=provenance_panel,
+            )
+            meta_path = write_metadata(metadata, target_dir, prefix="regularized_")
+            register_outputs_in_provenance(provenance_panel, written)
+            register_outputs_in_provenance(
+                provenance_panel, [meta_path], output_type="export_metadata",
+                extra_fields={"export_id": metadata["export_id"]})
+        except Exception as exc:
+            QMessageBox.critical(self, "Export failed", f"Error:\n{exc}")
+            return
+
+        names = "\n".join(os.path.basename(p) for p in written)
+        QMessageBox.information(
+            self, "Export successful",
+            f"{len(written)} CSV file(s) written to:\n{target_dir}\n\n{names}")
+
+    def export_clustering_csv(self):
+        """Export regularized NNLS peak clustering data as CSV tables."""
+        import os
+        from ade_dls.gui.export.csv_export import (
+            build_clustering_tables, write_tables, register_outputs_in_provenance,
+            build_export_metadata, write_metadata,
+        )
+        from PyQt5.QtWidgets import QFileDialog, QMessageBox
+
+        cluster_info = getattr(self.laplace_analyzer, 'regularized_cluster_info', None)
+        clustered_df = getattr(self.laplace_analyzer, 'regularized_data', None)
+        if cluster_info is None:
+            QMessageBox.warning(
+                self, "No Cluster Data",
+                "No regularized clustering data available. Please run Regularized "
+                "analysis with clustering enabled first.")
+            return
+        try:
+            tables = build_clustering_tables(clustered_df, cluster_info)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Export not possible", str(exc))
+            return
+
+        target_dir = QFileDialog.getExistingDirectory(
+            self, "Select destination folder for clustering CSV")
+        if not target_dir:
+            return
+        try:
+            written = write_tables(tables, target_dir, prefix="regularized_")
+            provenance_panel = self._find_provenance_panel()
+            metadata = build_export_metadata(
+                "clustering_csv", written,
+                analyzer=self.laplace_analyzer,
+                provenance_panel=provenance_panel,
+            )
+            meta_path = write_metadata(metadata, target_dir, prefix="regularized_")
+            register_outputs_in_provenance(provenance_panel, written)
+            register_outputs_in_provenance(
+                provenance_panel, [meta_path], output_type="export_metadata",
+                extra_fields={"export_id": metadata["export_id"]})
+        except Exception as exc:
+            QMessageBox.critical(self, "Export failed", f"Error:\n{exc}")
+            return
+
+        names = "\n".join(os.path.basename(p) for p in written)
+        QMessageBox.information(
+            self, "Export successful",
+            f"{len(written)} CSV file(s) written to:\n{target_dir}\n\n{names}")
+
+    def _find_provenance_panel(self):
+        """Locate the provenance panel via the parent main window, if available."""
+        parent = self.parent()
+        inspector = getattr(parent, 'inspector_panel', None)
+        return getattr(inspector, 'provenance_panel', None) if inspector else None
 
     def export_results(self):
         """Export results to file"""

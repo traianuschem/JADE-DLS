@@ -3,6 +3,8 @@ Analysis View Widget
 Main central panel for displaying data, plots, and results
 """
 
+import os
+
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTabWidget,
                              QTableWidget, QTableWidgetItem, QLabel, QTextEdit,
                              QGroupBox, QScrollArea, QListWidget, QListWidgetItem,
@@ -134,25 +136,19 @@ class AnalysisView(QWidget):
         nav_buttons.addWidget(self.next_plot_btn)
         nav_buttons.addStretch()
 
-        # ScatterForge export button (only visible when ScatterForge is available)
-        from ade_dls.gui.export.scatterforge_bridge import is_available as _sf_available
-        if _sf_available():
-            self.sf_gamma_btn = QPushButton("📤 Γ vs q² → ScatterForge")
-            self.sf_gamma_btn.setToolTip(
-                "Γ vs q² Datensätze (Messpunkte + Fit) in ScatterForge-Plot öffnen"
-            )
-            self.sf_gamma_btn.clicked.connect(
-                lambda: self._on_send_to_scatterforge('gamma')
-            )
-            self.sf_diffusion_btn = QPushButton("📤 D vs q² → ScatterForge")
-            self.sf_diffusion_btn.setToolTip(
-                "Diffusionskoeffizient D = Γ/q² je Messwinkel in ScatterForge-Plot öffnen"
-            )
-            self.sf_diffusion_btn.clicked.connect(
-                lambda: self._on_send_to_scatterforge('diffusion')
-            )
-            nav_buttons.addWidget(self.sf_gamma_btn)
-            nav_buttons.addWidget(self.sf_diffusion_btn)
+        # CSV plot-data export buttons
+        self.csv_diffusion_btn = QPushButton("\U0001f4e4 Export Diffusion as CSV")
+        self.csv_diffusion_btn.setToolTip(
+            "Export Γ/D vs q² data points, fit curve and fit parameters as CSV tables"
+        )
+        self.csv_diffusion_btn.clicked.connect(self._on_export_diffusion_csv)
+        self.csv_cluster_btn = QPushButton("\U0001f4e4 Export Clustering as CSV")
+        self.csv_cluster_btn.setToolTip(
+            "Export cluster populations (as columns) and raw cluster points as CSV tables"
+        )
+        self.csv_cluster_btn.clicked.connect(self._on_export_clustering_csv)
+        nav_buttons.addWidget(self.csv_diffusion_btn)
+        nav_buttons.addWidget(self.csv_cluster_btn)
 
         nav_layout.addLayout(nav_buttons)
 
@@ -167,6 +163,9 @@ class AnalysisView(QWidget):
 
         # Analyzer reference (set by main_window after analysis completes)
         self.cumulant_analyzer = None
+        # Provenance panel reference (set by main_window) so CSV exports can
+        # register their SHA-256 hashes in the FAIR provenance record.
+        self.provenance_panel = None
 
         # Plot container
         plot_group = QGroupBox("Current Plot")
@@ -1357,51 +1356,147 @@ class AnalysisView(QWidget):
 
     def set_cumulant_analyzer(self, analyzer):
         """
-        Store the CumulantAnalyzer instance so the ScatterForge export
-        buttons can access the analysis data.
+        Store the CumulantAnalyzer instance so the CSV plot-data export
+        buttons can access the analysis data (Method A diffusion fit and
+        Method D clustering).
 
         Called by main_window after cumulant analysis completes.
         """
         self.cumulant_analyzer = analyzer
 
-    def _on_send_to_scatterforge(self, export_type: str):
-        """
-        Export the current cumulant Method A results to ScatterForge-Plot.
+    def set_provenance_panel(self, panel):
+        """Store the provenance panel so CSV exports register their hashes."""
+        self.provenance_panel = panel
 
-        Args:
-            export_type: 'gamma' for Γ vs q², 'diffusion' for D vs q²
-        """
-        from ade_dls.gui.export.scatterforge_bridge import (
-            from_cumulant_method_a,
-            from_diffusion_vs_q2,
-            send_to_scatterforge,
+    def _on_export_diffusion_csv(self):
+        """Export the Cumulant Method A diffusion plot data as CSV tables."""
+        from ade_dls.gui.export.csv_export import (
+            build_diffusion_tables, write_tables, register_outputs_in_provenance,
+            build_export_metadata, write_metadata,
         )
-        from PyQt5.QtWidgets import QMessageBox
+        from PyQt5.QtWidgets import QFileDialog, QMessageBox
 
         if self.cumulant_analyzer is None:
-            QMessageBox.warning(
-                self,
-                "No Analyzer",
-                "Please run Cumulants Method A first.",
+            QMessageBox.warning(self, "No Data",
+                                "Please run Cumulants Method A first.")
+            return
+        try:
+            tables = build_diffusion_tables(self.cumulant_analyzer)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Export not possible", str(exc))
+            return
+
+        target_dir = QFileDialog.getExistingDirectory(
+            self, "Select destination folder for diffusion CSV")
+        if not target_dir:
+            return
+        try:
+            written = write_tables(tables, target_dir, prefix="")
+            metadata = build_export_metadata(
+                "diffusion_csv", written,
+                analyzer=self.cumulant_analyzer,
+                provenance_panel=self.provenance_panel,
             )
+            meta_path = write_metadata(metadata, target_dir)
+            register_outputs_in_provenance(self.provenance_panel, written)
+            register_outputs_in_provenance(
+                self.provenance_panel, [meta_path], output_type="export_metadata",
+                extra_fields={"export_id": metadata["export_id"]})
+        except Exception as exc:
+            QMessageBox.critical(self, "Export failed", f"Error:\n{exc}")
+            return
+
+        names = "\n".join(os.path.basename(p) for p in written)
+        QMessageBox.information(
+            self, "Export successful",
+            f"{len(written)} CSV file(s) written to:\n{target_dir}\n\n{names}")
+
+    def _on_export_clustering_csv(self):
+        """Export clustering data as CSV tables.
+
+        Detects which analyzer has cluster data and routes accordingly:
+        Method D (Cumulants) > NNLS > Regularized NNLS.
+        """
+        from ade_dls.gui.export.csv_export import (
+            build_clustering_tables, write_tables, register_outputs_in_provenance,
+            build_export_metadata, write_metadata,
+        )
+        from PyQt5.QtWidgets import QFileDialog, QMessageBox
+
+        # --- detect which analyzer/method has cluster data ---
+        cluster_info = None
+        clustered_df = None
+        analyzer = None
+        prefix = ""
+
+        # 1. Method D (Cumulants)
+        if self.cumulant_analyzer is not None:
+            ci = getattr(self.cumulant_analyzer, 'method_d_cluster_info', None)
+            if ci is not None:
+                cluster_info = ci
+                clustered_df = getattr(self.cumulant_analyzer, 'method_d_clustered_df', None)
+                analyzer = self.cumulant_analyzer
+                prefix = ""
+
+        # 2. NNLS
+        if cluster_info is None:
+            la_nnls = getattr(self, 'laplace_analyzer_nnls', None) or getattr(self, 'laplace_analyzer', None)
+            if la_nnls is not None:
+                ci = getattr(la_nnls, 'nnls_cluster_info', None)
+                if ci is not None:
+                    cluster_info = ci
+                    clustered_df = getattr(la_nnls, 'nnls_data', None)
+                    analyzer = la_nnls
+                    prefix = "nnls_"
+
+        # 3. Regularized NNLS
+        if cluster_info is None:
+            la_reg = getattr(self, 'laplace_analyzer_regularized', None) or getattr(self, 'laplace_analyzer', None)
+            if la_reg is not None:
+                ci = getattr(la_reg, 'regularized_cluster_info', None)
+                if ci is not None:
+                    cluster_info = ci
+                    clustered_df = getattr(la_reg, 'regularized_data', None)
+                    analyzer = la_reg
+                    prefix = "regularized_"
+
+        if cluster_info is None:
+            QMessageBox.warning(
+                self, "No Cluster Data",
+                "No clustering data available. Please run a multimodal analysis "
+                "(Cumulant Method D, NNLS, or Regularized NNLS) with clustering enabled.")
             return
 
         try:
-            if export_type == 'gamma':
-                groups = from_cumulant_method_a(self.cumulant_analyzer)
-                plot_type = 'DLS - \u0393 vs q\u00b2'
-            else:
-                groups = from_diffusion_vs_q2(self.cumulant_analyzer)
-                plot_type = 'DLS - D vs q\u00b2'
+            tables = build_clustering_tables(clustered_df, cluster_info)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Export not possible", str(exc))
+            return
 
-            send_to_scatterforge(groups, plot_type=plot_type)
-
-        except Exception as exc:
-            QMessageBox.critical(
-                self,
-                "ScatterForge Export Failed",
-                f"Export error:\n{exc}",
+        target_dir = QFileDialog.getExistingDirectory(
+            self, "Select destination folder for clustering CSV")
+        if not target_dir:
+            return
+        try:
+            written = write_tables(tables, target_dir, prefix=prefix)
+            metadata = build_export_metadata(
+                "clustering_csv", written,
+                analyzer=analyzer,
+                provenance_panel=self.provenance_panel,
             )
+            meta_path = write_metadata(metadata, target_dir, prefix=prefix)
+            register_outputs_in_provenance(self.provenance_panel, written)
+            register_outputs_in_provenance(
+                self.provenance_panel, [meta_path], output_type="export_metadata",
+                extra_fields={"export_id": metadata["export_id"]})
+        except Exception as exc:
+            QMessageBox.critical(self, "Export failed", f"Error:\n{exc}")
+            return
+
+        names = "\n".join(os.path.basename(p) for p in written)
+        QMessageBox.information(
+            self, "Export successful",
+            f"{len(written)} CSV file(s) written to:\n{target_dir}\n\n{names}")
 
     def _show_results_context_menu(self, position):
         """Show context menu for results table"""

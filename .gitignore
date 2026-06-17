@@ -50,6 +50,9 @@ venv.bak/
 *.swo
 *~
 
+# Claude Code project settings (local only)
+.claude/
+
 # OS
 .DS_Store
 Thumbs.db
@@ -58,3 +61,6 @@ Thumbs.db
 # *.asc
 # *.txt
 # *.csv
+
+# Development/archive folder — local only, not for release
+_dev/

@@ -1,237 +1,99 @@
-# JADE-DLS GUI Quick Start Guide
+# Quick Start
 
-## Installation (5 minutes)
-
-### Step 1: Install Dependencies
+## Launch the GUI
 
 ```bash
-cd JADE-DLS
-pip install -r requirements_gui.txt
+ade-dls
 ```
 
-### Step 2: Launch the GUI
+Or alternatively:
 
-**Option A - Using launcher script (Linux/Mac):**
 ```bash
-./start_gui.sh
+python -m ade_dls.gui.main_window
 ```
 
-**Option B - Direct Python:**
-```bash
-python jade_dls_gui.py
-```
+## Step-by-Step: First Analysis
 
-**Option C - Windows:**
-```cmd
-python jade_dls_gui.py
-```
+### 1. Load Data
 
-## First Analysis (10 minutes)
+Go to **File > Load Data** (or `Ctrl+O`). Select the folder containing your ALV `.ASC` files.
 
-### 1. Load Your Data
+A dialog lets you preview detected files and choose the laser wavelength, temperature, viscosity, and refractive index before loading. These physical parameters determine the hydrodynamic radius via the Stokes-Einstein equation.
 
-```
-File > Load Data... (or Ctrl+O)
-→ Select folder with .asc files
-→ GUI shows: "Loaded X files"
-```
+The status bar shows how many files were loaded.
 
-### 2. Check Data Overview
+### 2. Inspect the Data Overview
 
-```
-Click "Data Overview" tab
-→ See statistics
-→ Verify files loaded correctly
-```
+The **Data Overview** tab (center panel) lists all loaded files with their scattering angles, count rates, and intercepts. Use the correlation and count-rate filtering dialogs that open automatically after loading to exclude bad measurements.
 
-### 3. Run Cumulant Analysis
+### 3. Run an Analysis Method
 
-```
-Left Panel > Click "Cumulant C"
-→ Click "▶ Run Selected"
-→ Wait for analysis to complete
-→ View results in "Results" tab
-```
+Select a method from the **Workflow Panel** (left):
 
-### 4. Inspect the Code (Transparency!)
+| Button | Method |
+|--------|--------|
+| Cumulant B | Linear cumulant fit |
+| Cumulant C | Iterative non-linear least squares |
+| Cumulant D | Multi-exponential decomposition |
+| NNLS | Non-negative least squares inverse Laplace |
+| Regularized | Tikhonov-Phillips regularized NNLS |
 
-```
-Right Panel > Click "💻 Code" tab
-→ See the exact Python code
-→ Click "📋 Copy Code" to copy
-```
+Click **Run** to execute. Results appear in the **Results** tab.
 
-### 5. Export Your Analysis
+### 4. View Results
+
+Switch to the **Results** tab (center panel). Click any row to expand the detailed fit report. Columns include Γ, D, Rh, PDI, and R².
+
+### 5. Export
+
+- **File > Export CSV** — structured CSV with all results
+- **File > Export Excel** — `.xlsx` with separate sheets per method
+- **File > Export Jupyter Notebook** — fully reproducible `.ipynb`
+- **File > Export Python Script** — standalone `.py` file
+- Use the **Report Panel** (right panel) to build a custom PDF report
+
+## Layout at a Glance
 
 ```
-File > Export as Jupyter Notebook... (Ctrl+J)
-→ Choose filename (e.g., my_analysis.ipynb)
-→ Open in Jupyter to run/modify
+┌────────────────┬──────────────────────────────┬─────────────────────┐
+│  WORKFLOW      │  ANALYSIS VIEW               │  INSPECTOR          │
+│                │                              │                     │
+│  Load Data     │  Tabs:                       │  Tabs:              │
+│  Preprocess    │  • Data Overview             │  • Report           │
+│  Cumulant B    │  • Plots                     │  • Code             │
+│  Cumulant C    │  • Results                   │  • Parameters       │
+│  Cumulant D    │  • Comparison                │  • Provenance       │
+│  NNLS          │                              │                     │
+│  Regularized   │                              │                     │
+└────────────────┴──────────────────────────────┴─────────────────────┘
 ```
-
-## Layout Overview
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  JADE-DLS Analysis Tool                    [File] [Analysis]│
-├───────────┬─────────────────────────────┬───────────────────┤
-│           │                             │                   │
-│ WORKFLOW  │     ANALYSIS VIEW           │    INSPECTOR      │
-│           │                             │                   │
-│ Steps:    │  Tabs:                      │  Tabs:            │
-│ ✓ Load    │  • Data Overview            │  • 💻 Code        │
-│ ⚙️ Process │  • 📈 Plots                 │  • ⚙️ Params      │
-│ ⏸️ Cumulant│  • 📋 Results               │  • 📖 Docs        │
-│ ⏸️ NNLS    │  • ⚖️ Comparison            │                   │
-│           │                             │  [Copy] [Export]  │
-│ [▶ Run]   │                             │                   │
-│           │                             │                   │
-└───────────┴─────────────────────────────┴───────────────────┘
-```
-
-## Understanding the Three Panels
-
-### Left: Workflow Panel
-- Shows analysis steps
-- Click to select a step
-- "▶ Run Selected" to execute
-- "▶ Run All" for full analysis
-
-### Center: Analysis View
-- **Data Overview**: Loaded files, statistics
-- **Plots**: Interactive visualizations
-- **Results**: Tables with Rh, D, PDI, etc.
-- **Comparison**: Side-by-side method comparison
-
-### Right: Inspector Panel
-- **💻 Code**: Auto-generated Python code
-- **⚙️ Parameters**: All settings and values
-- **📖 Docs**: Explanation of methods
-
-## Transparency Features
-
-### 1. See the Code
-Every action generates Python code you can see, copy, and run independently.
-
-```python
-# Example: What the GUI does when you click "Run Cumulant C"
-from cumulants_C import plot_processed_correlations_iterative
-
-fit_function = lambda x, a, b, c, d, e, f: ...
-result = plot_processed_correlations_iterative(
-    data,
-    fit_function,
-    fit_range=(1e-9, 10),
-    method='lm'
-)
-```
-
-### 2. Track Parameters
-All parameters are logged:
-- What values were used
-- When they were changed
-- Why (if you add notes)
-
-### 3. Export Everything
-- **Jupyter Notebook**: Fully reproducible analysis
-- **Python Script**: Standalone executable code
-- **PDF Report**: Complete documentation (coming soon)
 
 ## Common Workflows
 
-### Workflow 1: Quick Monodisperse Analysis
+### Monodisperse sample (quick)
 
-1. Load data
-2. Run "Cumulant C" (iterative fit)
+1. Load data → accept defaults
+2. Run **Cumulant C**
 3. Check R² > 0.99 and PDI < 0.1
-4. Export results
+4. Export CSV
 
-**Time: ~5 minutes**
-
-### Workflow 2: Polydisperse Sample
+### Polydisperse sample
 
 1. Load data
-2. Run "Cumulant C" (baseline)
-3. Run "Regularized" (for distribution)
-4. Compare results in "Comparison" tab
-5. Export notebook for documentation
+2. Run **Regularized** NNLS
+3. Open the post-fit dialog to tune the regularization parameter α
+4. Run **Cumulant D** for multi-exponential decomposition
+5. Compare methods in the **Comparison** tab
 
-**Time: ~10 minutes**
+### Multi-angle measurement
 
-### Workflow 3: Compare All Methods
-
-1. Load data
-2. Click "▶ Run All" in workflow panel
-3. Go to "Comparison" tab
-4. Review which method gives best fit
-5. Export complete report
-
-**Time: ~15 minutes**
-
-## Tips for Success
-
-### ✅ Do's
-
-- **Always check R²**: Good fits have R² > 0.99
-- **Inspect residuals**: Should be normally distributed
-- **Export your work**: Document everything
-- **Use the code viewer**: Learn what's happening
-- **Compare methods**: Validate with multiple approaches
-
-### ❌ Don'ts
-
-- **Don't ignore bad fits**: Low R² = unreliable results
-- **Don't use just one method**: Cross-validate
-- **Don't forget to export**: Reproducibility is key
-- **Don't blindly trust**: Understand the code
+All methods compute D and Rh per scattering angle. After running Cumulant C or NNLS, the Results tab shows one row per angle. Use the **Comparison** tab for a D vs. q² overview.
 
 ## Keyboard Shortcuts
 
-- `Ctrl+O`: Load Data
-- `Ctrl+J`: Export as Jupyter Notebook
-- `Ctrl+P`: Export as Python Script
-- `Ctrl+Q`: Quit
-- `F1`: Help/Tutorial
-
-## Troubleshooting
-
-### "Module not found" errors
-```bash
-pip install --upgrade -r requirements_gui.txt
-```
-
-### GUI looks ugly
-The GUI uses Qt Fusion style. To change:
-```python
-# Edit jade_dls_gui.py
-app.setStyle('Windows')  # or 'Fusion', 'WindowsVista'
-```
-
-### Plots not showing
-```bash
-pip install --upgrade matplotlib PyQt5
-```
-
-### Can't find my results
-Check the Analysis View > Results tab. Also check the code viewer to see where files are saved.
-
-## Next Steps
-
-1. **Read the full README**: `GUI_README.md`
-2. **Check example export**: `gui/examples/example_export.py`
-3. **Explore parameter dialogs**: Right-click on steps (coming soon)
-4. **Join the community**: Report issues on GitHub
-
-## Philosophy
-
-**JADE-DLS GUI is designed to be transparent, not a black box.**
-
-Every click generates code. Every parameter is visible. Every analysis is exportable.
-
-**Science should be reproducible. Software should be transparent.**
-
----
-
-Need help? Check `GUI_README.md` or open an issue on GitHub.
-
-Happy analyzing! 🔬
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl+O` | Load data |
+| `Ctrl+J` | Export Jupyter Notebook |
+| `Ctrl+P` | Export Python Script |
+| `Ctrl+Q` | Quit |

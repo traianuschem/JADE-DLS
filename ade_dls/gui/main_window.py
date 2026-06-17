@@ -283,29 +283,30 @@ class JADEDLSMainWindow(QMainWindow):
 
     def load_data(self):
         """Load DLS data files"""
-        folder = QFileDialog.getExistingDirectory(
-            self,
-            "Select Data Folder",
-            "",
-            QFileDialog.ShowDirsOnly
+        from ade_dls.gui.dialogs.load_data_dialog import LoadDataDialog
+        dlg = LoadDataDialog(self)
+        if dlg.exec_() != LoadDataDialog.Accepted:
+            return
+
+        folder = dlg.folder
+        parser = dlg.parser   # InstrumentParser instance chosen in dialog
+
+        # Create and show progress dialog
+        self.progress_dialog = ProgressDialog("Loading Data", self)
+        self.progress_dialog.setRange(0, 5)
+        self.progress_dialog.setValue(0)
+        self.progress_dialog.show()
+
+        # Update status
+        self.status_manager.start_operation(f"Loading data from {folder}")
+
+        # Start loading in background thread (pass the pre-selected parser)
+        self.data_loader.load_data(
+            folder,
+            parser=parser,
+            load_countrates=True,
+            load_correlations=True
         )
-
-        if folder:
-            # Create and show progress dialog
-            self.progress_dialog = ProgressDialog("Loading Data", self)
-            self.progress_dialog.setRange(0, 5)
-            self.progress_dialog.setValue(0)
-            self.progress_dialog.show()
-
-            # Update status
-            self.status_manager.start_operation(f"Loading data from {folder}")
-
-            # Start loading in background thread
-            self.data_loader.load_data(
-                folder,
-                load_countrates=True,
-                load_correlations=True
-            )
 
     def export_notebook(self):
         """Export analysis as Jupyter notebook"""
@@ -1527,8 +1528,10 @@ print(method_d_results)
         for method_name, result_df in results:
             print(f"[MAIN WINDOW]   - {method_name}: {result_df.shape[0]} rows")
 
-        # Set analyzer reference for ScatterForge bridge
+        # Set analyzer reference for CSV plot-data export
         self.analysis_view.set_cumulant_analyzer(analyzer)
+        # Provenance panel reference so CSV exports register their hashes
+        self.analysis_view.set_provenance_panel(self.inspector_panel.provenance_panel)
 
         # Combine all results
         combined_results = analyzer.get_combined_results()
@@ -1551,7 +1554,7 @@ print(method_d_results)
                 plots_dict = {}
                 if hasattr(analyzer, 'method_a_order_plots'):
                     plots_dict.update(analyzer.method_a_order_plots)
-                if hasattr(analyzer, 'method_a_summary_plot'):
+                if getattr(analyzer, 'method_a_summary_plot', None) is not None:
                     plots_dict['Method A Summary'] = (analyzer.method_a_summary_plot, {})
                 if not plots_dict:
                     plots_dict = None

@@ -2,7 +2,7 @@
 
 ## Overview
 
-JADE-DLS includes interactive filtering dialogs that allow you to visually inspect and exclude bad measurements. This ensures data quality before analysis.
+ADE-DLS includes interactive filtering dialogs that allow you to visually inspect and exclude bad measurements before analysis.
 
 ## Workflow
 
@@ -260,7 +260,7 @@ Example with 39 files:
 
 ### Transparency
 
-JADE-DLS shows you:
+ADE-DLS shows you:
 - All data before filtering
 - Which files you excluded
 - Why (via visual inspection)
@@ -270,4 +270,4 @@ This ensures **scientific transparency** and **reproducibility**.
 
 ---
 
-**Remember:** Good analysis starts with good data. Take time to filter properly! 🔬
+**Remember:** Good analysis starts with good data. Take time to filter properly.

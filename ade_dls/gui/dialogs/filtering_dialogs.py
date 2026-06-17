@@ -567,17 +567,21 @@ class CorrelationFilterDialog(QDialog):
     def _get_raw_g2(self, filename):
         """Return (time_ms, g2_values) for preview.
 
-        Mirrors process_correlation_data() EXACTLY:
-            g(2)-1 = (correlation 1 + correlation 2) / 2
-        Only the first two detector channels are averaged — exactly as
-        JADE 2.0 preprocessing.py does. The raw ALV values are already
-        in the g(2)-1 convention (decay from ~β to 0).
+        Mirrors process_correlation_data():
+            g(2)-1 = (correlation 1 + correlation 2) / 2   (ALV / multi-channel)
+            g(2)-1 = correlation 1                         (single-channel, e.g. LSI)
+        The available detector channels are averaged; single-channel data
+        (one correlation column) falls back to that channel. The raw values
+        are already in the g(2)-1 convention (decay from ~β to 0).
         """
         df = self.correlation_data[filename]
-        if 'correlation 1' not in df.columns or 'correlation 2' not in df.columns:
+        if 'correlation 1' not in df.columns:
             return None, None
         # Exact replication of process_correlation_data():
-        g2 = (df['correlation 1'] + df['correlation 2']).values / 2.0
+        if 'correlation 2' in df.columns:
+            g2 = (df['correlation 1'] + df['correlation 2']).values / 2.0
+        else:
+            g2 = df['correlation 1'].values
         t = df['time [ms]'].values
         return t, g2
 

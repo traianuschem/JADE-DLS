@@ -192,6 +192,7 @@ class ProvenanceRecord:
         output_type: str,
         label: str,
         filepath: Optional[str] = None,
+        extra_fields: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
         Register an exported artifact in the output catalog.
@@ -199,6 +200,10 @@ class ProvenanceRecord:
         If *filepath* is provided the file is hashed so the artifact can be
         verified later.  The ``record_id`` of this provenance record is
         embedded in the entry so any artifact can be traced back here.
+
+        *extra_fields* is an optional dict of additional key/value pairs
+        merged into the catalog entry (e.g. ``{"export_id": "<uuid>"}`` to
+        cross-link an export-metadata JSON back to its provenance record).
 
         Returns the new output id (e.g. ``"out-002"``).
         """
@@ -209,13 +214,16 @@ class ProvenanceRecord:
             "type": output_type,
             "label": label,
             "record_id": self.record_id,
-            "wasDerivedFrom": [a["id"] for a in self._activities],
+            "wasGeneratedBy": self._activities[-1]["id"] if self._activities else None,
+            "wasDerivedFrom": [e["id"] for e in self._input_entities],
             "timestamp": datetime.now().isoformat(),
         }
         if filepath:
             sha = compute_sha256(filepath)
             if sha:
                 entry["sha256"] = sha
+        if extra_fields:
+            entry.update(extra_fields)
         self._outputs.append(entry)
         return out_id
 
@@ -244,6 +252,143 @@ class ProvenanceRecord:
 
     def to_json(self, indent: int = 2) -> str:
         return json.dumps(self.to_dict(), indent=indent, ensure_ascii=False)
+
+    def to_prov_json(self, indent: int = 2) -> str:
+        """
+        Serialise as W3C PROV-JSON (https://www.w3.org/TR/prov-json/).
+        Produces a second, standards-compliant serialisation alongside the
+        existing to_json() / to_dict() output, which is kept for GUI display.
+        Compatible with the `prov` Python library and W3C PROV-Toolbox.
+        """
+        JADE = "https://jade-dls.de/ns/provenance#"
+
+        def jade(local: str) -> str:
+            return f"jade:{local}"
+
+        def xsd_datetime(iso: str) -> dict:
+            return {"$": iso, "type": "xsd:dateTime"}
+
+        # --- prefix ---
+        doc: Dict[str, Any] = {
+            "prefix": {
+                "xsd":  "http://www.w3.org/2001/XMLSchema#",
+                "prov": "http://www.w3.org/ns/prov#",
+                "jade": JADE,
+            }
+        }
+
+        # --- agent ---
+        agent_id = jade("agent-software")
+        doc["agent"] = {
+            agent_id: {
+                "prov:type":           {"$": "prov:SoftwareAgent", "type": "xsd:QName"},
+                jade("software"):      self.agent.get("software", "JADE-DLS"),
+                jade("version"):       self.agent.get("version", "unknown"),
+                jade("platform"):      self.agent.get("platform", ""),
+                jade("pythonVersion"): self.agent.get("python_version", ""),
+            }
+        }
+
+        # --- input entities ---
+        doc["entity"] = {}
+        for ent in self._input_entities:
+            eid = jade(ent["id"].replace(":", "_"))
+            doc["entity"][eid] = {
+                "prov:type":      {"$": jade("RawDataFile"), "type": "xsd:QName"},
+                jade("filename"): ent.get("filename", ""),
+                jade("path"):     ent.get("path", ""),
+                jade("sha256"):   ent.get("sha256", ""),
+                jade("role"):     ent.get("role", "raw_data"),
+            }
+            for k, v in ent.get("metadata", {}).items():
+                doc["entity"][eid][jade(k)] = v
+
+        # --- output entities ---
+        for out in self._outputs:
+            oid = jade(out["id"])
+            doc["entity"][oid] = {
+                "prov:type":        {"$": jade("ExportedArtifact"), "type": "xsd:QName"},
+                jade("outputType"): out.get("type", ""),
+                jade("label"):      out.get("label", ""),
+                jade("recordId"):   out.get("record_id", self.record_id),
+            }
+            if "sha256" in out:
+                doc["entity"][oid][jade("sha256")] = out["sha256"]
+
+        # --- activities ---
+        doc["activity"] = {}
+        for act in self._activities:
+            aid = jade(act["id"])
+            doc["activity"][aid] = {
+                "prov:startedAtTime": xsd_datetime(act.get("timestamp",
+                                                   datetime.now().isoformat())),
+                "prov:type":          {"$": jade(act.get("type", "analysis").title()),
+                                       "type": "xsd:QName"},
+                jade("label"):        act.get("label", ""),
+                jade("parameters"):   json.dumps(act.get("parameters", {})),
+            }
+            if "results_summary" in act:
+                doc["activity"][aid][jade("resultsSummary")] = json.dumps(
+                    act["results_summary"])
+
+        # --- wasInformedBy (activity chain) ---
+        doc["wasInformedBy"] = {}
+        for act in self._activities:
+            for prev_id in act.get("used", []):
+                if prev_id:
+                    bn = f"_:wib_{act['id']}_{prev_id}".replace("-", "_")
+                    doc["wasInformedBy"][bn] = {
+                        "prov:informed":  jade(act["id"]),
+                        "prov:informant": jade(prev_id),
+                    }
+
+        # --- wasAssociatedWith (every activity ↔ software agent) ---
+        doc["wasAssociatedWith"] = {}
+        for i, act in enumerate(self._activities):
+            bn = f"_:waw_{i + 1:03d}"
+            doc["wasAssociatedWith"][bn] = {
+                "prov:activity": jade(act["id"]),
+                "prov:agent":    agent_id,
+            }
+
+        # --- wasGeneratedBy (output entity ← generating activity) ---
+        doc["wasGeneratedBy"] = {}
+        for out in self._outputs:
+            gen_act = out.get("wasGeneratedBy")
+            if gen_act:
+                bn = f"_:wgb_{out['id']}".replace("-", "_")
+                doc["wasGeneratedBy"][bn] = {
+                    "prov:entity":   jade(out["id"]),
+                    "prov:activity": jade(gen_act),
+                    "prov:time":     xsd_datetime(out.get("timestamp",
+                                                 datetime.now().isoformat())),
+                }
+
+        # --- wasDerivedFrom (output entity ← input entities) ---
+        doc["wasDerivedFrom"] = {}
+        for out in self._outputs:
+            for src_id in out.get("wasDerivedFrom", []):
+                bn = f"_:wdf_{out['id']}_{src_id}".replace(":", "_").replace("-", "_")
+                doc["wasDerivedFrom"][bn] = {
+                    "prov:generatedEntity": jade(out["id"]),
+                    "prov:usedEntity":      jade(src_id.replace(":", "_")),
+                }
+
+        # --- JADE-specific metadata not covered by PROV-JSON ---
+        doc[jade("sessionMetadata")] = {
+            jade("recordId"):      self.record_id,
+            jade("created"):       self.created,
+            jade("dataFolder"):    self._input_folder or "",
+            jade("excludedFiles"): self._excluded_files,
+        }
+
+        return json.dumps(doc, indent=indent, ensure_ascii=False)
+
+    def export_prov_json_to_file(self, filepath: str) -> None:
+        """Write the PROV-JSON serialisation to *filepath*."""
+        p = Path(filepath)
+        p.write_text(self.to_prov_json(), encoding="utf-8")
+        self.add_output("provenance_prov_json", p.name, filepath)
 
     def export_to_file(self, filepath: str) -> None:
         """Write the provenance JSON to *filepath* and register it as an output."""

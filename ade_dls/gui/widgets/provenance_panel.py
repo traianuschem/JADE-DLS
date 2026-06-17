@@ -123,6 +123,12 @@ class ProvenancePanel(QWidget):
         export_btn.clicked.connect(self._export_json)
         toolbar.addWidget(export_btn)
 
+        prov_btn = QPushButton("💾 Export PROV-JSON…")
+        prov_btn.setFixedWidth(150)
+        prov_btn.setToolTip("W3C PROV-JSON — kompatibel mit prov-Bibliothek und PROV-Toolbox")
+        prov_btn.clicked.connect(self._export_prov_json)
+        toolbar.addWidget(prov_btn)
+
         toolbar.addStretch()
 
         self._status_label = QLabel("")
@@ -208,10 +214,12 @@ class ProvenancePanel(QWidget):
         self._refresh_display()
 
     def register_output(
-        self, output_type: str, label: str, filepath: str = None
+        self, output_type: str, label: str, filepath: str = None,
+        extra_fields: dict = None,
     ) -> str:
         """Register an exported artifact in the output catalog."""
-        out_id = self._record.add_output(output_type, label, filepath)
+        out_id = self._record.add_output(output_type, label, filepath,
+                                         extra_fields=extra_fields)
         self._refresh_display()
         return out_id
 
@@ -248,6 +256,21 @@ class ProvenancePanel(QWidget):
         if not filepath:
             return
         self._export_json_to(filepath)
+
+    def _export_prov_json(self) -> None:
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        default_name = f"DLS_Provenance_PROV_{ts}.json"
+        filepath, _ = QFileDialog.getSaveFileName(
+            self, "Export W3C PROV-JSON", default_name, "JSON files (*.json)"
+        )
+        if not filepath:
+            return
+        try:
+            self._record.export_prov_json_to_file(filepath)
+            self._refresh_display()
+            self._status_label.setText(f"PROV-JSON exportiert: {Path(filepath).name}")
+        except Exception as exc:
+            QMessageBox.critical(self, "Export Error", str(exc))
 
     def _export_json_to(self, filepath: str) -> None:
         """Write the provenance JSON to *filepath* and update the display."""
