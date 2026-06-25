@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.2] - 2026-06-25
+
+### Added
+
+- **`fit_beta` parameter in regularized NNLS** (`ade_dls/analysis/regularized.py`): new optional parameter `fit_beta` (default `False`) in `nnls_reg()`, `nnls_reg_all()` and `nnls_reg_simple()`. When enabled, the instrument coherence factor β is optimized jointly with the decay-time distribution instead of being fixed at 1.0. The initial β estimate is derived from the first few data points (g²(0)−1 ≈ β). Both the normalized (`SLSQP`) and non-normalized (`least_squares`/`trf`) optimization branches support β; bounds are [0, 2]. The fitted β value is reported in the results dict (`'beta'` key), appears in exported CSVs, and is shown in the diagnostic plot title. Without `fit_beta: True` the behaviour is fully backward-compatible.
+- **`fit_beta` in generated pipeline script** (`ade_dls/gui/main_window.py`): `_add_regularized_step_to_pipeline()` now includes `fit_beta` in the `reg_params` dict of the auto-generated reproducibility script so provenance records are fully reproducible.
+
+---
+
 ## [3.2.1] - 2026-06-16
 
 ### Added

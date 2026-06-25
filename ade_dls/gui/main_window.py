@@ -2225,7 +2225,8 @@ reg_params = {{
     'normalize': {params.get('normalize', True)},
     'sparsity_penalty': {params.get('sparsity_penalty', 0.0)},
     'enforce_unimodality': {params.get('enforce_unimodality', False)},
-    'use_centroid': {use_centroid}
+    'use_centroid': {use_centroid},
+    'fit_beta': {params.get('fit_beta', False)}
 }}
 
 regularized_results, full_results = nnls_reg_all(
