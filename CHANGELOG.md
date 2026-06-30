@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.3] - 2026-06-30
+
+### Added
+
+- **Clustering parameter sweep** (`ade_dls/analysis/clustering.py`): new function `clustering_parameter_sweep()` runs `cluster_all_gammas()` over a full grid of `distance_threshold × min_abundance` combinations (default: 5 × 5 = 25 runs) and returns two DataFrames — `summary_df` (one row per combination: n_populations, silhouette score, per-population D_mean/D_std/abundance) and `scatter_df` (per data-point D_t values flagged as included or excluded). Plotting is suppressed during the sweep; figure and Qt objects are cleaned up between runs.
+
+- **Clustering heatmap plot** (`ade_dls/gui/analysis/cumulant_plotting.py`): new function `plot_clustering_heatmap()` visualises the sweep results:
+  - *Panel (a)* — heatmap of number of populations (`YlOrRd_r` colormap, cell values annotated).
+  - *Panel (b)* — heatmap of silhouette score (`YlGn` colormap, cell values annotated).
+  - Optional scatter sub-panels (c)–(f): D_t vs q² scatter for up to four selected (dt, ma) combinations, with populations colour-coded and excluded points shown in grey. Layout auto-adapts between a 2-panel (heatmaps only) and a 2×4 gridspec (heatmaps + scatter) figure.
+
+- **"⊞ Parameter Sweep Heatmap…" button in `LaplacePostFitRefinementDialog`** (`ade_dls/gui/dialogs/laplace_postfit_dialog.py`): placed next to the existing "↺ Refresh Clustering Preview" button in a shared `QHBoxLayout`. Triggers `_show_parameter_sweep_heatmap()`, which derives gamma columns from the current data, honours the active clustering strategy/method settings, runs `clustering_parameter_sweep()`, and opens the heatmap figure in a resizable `QDialog` (1 100 × 700 px) with a `NavigationToolbar2QT`.
+
+- **"⊞ Parameter Sweep Heatmap…" button in `MethodDPostFitDialog`** (`ade_dls/gui/dialogs/method_d_postfit_dialog.py`): identical behaviour for the Method D post-fit clustering tab. Gamma columns are derived from `analyzer.method_d_fit`; the sweep uses `method_d_data` and the active silhouette/method settings.
+
+- **"⊞ Clustering Heatmap…" button in `NNLSDialog`** (`ade_dls/gui/dialogs/nnls_dialog.py`): added to the NNLS preview controls panel (initially disabled, enabled after a successful "Generate Preview" run). `_show_clustering_heatmap_from_preview()` reconstructs a gamma DataFrame from the last preview results, attaches q² values from `df_basedata`, computes decay rates via `calculate_decay_rates()`, then runs `clustering_parameter_sweep()` and shows the heatmap dialog.
+
+- **"Min. population abundance" spinbox in `NNLSDialog`** (`ade_dls/gui/dialogs/nnls_dialog.py`): new `QDoubleSpinBox` (range 0.0–1.0, step 0.05, default 0.3) added to the NNLS clustering settings group. Live-updates `params['min_abundance']` via `valueChanged`; tooltip explains the threshold semantics.
+
+- **`clustering-help.txt`**: new reference document (272 lines) describing the clustering algorithm, parameter meanings, and recommended sweep workflows.
+
+---
+
 ## [3.2.2] - 2026-06-25
 
 ### Added
