@@ -93,6 +93,12 @@ Multi-exponential fit decomposing g₁(τ) into two or more populations. Followe
 
 Non-negative least squares inverse Laplace transform. Produces a discrete relaxation time distribution τ→A(τ) on a logarithmic grid. No regularization; sparse solutions.
 
+The NNLS dialog includes a **clustering settings** group with:
+- **Distance threshold** — Ward linkage cut-off for grouping populations across angles.
+- **Min. population abundance** (0–1, default 0.3) — minimum fraction of datasets a population must appear in to be considered reliable.
+
+After running a preview, the **"⊞ Clustering Heatmap…"** button becomes available and shows the parameter sweep heatmap (see [Clustering Parameter Sweep Heatmap](#clustering-parameter-sweep-heatmap) below).
+
 ### Regularized NNLS
 
 Tikhonov-Phillips regularization applied to the NNLS problem. The regularization parameter α controls smoothness vs. data fidelity. Use the **alpha analysis dialog** (accessible via the post-fit refinement button) to select α from an L-curve or GCV criterion.
@@ -108,11 +114,22 @@ Available after running Regularized NNLS. Decomposes the total static intensity 
 All methods expose a **post-fit refinement dialog** (button next to the result row, or via right-click). Refinement lets you:
 - Adjust the fit range (τ_min, τ_max)
 - Change the cumulant order (Method C)
-- Re-run clustering with different distance thresholds (Methods D, NNLS)
+- Re-run clustering with different distance thresholds and minimum population abundance (Methods D, NNLS, Regularized)
 - Change α and re-run regularization
 - Exclude individual angles from the result
 
 Refinement re-runs only the selected method on the stored preprocessed data — no reload required.
+
+### Clustering Parameter Sweep Heatmap
+
+The **Clustering** tab in the post-fit refinement dialogs (Methods D, NNLS, Regularized) includes a **"⊞ Parameter Sweep Heatmap…"** button. It runs `cluster_all_gammas()` over a 5 × 5 grid of `distance_threshold × min_abundance` values (25 combinations) and displays two heatmaps:
+
+- **(a) Number of populations** — how many reliable populations are found at each parameter combination.
+- **(b) Silhouette score** — clustering quality (0–1; higher is better).
+
+Up to four representative scatter sub-panels (D_t vs q²) are shown below the heatmaps to visualise how the population assignment changes across the parameter grid.
+
+Use the heatmap to find a stable region where both the population count and silhouette score are consistent, then set `distance_threshold` and `min_abundance` accordingly before applying refinement.
 
 ---
 

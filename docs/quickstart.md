@@ -62,7 +62,7 @@ Switch to the **Results** tab (center panel). Click any row to expand the detail
 │  Preprocess    │  • Data Overview             │  • Report           │
 │  Cumulant B    │  • Plots                     │  • Code             │
 │  Cumulant C    │  • Results                   │  • Parameters       │
-│  Cumulant D    │  • Comparison                │  • Provenance       │
+│  Cumulant D    │                              │  • Provenance       │
 │  NNLS          │                              │                     │
 │  Regularized   │                              │                     │
 └────────────────┴──────────────────────────────┴─────────────────────┘
@@ -83,11 +83,11 @@ Switch to the **Results** tab (center panel). Click any row to expand the detail
 2. Run **Regularized** NNLS
 3. Open the post-fit dialog to tune the regularization parameter α
 4. Run **Cumulant D** for multi-exponential decomposition
-5. Compare methods in the **Comparison** tab
+5. Compare methods via the **Report** tab (right panel)
 
 ### Multi-angle measurement
 
-All methods compute D and Rh per scattering angle. After running Cumulant C or NNLS, the Results tab shows one row per angle. Use the **Comparison** tab for a D vs. q² overview.
+All methods compute D and Rh per scattering angle. After running Cumulant C or NNLS, the Results tab shows one row per angle.
 
 ## Keyboard Shortcuts
 

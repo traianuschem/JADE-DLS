@@ -2,7 +2,7 @@
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![Version](https://img.shields.io/badge/version-3.2.1-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-3.3.0-blue.svg)](CHANGELOG.md)
 
 ADE-DLS is a Python package for analyzing Dynamic Light Scattering (DLS) — and optionally Static Light Scattering (SLS) — data from multi-angle instruments. It determines hydrodynamic radii, diffusion coefficients, and particle size distributions via a full-featured PyQt5 GUI or a Python API.
 
@@ -40,7 +40,7 @@ ADE-DLS is a Python package for analyzing Dynamic Light Scattering (DLS) — and
 - **FAIR provenance tracking** — full W3C PROV-compliant session record; export as JSON or PROV-JSON
 - **Transparent analysis pipeline** — auto-generates reproducible Jupyter notebooks and Python scripts
 - **Comprehensive visualization** — per-dataset diagnostic plots (correlation fit, residuals, Q-Q, τ distribution); D vs. q² scatter; log₁₀(D) histogram
-- **Post-fit refinement dialogs** — adjust fit ranges, regularization, clustering parameters without reloading
+- **Post-fit refinement dialogs** — adjust fit ranges, regularization, clustering parameters without reloading; clustering parameter sweep heatmap (distance threshold × min abundance) for guided parameter selection
 - **Report panel** — compose custom reports from result blocks and plots; export as TXT, Markdown, or PDF
 - **Export** — CSV (plot data), Excel, Jupyter notebooks, Python scripts, PROV-JSON
 
