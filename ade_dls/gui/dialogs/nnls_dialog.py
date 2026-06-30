@@ -291,6 +291,24 @@ class NNLSDialog(QDialog):
         thresh_layout.addWidget(self.distance_threshold_input)
         cluster_layout.addLayout(thresh_layout)
 
+        # Min population abundance
+        abund_layout = QHBoxLayout()
+        abund_layout.addWidget(QLabel("Min. population abundance:"))
+        self.min_abundance_input = QDoubleSpinBox()
+        self.min_abundance_input.setDecimals(2)
+        self.min_abundance_input.setRange(0.0, 1.0)
+        self.min_abundance_input.setValue(0.3)
+        self.min_abundance_input.setSingleStep(0.05)
+        self.min_abundance_input.setMinimumWidth(80)
+        self.min_abundance_input.setToolTip(
+            "Minimum fraction of files a population must appear in to be considered reliable")
+        self.min_abundance_input.valueChanged.connect(
+            lambda v: self.params.update({'min_abundance': v}))
+        abund_layout.addWidget(self.min_abundance_input)
+        cluster_layout.addLayout(abund_layout)
+
+        self.params['min_abundance'] = 0.3
+
         # Clustering strategy
         strategy_layout = QHBoxLayout()
         strategy_layout.addWidget(QLabel("Clustering strategy:"))
@@ -398,6 +416,14 @@ class NNLSDialog(QDialog):
         self.update_preview_btn.setEnabled(False)
         self.update_preview_btn.clicked.connect(self.update_preview)
         controls_layout.addWidget(self.update_preview_btn)
+
+        self.heatmap_btn = QPushButton("⊞ Clustering Heatmap…")
+        self.heatmap_btn.setEnabled(False)
+        self.heatmap_btn.setToolTip(
+            "Show a parameter sweep heatmap for distance_threshold × min_abundance. "
+            "Available after running Generate Preview.")
+        self.heatmap_btn.clicked.connect(self._show_clustering_heatmap_from_preview)
+        controls_layout.addWidget(self.heatmap_btn)
 
         controls_layout.addStretch()
         layout.addLayout(controls_layout)
@@ -687,6 +713,7 @@ class NNLSDialog(QDialog):
             self.preview_info_label.setStyleSheet("color: green; font-weight: bold;")
 
             self.update_preview_btn.setEnabled(True)
+            self.heatmap_btn.setEnabled(True)
 
         except Exception as e:
             QMessageBox.critical(self, "Preview Error",
@@ -750,6 +777,98 @@ class NNLSDialog(QDialog):
             self.detected_modes_label.setText("Detected modes: Error")
             self.detected_modes_label.setStyleSheet(
                 "font-weight: bold; color: red; padding: 5px;")
+
+    def _show_clustering_heatmap_from_preview(self):
+        """
+        Build a gamma DataFrame from the last preview run and show the
+        distance_threshold × min_abundance parameter sweep heatmap.
+        """
+        from ade_dls.analysis.clustering import clustering_parameter_sweep
+        from ade_dls.gui.analysis.cumulant_plotting import plot_clustering_heatmap
+        from ade_dls.analysis.regularized_optimized import calculate_decay_rates
+        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QApplication
+        from matplotlib.backends.backend_qt5agg import (FigureCanvasQTAgg,
+                                                         NavigationToolbar2QT)
+
+        if not getattr(self, 'preview_results', None) or not getattr(self, 'preview_datasets', None):
+            return
+
+        try:
+            preview_df = pd.DataFrame(self.preview_results)
+
+            # Attach q² values from basedata
+            basedata = self.laplace_analyzer.df_basedata
+            q2_vals = []
+            for fname in self.preview_datasets:
+                rows = basedata[basedata['filename'] == fname]
+                q2_vals.append(rows.iloc[0]['q^2'] if len(rows) > 0 else None)
+            preview_df['q^2'] = q2_vals
+            preview_df = preview_df.dropna(subset=['q^2'])
+
+            if len(preview_df) < 2:
+                self.preview_info_label.setText('Too few preview datasets for sweep.')
+                return
+
+            tau_cols   = [c for c in preview_df.columns if c.startswith('tau_')]
+            if not tau_cols:
+                self.preview_info_label.setText('No tau columns found in preview data.')
+                return
+
+            preview_df = calculate_decay_rates(preview_df, tau_cols)
+            gamma_cols = [c.replace('tau', 'gamma') for c in tau_cols
+                          if c.replace('tau', 'gamma') in preview_df.columns]
+            if not gamma_cols:
+                self.preview_info_label.setText('No gamma columns computed from preview.')
+                return
+
+        except Exception as exc:
+            self.preview_info_label.setText(f'Heatmap prep failed: {exc}')
+            return
+
+        strategy = self.clustering_strategy_combo.currentText()
+        self.preview_info_label.setText('Running parameter sweep…')
+        QApplication.processEvents()
+
+        try:
+            summary_df, scatter_df = clustering_parameter_sweep(
+                preview_df,
+                gamma_cols=gamma_cols,
+                q_squared_col='q^2',
+                normalize_by_q2=True,
+                clustering_strategy=strategy,
+            )
+        except Exception as exc:
+            self.preview_info_label.setText(f'Sweep failed: {exc}')
+            return
+
+        self.preview_info_label.setText(
+            f'Sweep complete — {len(summary_df)} combinations on {len(preview_df)} preview files.')
+
+        dts = sorted(summary_df['distance_threshold'].unique())
+        mas = sorted(summary_df['min_abundance'].unique())
+        panels = []
+        if len(dts) >= 2 and len(mas) >= 2:
+            panels = [
+                (dts[0],  mas[0],  '(c)'),
+                (dts[1],  mas[1],  '(d)'),
+                (dts[-2], mas[-2], '(e)'),
+                (dts[-1], mas[-1], '(f)'),
+            ]
+
+        fig = plot_clustering_heatmap(summary_df,
+                                      scatter_df=scatter_df if panels else None,
+                                      scatter_panels=panels if panels else None)
+
+        win = QDialog(self)
+        win.setWindowTitle('Clustering Parameter Sweep – NNLS Preview')
+        win.resize(1100, 700)
+        layout = QVBoxLayout()
+        canvas  = FigureCanvasQTAgg(fig)
+        toolbar = NavigationToolbar2QT(canvas, win)
+        layout.addWidget(toolbar)
+        layout.addWidget(canvas)
+        win.setLayout(layout)
+        win.show()
 
     def _create_gamma_q2_logplot(self, preview_results, selected_datasets):
         """

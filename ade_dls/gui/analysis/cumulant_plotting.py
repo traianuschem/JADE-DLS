@@ -620,3 +620,139 @@ def create_population_ols_figure(clustered_df, cluster_info, q_squared_col='q^2'
 
     fig.tight_layout()
     return fig
+
+
+def plot_clustering_heatmap(summary_df, scatter_df=None, scatter_panels=None):
+    """
+    Visualise clustering parameter sweep results as heatmaps.
+
+    Parameters
+    ----------
+    summary_df : pd.DataFrame
+        Output of clustering_parameter_sweep() — one row per (dt, ma).
+    scatter_df : pd.DataFrame or None
+        Per-point D_t data from clustering_parameter_sweep(). When provided
+        and scatter_panels is not None, scatter sub-panels are added.
+    scatter_panels : list of (dt, ma, label) or None
+        Up to 4 parameter combinations shown as scatter sub-panels.
+        When None, only the two heatmaps are drawn.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+    """
+    import matplotlib.gridspec as gridspec
+
+    show_scatter = (scatter_df is not None and scatter_panels is not None
+                    and len(scatter_panels) > 0)
+    n_scatter = min(len(scatter_panels), 4) if show_scatter else 0
+
+    if show_scatter:
+        fig = plt.figure(figsize=(14, 9))
+        gs  = gridspec.GridSpec(2, 4, figure=fig, hspace=0.50, wspace=0.40)
+        ax_heat = fig.add_subplot(gs[0, :2])
+        ax_sil  = fig.add_subplot(gs[0, 2:])
+        scatter_axes = [fig.add_subplot(gs[1, i]) for i in range(n_scatter)]
+    else:
+        fig, (ax_heat, ax_sil) = plt.subplots(1, 2, figsize=(12, 5))
+        scatter_axes = []
+
+    dts = sorted(summary_df['distance_threshold'].unique())
+    mas = sorted(summary_df['min_abundance'].unique())
+
+    # ── (a) heatmap: n_populations ────────────────────────────────────
+    pivot_n = summary_df.pivot(index='distance_threshold',
+                               columns='min_abundance',
+                               values='n_populations')
+    pivot_n = pivot_n.reindex(index=dts, columns=mas)
+    im1 = ax_heat.imshow(pivot_n.values, aspect='auto',
+                         cmap='YlOrRd_r', origin='lower')
+    ax_heat.set_xticks(range(len(mas)))
+    ax_heat.set_xticklabels([f'{v:.2g}' for v in mas], fontsize=9)
+    ax_heat.set_yticks(range(len(dts)))
+    ax_heat.set_yticklabels([f'{v:.2g}' for v in dts], fontsize=9)
+    ax_heat.set_xlabel('Min abundance', fontsize=11)
+    ax_heat.set_ylabel('Distance threshold', fontsize=11)
+    ax_heat.set_title('(a) No. of populations', fontsize=11,
+                      fontweight='bold', loc='left')
+    for i in range(len(dts)):
+        for j in range(len(mas)):
+            val = pivot_n.values[i, j]
+            if not np.isnan(val):
+                ax_heat.text(j, i, str(int(val)), ha='center', va='center',
+                             fontsize=11, color='black')
+    plt.colorbar(im1, ax=ax_heat, label='n populations')
+
+    # ── (b) heatmap: silhouette score ──────────────────────────────────
+    pivot_s = summary_df.pivot(index='distance_threshold',
+                               columns='min_abundance',
+                               values='silhouette')
+    pivot_s = pivot_s.reindex(index=dts, columns=mas)
+    vmin = max(0.0, float(np.nanmin(pivot_s.values)) - 0.05) if not pivot_s.isnull().all().all() else 0.0
+    im2 = ax_sil.imshow(pivot_s.values, aspect='auto',
+                        cmap='YlGn', origin='lower',
+                        vmin=vmin, vmax=1.0)
+    ax_sil.set_xticks(range(len(mas)))
+    ax_sil.set_xticklabels([f'{v:.2g}' for v in mas], fontsize=9)
+    ax_sil.set_yticks(range(len(dts)))
+    ax_sil.set_yticklabels([f'{v:.2g}' for v in dts], fontsize=9)
+    ax_sil.set_xlabel('Min abundance', fontsize=11)
+    ax_sil.set_ylabel('Distance threshold', fontsize=11)
+    ax_sil.set_title('(b) Silhouette score', fontsize=11,
+                     fontweight='bold', loc='left')
+    for i in range(len(dts)):
+        for j in range(len(mas)):
+            val = pivot_s.values[i, j]
+            if not np.isnan(val):
+                ax_sil.text(j, i, f'{val:.2f}', ha='center', va='center',
+                            fontsize=10, color='black')
+    plt.colorbar(im2, ax=ax_sil, label='Silhouette score')
+
+    # ── scatter sub-panels ─────────────────────────────────────────────
+    pop_colors = {
+        'gamma_pop1': 'royalblue',
+        'gamma_pop2': 'darkorange',
+        'gamma_pop3': 'forestgreen',
+        'gamma_pop4': 'crimson',
+    }
+
+    for (dt, ma, plbl), ax in zip(scatter_panels[:4], scatter_axes):
+        sub = scatter_df[
+            (scatter_df['distance_threshold'] == dt) &
+            (scatter_df['min_abundance']       == ma)
+        ]
+
+        excl = sub[sub['excluded']]
+        if not excl.empty:
+            ax.scatter(excl['q^2'], excl['D_t'],
+                       color='lightgrey', s=10, alpha=0.5,
+                       zorder=1, label='Excluded')
+
+        incl = sub[~sub['excluded']]
+        seen = set()
+        for pop in incl['population'].unique():
+            pts = incl[incl['population'] == pop]
+            col = pop_colors.get(pop, 'grey')
+            lbl = pop.replace('gamma_', 'Pop ') if pop not in seen else ''
+            ax.scatter(pts['q^2'], pts['D_t'],
+                       color=col, s=14, alpha=0.8,
+                       zorder=3, label=lbl)
+            seen.add(pop)
+
+        match = summary_df[
+            (summary_df['distance_threshold'] == dt) &
+            (summary_df['min_abundance']       == ma)
+        ]
+        n_str = f'n={int(match["n_populations"].values[0])}' if len(match) else ''
+
+        ax.set_xlabel(r'$q^2$ [nm$^{-2}$]', fontsize=10)
+        ax.set_ylabel(r'$D_t$ [m² s⁻¹]', fontsize=10)
+        ax.set_title(
+            f'{plbl} $d_{{thr}}={dt}$, $f_{{min}}={ma}$ ({n_str})',
+            fontsize=10, fontweight='bold', loc='left',
+        )
+        ax.grid(True, alpha=0.25)
+        ax.legend(fontsize=7, loc='upper right')
+
+    fig.tight_layout()
+    return fig

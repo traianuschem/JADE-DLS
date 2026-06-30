@@ -1,0 +1,272 @@
+distance_thresholds = [0.3, 0.7, 1.0, 1.5, 2.0]
+min_abundances      = [0.1, 0.2, 0.3, 0.4, 0.5]
+
+os.makedirs('clustering_results', exist_ok=True)
+
+raw_gamma_cols = [c for c in cumulant_method_D_data_mod.columns
+                  if c.startswith('gamma_') and
+                  c != 'gamma_mean' and
+                  'pop' not in c]
+
+all_rows    = []
+all_scatter = []
+
+for dt in distance_thresholds:
+    for ma in min_abundances:
+
+        plt.ioff()
+        clustered, info = cluster_all_gammas(
+            cumulant_method_D_data_mod,
+            gamma_cols          = [c for c in cumulant_method_D_data_mod.columns
+                                   if c.startswith('gamma_') and c != 'gamma_mean'],
+            q_squared_col       = 'q^2',
+            enable_clustering   = True,
+            normalize_by_q2     = True,
+            n_clusters          = 'auto',
+            distance_threshold  = dt,
+            min_abundance       = ma,
+            clustering_strategy = clustering_strategy,
+            uncertainty_flags   = False,
+            plot                = False
+        )
+        plt.close('all')
+        plt.ion()
+
+        n_pop         = info['n_populations']
+        reliable_cols = get_reliable_gamma_cols(info)
+        kT  = 1.381e-23 * cumulant_method_D_data_mod['temperature [K]'].mean()
+        eta = cumulant_method_D_data_mod['viscosity [cp]'].mean() * 1e-3
+
+        # all gamma_pop columns present in clustered output
+        all_pop_cols = [c for c in clustered.columns
+                        if c.startswith('gamma_pop')]
+
+        # ── summary row — ONE per (dt, ma) ───────────────────────────
+        row_dict = {
+            'distance_threshold': dt,
+            'min_abundance'     : ma,
+            'n_populations'     : n_pop,
+            'silhouette'        : info.get('silhouette_score', np.nan),
+        }
+        for i, col in enumerate(reliable_cols[:4], 1):
+            idx    = i - 1
+            D_mean = info['population_D_means'][idx] \
+                     if idx < len(info['population_D_means']) else np.nan
+            D_std  = info['population_D_stds'][idx]  \
+                     if idx < len(info['population_D_stds'])  else np.nan
+            abund  = info['population_abundances'][idx] \
+                     if idx < len(info['population_abundances']) else np.nan
+            if D_mean and D_mean > 0:
+                Rh     = kT / (6 * np.pi * eta * D_mean * 1e-18) * 1e9
+                Rh_err = Rh * (D_std / D_mean) if D_std else np.nan
+            else:
+                Rh = Rh_err = np.nan
+            row_dict[f'pop{i}_Rh']     = Rh
+            row_dict[f'pop{i}_Rh_err'] = Rh_err
+            row_dict[f'pop{i}_abund']  = abund
+
+        all_rows.append(row_dict)   # ← outside population loop: no duplicates
+
+        # ── scatter: per file ─────────────────────────────────────────
+        for _, row in clustered.iterrows():
+            q2 = row['q^2']
+
+            # collect reliable gamma values for this file
+            # (only non-outlier assignments to reliable populations)
+            rel_vals = set()
+            for col in reliable_cols:
+                val     = row.get(col)
+                pop_key = col.replace('gamma_', '')
+                out_col = f'outlier_{pop_key}'
+                if not pd.notna(val):
+                    continue
+                if out_col in clustered.columns:
+                    if not bool(row.get(out_col, True)):
+                        rel_vals.add(val)
+                else:
+                    rel_vals.add(val)
+
+            # collect ALL raw gamma values for this file
+            raw_vals = {row[c] for c in raw_gamma_cols
+                        if c in clustered.columns and pd.notna(row.get(c))}
+
+            # included: raw gammas that are in reliable populations
+            for col in reliable_cols:
+                val     = row.get(col)
+                pop_key = col.replace('gamma_', '')
+                out_col = f'outlier_{pop_key}'
+                if not pd.notna(val):
+                    continue
+                is_outlier = bool(row.get(out_col, True)) \
+                             if out_col in clustered.columns else False
+                if not is_outlier and q2 > 0:
+                    all_scatter.append({
+                        'distance_threshold': dt,
+                        'min_abundance'     : ma,
+                        'population'        : col,
+                        'q^2'               : q2,
+                        'D_t'               : val / (q2 * 1e18),
+                        'excluded'          : False,
+                    })
+
+            # excluded: raw gammas not in any reliable population
+            excluded_vals = raw_vals - rel_vals
+            for val in excluded_vals:
+                if val > 0 and q2 > 0:
+                    all_scatter.append({
+                        'distance_threshold': dt,
+                        'min_abundance'     : ma,
+                        'population'        : 'excluded',
+                        'q^2'               : q2,
+                        'D_t'               : val / (q2 * 1e18),
+                        'excluded'          : True,
+                    })
+
+        excl_count = sum(1 for s in all_scatter
+                         if s['distance_threshold'] == dt and
+                            s['min_abundance'] == ma and
+                            s['excluded'])
+        print(f"dt={dt:.1f}  ma={ma:.1f}  →  "
+              f"{n_pop} populations  |  {excl_count} excluded points")
+
+# ── save ──────────────────────────────────────────────────────────────
+df_summary = pd.DataFrame(all_rows)
+df_scatter = pd.DataFrame(all_scatter)
+
+df_summary.to_csv('clustering_results/summary.csv', index=False)
+df_scatter.to_csv('clustering_results/scatter.csv', index=False)
+
+print(f"\nSummary: {len(df_summary)} rows "
+      f"(expected {len(distance_thresholds)*len(min_abundances)})")
+print(f"Scatter: {len(df_scatter)} rows  "
+      f"(excluded: {df_scatter['excluded'].sum()})")
+
+import matplotlib.gridspec as gridspec
+
+summary = pd.read_csv('clustering_results/summary.csv')
+scatter = pd.read_csv('clustering_results/scatter.csv')
+scatter['excluded'] = scatter['excluded'].astype(bool)
+
+# ── style ─────────────────────────────────────────────────────────────
+pop_colors = {'gamma_pop1':'royalblue', 'gamma_pop2':'darkorange',
+              'gamma_pop3':'forestgreen', 'gamma_pop4':'crimson'}
+pop_labels = {'gamma_pop1':'Population 1', 'gamma_pop2':'Population 2',
+              'gamma_pop3':'Population 3', 'gamma_pop4':'Population 4'}
+
+# expected D_t reference lines for Au1+Au3
+kT  = 1.381e-23 * 298
+eta = 0.89e-3
+ref_Dt = {
+    'Au1': kT / (6 * np.pi * eta * 21.3e-9),
+    'Au3': kT / (6 * np.pi * eta * 109.0e-9),
+}
+
+# scatter panels: (distance_threshold, min_abundance, panel_label)
+scatter_panels = [
+    (0.3, 0.3, '(c)'),   # fine clustering, strict filter → many excluded
+    (0.7, 0.4, '(d)'),   # optimal: n=2, silhouette=0.93
+    (1.5, 0.3, '(e)'),   # intermediate
+    (2.0, 0.3, '(f)'),   # coarse clustering → over-merging
+]
+
+# ── figure ─────────────────────────────────────────────────────────────
+fig = plt.figure(figsize=(14, 9))
+gs  = gridspec.GridSpec(2, 4, figure=fig, hspace=0.45, wspace=0.38)
+
+ax_heat = fig.add_subplot(gs[0, :2])
+ax_sil  = fig.add_subplot(gs[0, 2:])
+ax_s1   = fig.add_subplot(gs[1, 0])
+ax_s2   = fig.add_subplot(gs[1, 1])
+ax_s3   = fig.add_subplot(gs[1, 2])
+ax_s4   = fig.add_subplot(gs[1, 3])
+
+# ── (a) heatmap: n_populations ────────────────────────────────────────
+pivot_n = summary.pivot(index='distance_threshold',
+                        columns='min_abundance',
+                        values='n_populations')
+im1 = ax_heat.imshow(pivot_n.values, aspect='auto',
+                     cmap='YlOrRd_r', origin='lower')
+ax_heat.set_xticks(range(len(pivot_n.columns)))
+ax_heat.set_xticklabels([f'{v:.1f}' for v in pivot_n.columns], fontsize=9)
+ax_heat.set_yticks(range(len(pivot_n.index)))
+ax_heat.set_yticklabels([f'{v:.1f}' for v in pivot_n.index], fontsize=9)
+ax_heat.set_xlabel('min abundance', fontsize=12)
+ax_heat.set_ylabel('distance threshold', fontsize=12)
+ax_heat.set_title('(a) No. of populations', fontsize=12,
+                  fontweight='bold', loc='left')
+for i in range(len(pivot_n.index)):
+    for j in range(len(pivot_n.columns)):
+        val = pivot_n.values[i, j]
+        if not np.isnan(val):
+            ax_heat.text(j, i, f'{int(val)}', ha='center', va='center',
+                         fontsize=12, color='black')
+plt.colorbar(im1, ax=ax_heat, label='n populations')
+
+# ── (b) heatmap: silhouette score ─────────────────────────────────────
+pivot_s = summary.pivot(index='distance_threshold',
+                        columns='min_abundance',
+                        values='silhouette')
+im2 = ax_sil.imshow(pivot_s.values, aspect='auto',
+                    cmap='YlGn', origin='lower',
+                    vmin=0.5, vmax=1.0)
+ax_sil.set_xticks(range(len(pivot_s.columns)))
+ax_sil.set_xticklabels([f'{v:.1f}' for v in pivot_s.columns], fontsize=9)
+ax_sil.set_yticks(range(len(pivot_s.index)))
+ax_sil.set_yticklabels([f'{v:.1f}' for v in pivot_s.index], fontsize=9)
+ax_sil.set_xlabel('min abundance', fontsize=12)
+ax_sil.set_ylabel('distance threshold', fontsize=12)
+ax_sil.set_title('(b) Silhouette score', fontsize=12,
+                 fontweight='bold', loc='left')
+for i in range(len(pivot_s.index)):
+    for j in range(len(pivot_s.columns)):
+        val = pivot_s.values[i, j]
+        if not np.isnan(val):
+            ax_sil.text(j, i, f'{val:.2f}', ha='center', va='center',
+                        fontsize=12, color='black')
+plt.colorbar(im2, ax=ax_sil, label='Silhouette score')
+
+# ── scatter panels (c-f) ──────────────────────────────────────────────
+for (dt, ma, plbl), ax in zip(scatter_panels,
+                               [ax_s1, ax_s2, ax_s3, ax_s4]):
+    sub = scatter[(scatter['distance_threshold'] == dt) &
+                  (scatter['min_abundance']       == ma)]
+
+    # excluded points — grey background
+    excl = sub[sub['excluded'] == True]
+    if not excl.empty:
+        ax.scatter(excl['q^2'], excl['D_t'],
+                   color='lightgrey', s=10, alpha=0.5,
+                   zorder=1, label='Excluded')
+
+    # included populations — coloured on top
+    incl = sub[sub['excluded'] == False]
+    seen = set()
+    for pop in incl['population'].unique():
+        pts = incl[incl['population'] == pop]
+        col = pop_colors.get(pop, 'grey')
+        lbl = pop_labels.get(pop, pop) if pop not in seen else ''
+        ax.scatter(pts['q^2'], pts['D_t'],
+                   color=col, s=14, alpha=0.8,
+                   zorder=3, label=lbl)
+        seen.add(pop)
+
+    # reference D_t lines
+    for name, Dt_ref in ref_Dt.items():
+        ax.axhline(Dt_ref, color='grey', lw=0.8, ls=':', alpha=0.6)
+
+    n_pop = summary.loc[
+        (summary['distance_threshold'] == dt) &
+        (summary['min_abundance']      == ma),
+        'n_populations'].values
+    n_str = f'n={int(n_pop[0])}' if len(n_pop) > 0 else ''
+
+    ax.set_xlabel(r'$q^2$ [nm$^{-2}$]', fontsize=12)
+    ax.set_ylabel(r'$D$ [m$^2$ s$^{-1}$]', fontsize=12)
+    ax.set_title(f'{plbl} $d_{{thr}}={dt}$, $f_{{min}}={ma}$ ({n_str})',
+                 fontsize=12, fontweight='bold', loc='left')
+    ax.grid(True, alpha=0.25)
+    ax.tick_params(labelsize=12)
+    ax.legend(fontsize=8, edgecolor='black', fancybox=True,
+              markerscale=2, loc='upper right')
+
+plt.show()

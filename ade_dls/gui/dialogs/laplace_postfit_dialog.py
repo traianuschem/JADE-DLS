@@ -685,9 +685,21 @@ class LaplacePostFitRefinementDialog(QDialog):
         settings_group.setLayout(form)
         layout.addWidget(settings_group)
 
+        btn_row = QHBoxLayout()
+
         refresh_btn = QPushButton("↺  Refresh Clustering Preview")
         refresh_btn.clicked.connect(self._refresh_clustering_preview)
-        layout.addWidget(refresh_btn)
+        btn_row.addWidget(refresh_btn)
+
+        sweep_btn = QPushButton("⊞ Parameter Sweep Heatmap…")
+        sweep_btn.setToolTip(
+            "Run clustering for a grid of distance_threshold × min_abundance values "
+            "and show heatmaps of population count and silhouette score."
+        )
+        sweep_btn.clicked.connect(self._show_parameter_sweep_heatmap)
+        btn_row.addWidget(sweep_btn)
+
+        layout.addLayout(btn_row)
 
         from matplotlib.figure import Figure as MplFigure
         self._cl_fig = MplFigure(figsize=(10, 4))
@@ -744,6 +756,79 @@ class LaplacePostFitRefinementDialog(QDialog):
             self._cl_stats_label.setText(f"Preview failed: {e}")
             import traceback
             traceback.print_exc()
+
+    def _show_parameter_sweep_heatmap(self):
+        """Run a distance_threshold × min_abundance sweep and display heatmaps."""
+        from ade_dls.analysis.clustering import clustering_parameter_sweep
+        from ade_dls.gui.analysis.cumulant_plotting import plot_clustering_heatmap
+        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QApplication
+        from matplotlib.backends.backend_qt5agg import (FigureCanvasQTAgg,
+                                                         NavigationToolbar2QT)
+
+        if self._data is None:
+            self._cl_stats_label.setText('No data available for sweep.')
+            return
+
+        gamma_cols = sorted([
+            c for c in self._data.columns
+            if c.startswith('gamma_') and not c.startswith('gamma_pop')
+        ])
+        if not gamma_cols:
+            self._cl_stats_label.setText('No gamma columns found — cannot run sweep.')
+            return
+
+        strategy_text = self._cl_strategy.currentText()
+        if 'Ward' in strategy_text:
+            strategy = 'silhouette_refined' if self._cl_silhouette.isChecked() else 'hierarchical'
+            method = 'hierarchical'
+        else:
+            strategy = 'simple'
+            method = 'simple'
+
+        self._cl_stats_label.setText('Running parameter sweep (25 combinations)…')
+        QApplication.processEvents()
+
+        try:
+            summary_df, scatter_df = clustering_parameter_sweep(
+                self._data.copy(),
+                gamma_cols=gamma_cols,
+                q_squared_col='q^2',
+                normalize_by_q2=True,
+                clustering_strategy=strategy,
+                method=method,
+            )
+        except Exception as exc:
+            self._cl_stats_label.setText(f'Sweep failed: {exc}')
+            return
+
+        self._cl_stats_label.setText(
+            f'Sweep complete — {len(summary_df)} combinations computed.')
+
+        dts = sorted(summary_df['distance_threshold'].unique())
+        mas = sorted(summary_df['min_abundance'].unique())
+        panels = []
+        if len(dts) >= 2 and len(mas) >= 2:
+            panels = [
+                (dts[0],  mas[0],  '(c)'),
+                (dts[1],  mas[1],  '(d)'),
+                (dts[-2], mas[-2], '(e)'),
+                (dts[-1], mas[-1], '(f)'),
+            ]
+
+        fig = plot_clustering_heatmap(summary_df,
+                                      scatter_df=scatter_df if panels else None,
+                                      scatter_panels=panels if panels else None)
+
+        win = QDialog(self)
+        win.setWindowTitle(f'Clustering Parameter Sweep – {self.method_name}')
+        win.resize(1100, 700)
+        layout = QVBoxLayout()
+        canvas  = FigureCanvasQTAgg(fig)
+        toolbar = NavigationToolbar2QT(canvas, win)
+        layout.addWidget(toolbar)
+        layout.addWidget(canvas)
+        win.setLayout(layout)
+        win.show()
 
     def _draw_clustering_preview(self, df, cluster_info):
         """Draw the clustering preview on the embedded matplotlib figure."""

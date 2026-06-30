@@ -941,3 +941,147 @@ def aggregate_peak_stats(cluster_info, data_df, stat_prefixes=('skewness', 'kurt
                 print(f"  Population {pop_id}: {mean_val:.3f}{std_str}")
 
     return cluster_info
+
+
+def clustering_parameter_sweep(
+    data_df,
+    gamma_cols,
+    q_squared_col='q^2',
+    distance_thresholds=(0.3, 0.7, 1.0, 1.5, 2.0),
+    min_abundances=(0.1, 0.2, 0.3, 0.4, 0.5),
+    normalize_by_q2=True,
+    clustering_strategy='silhouette_refined',
+    method='hierarchical',
+):
+    """
+    Sweep over distance_threshold × min_abundance and collect clustering metrics.
+
+    For each combination calls cluster_all_gammas() with plot=False, collects
+    n_populations, silhouette_score and per-file D_t values (included vs excluded).
+
+    Parameters
+    ----------
+    data_df : pd.DataFrame
+        DataFrame with gamma columns and q_squared_col.
+    gamma_cols : list[str]
+        Gamma column names to cluster (e.g. ['gamma_1', 'gamma_2', ...]).
+    q_squared_col : str
+        Column name for q² values.
+    distance_thresholds : sequence of float
+        Distance threshold values to sweep (log-space Ward clustering).
+    min_abundances : sequence of float
+        Minimum population abundance values to sweep (0–1).
+    normalize_by_q2 : bool
+        If True, cluster on D = Γ/q² instead of raw Γ.
+    clustering_strategy : str
+        'silhouette_refined' or 'simple'.
+    method : str
+        'hierarchical' or 'simple'.
+
+    Returns
+    -------
+    summary_df : pd.DataFrame
+        One row per (distance_threshold, min_abundance) with columns:
+        distance_threshold, min_abundance, n_populations, silhouette,
+        pop1_D_mean … pop4_D_mean, pop1_abund … pop4_abund.
+    scatter_df : pd.DataFrame
+        One row per data point per combination with columns:
+        distance_threshold, min_abundance, population, q^2, D_t, excluded.
+    """
+    # raw gamma columns (non-pop, non-mean) for identifying excluded points
+    raw_gamma_cols = [c for c in gamma_cols
+                      if not c.startswith('gamma_pop') and c != 'gamma_mean']
+
+    summary_rows = []
+    scatter_rows = []
+
+    for dt in distance_thresholds:
+        for ma in min_abundances:
+            plt.ioff()
+            try:
+                clustered, info = cluster_all_gammas(
+                    data_df,
+                    gamma_cols=gamma_cols,
+                    q_squared_col=q_squared_col,
+                    enable_clustering=True,
+                    normalize_by_q2=normalize_by_q2,
+                    n_clusters='auto',
+                    distance_threshold=dt,
+                    min_abundance=ma,
+                    clustering_strategy=clustering_strategy,
+                    method=method,
+                    uncertainty_flags=False,
+                    plot=False,
+                    interactive=False,
+                )
+            except Exception:
+                plt.close('all')
+                plt.ion()
+                continue
+            plt.close('all')
+            plt.ion()
+
+            n_pop         = info.get('n_populations', 0)
+            silhouette    = info.get('silhouette_score', np.nan)
+            reliable_cols = get_reliable_gamma_cols(info)
+            D_means       = info.get('population_D_means', [])
+            D_stds        = info.get('population_D_stds', [])
+            abundances    = info.get('population_abundances', [])
+
+            row = {
+                'distance_threshold': dt,
+                'min_abundance':      ma,
+                'n_populations':      n_pop,
+                'silhouette':         silhouette,
+            }
+            for i in range(1, 5):
+                idx = i - 1
+                row[f'pop{i}_D_mean'] = D_means[idx]    if idx < len(D_means)    else np.nan
+                row[f'pop{i}_D_std']  = D_stds[idx]     if idx < len(D_stds)     else np.nan
+                row[f'pop{i}_abund']  = abundances[idx] if idx < len(abundances) else np.nan
+            summary_rows.append(row)
+
+            # ── scatter: per data point ──────────────────────────────────
+            available_raw = [c for c in raw_gamma_cols if c in clustered.columns]
+            for _, file_row in clustered.iterrows():
+                q2 = file_row.get(q_squared_col, np.nan)
+                if not (pd.notna(q2) and q2 > 0):
+                    continue
+
+                # values in reliable populations (non-outlier)
+                reliable_vals = set()
+                for col in reliable_cols:
+                    val = file_row.get(col)
+                    if not pd.notna(val):
+                        continue
+                    pop_key = col.replace('gamma_', '')
+                    out_col = f'outlier_{pop_key}'
+                    is_out  = bool(file_row.get(out_col, False)) \
+                               if out_col in clustered.columns else False
+                    if not is_out:
+                        reliable_vals.add(val)
+                        scatter_rows.append({
+                            'distance_threshold': dt,
+                            'min_abundance':      ma,
+                            'population':         col,
+                            'q^2':                q2,
+                            'D_t':                val / (q2 * 1e18),
+                            'excluded':           False,
+                        })
+
+                # raw values not assigned to any reliable population
+                raw_vals = {file_row[c] for c in available_raw if pd.notna(file_row.get(c))}
+                for val in raw_vals - reliable_vals:
+                    if val > 0:
+                        scatter_rows.append({
+                            'distance_threshold': dt,
+                            'min_abundance':      ma,
+                            'population':         'excluded',
+                            'q^2':                q2,
+                            'D_t':                val / (q2 * 1e18),
+                            'excluded':           True,
+                        })
+
+    summary_df = pd.DataFrame(summary_rows)
+    scatter_df = pd.DataFrame(scatter_rows)
+    return summary_df, scatter_df
