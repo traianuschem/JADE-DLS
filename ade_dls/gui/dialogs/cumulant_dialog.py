@@ -55,6 +55,14 @@ def _build_q_range_group(parent_dialog):
     hint.setWordWrap(True)
     layout.addRow("", hint)
 
+    parent_dialog.fit_through_origin = QCheckBox("Fit through origin (intercept = 0)")
+    parent_dialog.fit_through_origin.setChecked(False)
+    parent_dialog.fit_through_origin.setToolTip(
+        "Force the Γ vs. q² regression through the origin (Γ = D·q²).\n"
+        "Physically Γ → 0 as q → 0, so a zero intercept is often appropriate."
+    )
+    layout.addRow("", parent_dialog.fit_through_origin)
+
     group.setLayout(layout)
 
     parent_dialog.q_range_enabled.toggled.connect(parent_dialog.q_min.setEnabled)
@@ -145,7 +153,8 @@ class CumulantADialog(QDialog):
         super().accept()
 
     def get_configuration(self):
-        return {'q_range': self.q_range}
+        return {'q_range': self.q_range,
+                'fit_through_origin': self.fit_through_origin.isChecked()}
 
 
 # ---------------------------------------------------------------------------
@@ -245,6 +254,7 @@ class CumulantBDialog(QDialog):
         return {
             'fit_limits': self.fit_limits,
             'q_range': self.q_range,
+            'fit_through_origin': self.fit_through_origin.isChecked(),
         }
 
 
@@ -317,16 +327,6 @@ class CumulantCDialog(QDialog):
         )
         options_form.addRow("", self.c_adaptive)
 
-        self.c_strategy = QComboBox()
-        self.c_strategy.addItems([
-            "Individual – Adapt for each dataset separately",
-            "Global – Use median values across all datasets",
-            "Representative – Use best signal-to-noise dataset",
-        ])
-        self.c_strategy.setCurrentIndex(0)
-        options_form.addRow("Adaptation Strategy:", self.c_strategy)
-        self.c_strategy_label = options_form.labelForField(self.c_strategy)
-
         self.c_optimizer = QComboBox()
         self.c_optimizer.addItems([
             "Levenberg-Marquardt (lm) – Recommended",
@@ -376,13 +376,6 @@ class CumulantCDialog(QDialog):
         self.c_adaptive.toggled.connect(
             lambda checked: self.init_params_group.setVisible(not checked)
         )
-
-        # Adaptation Strategy only has an effect when adaptive guesses are
-        # enabled – hide it otherwise so it doesn't look like a no-op control.
-        self.c_strategy.setVisible(self.c_adaptive.isChecked())
-        self.c_strategy_label.setVisible(self.c_adaptive.isChecked())
-        self.c_adaptive.toggled.connect(self.c_strategy.setVisible)
-        self.c_adaptive.toggled.connect(self.c_strategy_label.setVisible)
 
         # --- Processing options ---
         proc_group = QGroupBox("Processing Options")
@@ -434,13 +427,11 @@ class CumulantCDialog(QDialog):
 
         fit_func_map = {0: 'fit_function2', 1: 'fit_function3', 2: 'fit_function4'}
         optimizer_map = {0: 'lm', 1: 'trf', 2: 'dogbox'}
-        strategy_map  = {0: 'individual', 1: 'global', 2: 'representative'}
 
         self.params = {
             'fit_limits': (t_min, t_max),
             'fit_function': fit_func_map[self.c_fit_function.currentIndex()],
             'adaptive_initial_guesses': self.c_adaptive.isChecked(),
-            'adaptation_strategy': strategy_map[self.c_strategy.currentIndex()],
             'optimizer': optimizer_map[self.c_optimizer.currentIndex()],
             'use_multiprocessing': self.c_multiprocessing.isChecked(),
             'initial_parameters': [
@@ -456,9 +447,11 @@ class CumulantCDialog(QDialog):
         super().accept()
 
     def get_configuration(self):
+        self.params['fit_through_origin'] = self.fit_through_origin.isChecked()
         return {
             'method_c_params': self.params,
             'q_range': self.q_range,
+            'fit_through_origin': self.fit_through_origin.isChecked(),
         }
 
 
@@ -659,7 +652,9 @@ class CumulantDDialog(QDialog):
         super().accept()
 
     def get_configuration(self):
+        self.params['fit_through_origin'] = self.fit_through_origin.isChecked()
         return {
             'params': self.params,
             'q_range': self.q_range,
+            'fit_through_origin': self.fit_through_origin.isChecked(),
         }

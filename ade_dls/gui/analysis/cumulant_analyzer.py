@@ -196,7 +196,32 @@ class CumulantAnalyzer:
 
         return self.processed_correlations
 
-    def run_method_a(self, q_range=None) -> pd.DataFrame:
+    @staticmethod
+    def _fit_gamma_vs_q2(X, Y, fit_through_origin=False):
+        """OLS linear fit of Γ vs q² for the diffusion coefficient.
+
+        When fit_through_origin is True the fit is performed without a constant
+        term (Γ = D·q², intercept fixed at 0); otherwise a free intercept is used.
+        Fitting without a constant keeps the full statsmodels ``model`` API intact
+        (rsquared, resid, summary, aic, …). Returns
+        (model, slope, slope_se, intercept, intercept_se).
+        """
+        import statsmodels.api as sm
+        if fit_through_origin:
+            model = sm.OLS(Y, X).fit()               # no constant → through origin
+            slope        = float(model.params.iloc[0])
+            slope_se     = float(model.bse.iloc[0])
+            intercept    = 0.0
+            intercept_se = 0.0
+        else:
+            model = sm.OLS(Y, sm.add_constant(X)).fit()
+            slope        = float(model.params.iloc[-1])
+            slope_se     = float(model.bse.iloc[-1])
+            intercept    = float(model.params.iloc[0])
+            intercept_se = float(model.bse.iloc[0])
+        return model, slope, slope_se, intercept, intercept_se
+
+    def run_method_a(self, q_range=None, fit_through_origin=False) -> pd.DataFrame:
         """
         Run Cumulant Method A
 
@@ -289,8 +314,9 @@ class CumulantAnalyzer:
             if gamma_col in cumulant_method_A_data.columns:
                 X = cumulant_method_A_data['q^2']
                 Y = cumulant_method_A_data[gamma_col]
-                X_with_const = sm.add_constant(X)
-                model = sm.OLS(Y, X_with_const).fit()
+                model, slope_a, slope_se_a, intercept_a, intercept_se_a = self._fit_gamma_vs_q2(
+                    X, Y, fit_through_origin
+                )
                 models_list.append(model)
 
                 # Full normality test – identical to JADE 2.0 / analyze_diffusion_coefficient()
@@ -324,9 +350,10 @@ class CumulantAnalyzer:
 
                 results_list.append({
                     'gamma_col':         gamma_col,
-                    'intercept':         model.params.iloc[0],
-                    'q^2_coef':          model.params.iloc[1],
-                    'q^2_se':            model.bse.iloc[1],
+                    'intercept':         intercept_a,
+                    'intercept_se':      intercept_se_a,
+                    'q^2_coef':          slope_a,
+                    'q^2_se':            slope_se_a,
                     'R_squared':         model.rsquared,
                     'Normality':         normality_status,
                     'JB_p_value':        jb_p_value,
@@ -444,6 +471,9 @@ class CumulantAnalyzer:
                 'Residuals':         cumulant_method_A_diff['Normality'].iloc[i],
                 'PDI':               pdi_values[i]      if i < len(pdi_values)      else np.nan,
                 'Skewness':          skewness_values[i] if i < len(skewness_values) else np.nan,
+                'Kurtosis':          np.nan,   # ALV cumulant export has no µ₄
+                'intercept':         cumulant_method_A_diff['intercept'].iloc[i],
+                'intercept_se':      cumulant_method_A_diff['intercept_se'].iloc[i],
             }
             result_rows.append(row)
         self.method_a_results = pd.DataFrame(result_rows)
@@ -526,6 +556,7 @@ class CumulantAnalyzer:
                 'Residuals':         'n/a (LS Rh direct)',
                 'PDI':               pdi,
                 'Skewness':          np.nan,   # LS cumulant export has no µ₃
+                'Kurtosis':          np.nan,   # LS cumulant export has no µ₄
             })
 
         if not result_rows:
@@ -546,7 +577,7 @@ class CumulantAnalyzer:
 
         return self.method_a_results
 
-    def run_method_b(self, fit_limits: Tuple[float, float], q_range=None) -> pd.DataFrame:
+    def run_method_b(self, fit_limits: Tuple[float, float], q_range=None, fit_through_origin=False) -> pd.DataFrame:
         """
         Run Cumulant Method B
 
@@ -617,16 +648,17 @@ class CumulantAnalyzer:
 
         # Analyze diffusion coefficient (Γ vs q²)
         print(f"[Step 5/5] Analyzing diffusion coefficient (Γ vs q²)...")
-        import statsmodels.api as sm
+        self.method_b_fit_through_origin = fit_through_origin  # remembered for refine
 
         # Linear regression — filter NaN rows (failed per-file fits)
         valid_mask = cumulant_method_B_data['Gamma'].notna()
         X = cumulant_method_B_data.loc[valid_mask, 'q^2']
         Y = cumulant_method_B_data.loc[valid_mask, 'Gamma']
-        X_with_const = sm.add_constant(X)
-        model = sm.OLS(Y, X_with_const).fit()
+        model, slope_b, slope_se_b, intercept_b, intercept_se_b = self._fit_gamma_vs_q2(
+            X, Y, fit_through_origin
+        )
 
-        print(f"            Slope (D): {model.params.iloc[1]:.4e} s⁻¹·nm²")
+        print(f"            Slope (D): {slope_b:.4e} s⁻¹·nm²")
         print(f"            R²: {model.rsquared:.6f}")
 
         # Create summary plot
@@ -650,8 +682,8 @@ class CumulantAnalyzer:
 
         # Calculate diffusion coefficients
         B_diff = pd.DataFrame()
-        B_diff['D [m^2/s]'] = [model.params.iloc[1] * 10**(-18)]
-        B_diff['std err D [m^2/s]'] = [model.bse.iloc[1] * 10**(-18)]
+        B_diff['D [m^2/s]'] = [slope_b * 10**(-18)]
+        B_diff['std err D [m^2/s]'] = [slope_se_b * 10**(-18)]
 
         # Calculate final results
         print("\nCalculating hydrodynamic radius...")
@@ -678,6 +710,10 @@ class CumulantAnalyzer:
             'Fit':            ['Rh from linear cumulant fit'],
             'Residuals':      [normality_b],
             'PDI':            [np.nan],
+            'Skewness':       [np.nan],  # not available from the linear fit
+            'Kurtosis':       [np.nan],  # not available from the linear fit
+            'intercept':      [intercept_b],
+            'intercept_se':   [intercept_se_b],
         })
 
         print(f"\nFINAL RESULTS:")
@@ -689,8 +725,8 @@ class CumulantAnalyzer:
         self.method_b_regression_stats = {
             'summary': str(model.summary()),
             'params': model.params.to_dict(),
-            'stderr_intercept': float(model.bse.iloc[0]),
-            'stderr_slope': float(model.bse.iloc[1]),
+            'stderr_intercept': intercept_se_b,
+            'stderr_slope': slope_se_b,
             'rsquared': float(model.rsquared),
             'rsquared_adj': float(model.rsquared_adj),
             'fvalue': float(model.fvalue),
@@ -740,17 +776,19 @@ class CumulantAnalyzer:
 
         X = data.loc[valid_mask, 'q^2']
         Y = data.loc[valid_mask, 'Gamma']
-        X_with_const = sm.add_constant(X)
-        model = sm.OLS(Y, X_with_const).fit()
+        fit_through_origin = getattr(self, 'method_b_fit_through_origin', False)
+        model, slope_b, slope_se_b, intercept_b, intercept_se_b = self._fit_gamma_vs_q2(
+            X, Y, fit_through_origin
+        )
 
-        print(f"  [Method B refine] Slope (D): {model.params.iloc[1]:.4e} s⁻¹·nm²  "
+        print(f"  [Method B refine] Slope (D): {slope_b:.4e} s⁻¹·nm²  "
               f"R²={model.rsquared:.6f}")
 
         self.method_b_summary_plot = create_summary_plot(data, 'q^2', ['Gamma'],
                                                           ['Method B'], '1/s')
 
-        D = model.params.iloc[1] * 1e-18  # nm² → m²
-        D_err = model.bse.iloc[1] * 1e-18
+        D = slope_b * 1e-18  # nm² → m²
+        D_err = slope_se_b * 1e-18
 
         rh_value = self.c_value * (1 / D) * 1e9
         frac_err = np.sqrt((self.delta_c / self.c_value)**2 + (D_err / D)**2)
@@ -771,13 +809,17 @@ class CumulantAnalyzer:
             'Fit':            ['Rh from linear cumulant fit (refined)'],
             'Residuals':      [normality_b],
             'PDI':            [np.nan],
+            'Skewness':       [np.nan],  # not available from the linear fit
+            'Kurtosis':       [np.nan],  # not available from the linear fit
+            'intercept':      [intercept_b],
+            'intercept_se':   [intercept_se_b],
         })
 
         self.method_b_regression_stats = {
             'summary':           str(model.summary()),
             'params':            model.params.to_dict(),
-            'stderr_intercept':  float(model.bse.iloc[0]),
-            'stderr_slope':      float(model.bse.iloc[1]),
+            'stderr_intercept':  intercept_se_b,
+            'stderr_slope':      slope_se_b,
             'rsquared':          float(model.rsquared),
             'rsquared_adj':      float(model.rsquared_adj),
             'fvalue':            float(model.fvalue),
@@ -856,7 +898,7 @@ class CumulantAnalyzer:
                 self.processed_correlations,
                 chosen_fit_function,
                 params['initial_parameters'],
-                strategy=params['adaptation_strategy'],
+                strategy=params.get('adaptation_strategy', 'individual'),
                 verbose=False
             )
         else:
@@ -928,13 +970,16 @@ class CumulantAnalyzer:
         valid_mask = cumulant_method_C_data['best_b'].notna()
         X = cumulant_method_C_data.loc[valid_mask, 'q^2']
         Y = cumulant_method_C_data.loc[valid_mask, 'best_b']
-        X_with_const = sm.add_constant(X)
-        model = sm.OLS(Y, X_with_const).fit()
+        fit_through_origin = params.get('fit_through_origin', False)
+        self.method_c_fit_through_origin = fit_through_origin  # remembered for recompute
+        model, slope_c, slope_se_c, intercept_c, intercept_se_c = self._fit_gamma_vs_q2(
+            X, Y, fit_through_origin
+        )
 
         # Create DataFrame with diffusion coefficients
         C_diff = pd.DataFrame()
-        C_diff['D [m^2/s]'] = [model.params.iloc[1] * 10**(-18)]
-        C_diff['std err D [m^2/s]'] = [model.bse.iloc[1] * 10**(-18)]
+        C_diff['D [m^2/s]'] = [slope_c * 10**(-18)]
+        C_diff['std err D [m^2/s]'] = [slope_se_c * 10**(-18)]
 
         # Calculate polydispersity
         cumulant_method_C_data['polydispersity'] = (
@@ -977,13 +1022,15 @@ class CumulantAnalyzer:
         else:
             kurtosis_c = np.nan
         self.method_c_results['Kurtosis'] = [kurtosis_c]
+        self.method_c_results['intercept'] = [intercept_c]
+        self.method_c_results['intercept_se'] = [intercept_se_c]
 
         # Store regression statistics as strings/dicts (not model object)
         self.method_c_regression_stats = {
             'summary': str(model.summary()),
             'params': model.params.to_dict(),
-            'stderr_intercept': float(model.bse.iloc[0]),
-            'stderr_slope': float(model.bse.iloc[1]),
+            'stderr_intercept': intercept_se_c,
+            'stderr_slope': slope_se_c,
             'rsquared': float(model.rsquared),
             'rsquared_adj': float(model.rsquared_adj),
             'fvalue': float(model.fvalue),
@@ -1053,16 +1100,18 @@ class CumulantAnalyzer:
         self.method_c_recompute_n_files_in_range = n_files_in_range
         print(f"[METHOD C RECOMPUTE] Recomputing with {n_data_points} data points from {n_files_in_range} files")
 
-        # Linear regression for diffusion coefficient
+        # Linear regression for diffusion coefficient (inherit fit-through-origin from the run)
         X = cumulant_method_C_data['q^2']
         Y = cumulant_method_C_data['best_b']
-        X_with_const = sm.add_constant(X)
-        model = sm.OLS(Y, X_with_const).fit()
+        fit_through_origin = getattr(self, 'method_c_fit_through_origin', False)
+        model, slope_rc, slope_se_rc, intercept_rc, intercept_se_rc = self._fit_gamma_vs_q2(
+            X, Y, fit_through_origin
+        )
 
         # Create DataFrame with diffusion coefficients
         C_diff = pd.DataFrame()
-        C_diff['D [m^2/s]'] = [model.params.iloc[1] * 10**(-18)]
-        C_diff['std err D [m^2/s]'] = [model.bse.iloc[1] * 10**(-18)]
+        C_diff['D [m^2/s]'] = [slope_rc * 10**(-18)]
+        C_diff['std err D [m^2/s]'] = [slope_se_rc * 10**(-18)]
 
         # Calculate polydispersity
         cumulant_method_C_data['polydispersity'] = (
@@ -1103,6 +1152,8 @@ class CumulantAnalyzer:
         else:
             kurtosis_rc = np.nan
         recomputed_results['Kurtosis'] = [kurtosis_rc]
+        recomputed_results['intercept'] = [intercept_rc]
+        recomputed_results['intercept_se'] = [intercept_se_rc]
 
         print(f"[METHOD C RECOMPUTE] Recomputed Rh: {rh_value:.2f} ± {rh_error:.2f} nm")
         print(f"[METHOD C RECOMPUTE] R²: {model.rsquared:.4f}")
@@ -1390,9 +1441,11 @@ class CumulantAnalyzer:
         # Step 7: Per-population OLS + combined Rh
         # ------------------------------------------------------------------
         print(f"[Step 7/7] Computing Rh per population and combined (⟨Γ⟩ vs q²)...")
+        self.method_d_fit_through_origin = params.get('fit_through_origin', False)  # remembered for refine
         self.method_d_results = self._compute_method_d_results(
             self.method_d_clustered_df, reliable_cols, method_d_data,
-            mode_params=None, combined_q_range=None
+            mode_params=None, combined_q_range=None,
+            fit_through_origin=self.method_d_fit_through_origin
         )
 
         # Per-population Γ vs q² + OLS figure
@@ -1413,7 +1466,8 @@ class CumulantAnalyzer:
     # ------------------------------------------------------------------
 
     def _compute_method_d_results(self, clustered_df, reliable_cols, method_d_data,
-                                   mode_params=None, combined_q_range=None) -> pd.DataFrame:
+                                   mode_params=None, combined_q_range=None,
+                                   fit_through_origin=False) -> pd.DataFrame:
         """
         Compute OLS regression for each reliable population and the combined row.
 
@@ -1452,7 +1506,9 @@ class CumulantAnalyzer:
                 print(f"  Population {pop_num}: only {valid.sum()} points, skipping.")
                 continue
 
-            model = sm.OLS(Y[valid], sm.add_constant(X[valid])).fit()
+            model, slope_d, slope_se_d, int_d, int_se_d = self._fit_gamma_vs_q2(
+                X[valid], Y[valid], fit_through_origin
+            )
 
             # Optional outlier removal and re-fit
             outlier_sigma = mparams.get('outlier_sigma')
@@ -1461,10 +1517,12 @@ class CumulantAnalyzer:
                 inliers = valid.copy()
                 inliers[valid] = np.abs(model.resid) <= outlier_sigma * resid_std
                 if inliers.sum() >= min_pts:
-                    model = sm.OLS(Y[inliers], sm.add_constant(X[inliers])).fit()
+                    model, slope_d, slope_se_d, int_d, int_se_d = self._fit_gamma_vs_q2(
+                        X[inliers], Y[inliers], fit_through_origin
+                    )
 
-            D_val = model.params.iloc[1] * 1e-18
-            D_err = model.bse.iloc[1] * 1e-18
+            D_val = slope_d * 1e-18
+            D_err = slope_se_d * 1e-18
             Rh = self.c_value / D_val * 1e9
             Rh_err = np.sqrt((self.delta_c / self.c_value)**2 + (D_err / D_val)**2) * Rh
 
@@ -1481,6 +1539,8 @@ class CumulantAnalyzer:
                 'Kurtosis':       np.nan,
                 'n_modes_mean':   np.nan,
                 'n_populations_mean': len(reliable_cols),
+                'intercept':      int_d,
+                'intercept_se':   int_se_d,
             })
 
         # --- Combined row (gamma_mean → OLS) ---
@@ -1491,10 +1551,12 @@ class CumulantAnalyzer:
             valid_comb = valid_comb & X_comb.between(*combined_q_range)
 
         common = X_comb[valid_comb].index
-        model_total = sm.OLS(Y_comb.loc[common], sm.add_constant(X_comb.loc[common])).fit()
+        model_total, slope_tot, slope_se_tot, int_tot, int_se_tot = self._fit_gamma_vs_q2(
+            X_comb.loc[common], Y_comb.loc[common], fit_through_origin
+        )
 
-        D_total = model_total.params.iloc[1] * 1e-18
-        D_total_err = model_total.bse.iloc[1] * 1e-18
+        D_total = slope_tot * 1e-18
+        D_total_err = slope_se_tot * 1e-18
         Rh_total = self.c_value / D_total * 1e9
         Rh_total_err = np.sqrt(
             (self.delta_c / self.c_value)**2 + (D_total_err / D_total)**2
@@ -1518,13 +1580,15 @@ class CumulantAnalyzer:
             'Kurtosis':       mean_kurtosis,
             'n_modes_mean':   mean_n_modes,
             'n_populations_mean': len(reliable_cols),
+            'intercept':      int_tot,
+            'intercept_se':   int_se_tot,
         })
 
         self.method_d_regression_stats = {
             'summary':           str(model_total.summary()),
             'params':            model_total.params.to_dict(),
-            'stderr_intercept':  float(model_total.bse.iloc[0]),
-            'stderr_slope':      float(model_total.bse.iloc[1]),
+            'stderr_intercept':  int_se_tot,
+            'stderr_slope':      slope_se_tot,
             'rsquared':          float(model_total.rsquared),
             'rsquared_adj':      float(model_total.rsquared_adj),
             'fvalue':            float(model_total.fvalue),
@@ -1583,6 +1647,7 @@ class CumulantAnalyzer:
         self.method_d_results = self._compute_method_d_results(
             self.method_d_clustered_df, reliable_cols, self.method_d_data,
             mode_params=mode_params, combined_q_range=combined_q_range,
+            fit_through_origin=getattr(self, 'method_d_fit_through_origin', False),
         )
 
         print("Refinement complete.")

@@ -128,7 +128,8 @@ class TransparentPipeline(QObject):
 
     def add_post_refinement_step(self, method_name: str, q_range: tuple = None,
                                  excluded_files: List[str] = None,
-                                 is_laplace: bool = False) -> AnalysisStep:
+                                 is_laplace: bool = False,
+                                 extra_params: Dict[str, Any] = None) -> AnalysisStep:
         """
         Add a post-fit refinement step to the pipeline
 
@@ -137,6 +138,10 @@ class TransparentPipeline(QObject):
             q_range: Optional (min, max) q² range for refinement
             excluded_files: Optional list of files/datasets to exclude
             is_laplace: True for NNLS/Regularized, False for Cumulant methods
+            extra_params: Optional dict of additional refinement parameters to record
+                          in provenance (e.g. fit_through_origin, clustering settings).
+                          Merged in before method/q_range/excluded_files so those three
+                          keys always win if extra_params happens to repeat them.
 
         Returns:
             The created AnalysisStep
@@ -158,6 +163,7 @@ class TransparentPipeline(QObject):
             step_type='refinement',
             custom_code=code,
             params={
+                **(extra_params or {}),
                 'method': method_name,
                 'q_range': q_range,
                 'excluded_files': excluded_files or []

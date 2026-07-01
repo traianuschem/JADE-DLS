@@ -448,11 +448,13 @@ class JADEDLSMainWindow(QMainWindow):
                 self.status_manager.error("Cumulant Method A: no data available")
                 return
 
-            result = analyzer.run_method_a(q_range=config['q_range'])
+            result = analyzer.run_method_a(q_range=config['q_range'],
+                                           fit_through_origin=config.get('fit_through_origin', False))
 
             self.status_manager.complete_operation("Cumulant Method A completed")
             self._display_cumulant_results([('Method A', result)], analyzer)
             self._add_cumulant_step_to_pipeline('A', {'q_range': config['q_range'],
+                                                       'fit_through_origin': config.get('fit_through_origin', False),
                                                        'methods': ['A'],
                                                        'method_a_params': {},
                                                        'method_b_params': {},
@@ -484,11 +486,13 @@ class JADEDLSMainWindow(QMainWindow):
                 return
 
             result = analyzer.run_method_b(config['fit_limits'],
-                                           q_range=config['q_range'])
+                                           q_range=config['q_range'],
+                                           fit_through_origin=config.get('fit_through_origin', False))
 
             self.status_manager.complete_operation("Cumulant Method B completed")
             self._display_cumulant_results([('Method B', result)], analyzer)
             self._add_cumulant_step_to_pipeline('B', {'q_range': config['q_range'],
+                                                       'fit_through_origin': config.get('fit_through_origin', False),
                                                        'methods': ['B'],
                                                        'method_a_params': {},
                                                        'method_b_params': {'fit_limits': config['fit_limits']},
@@ -1398,7 +1402,7 @@ def {params['fit_function']}(x, a, b, c, *args):
 # Parameters
 fit_limits = {params['fit_limits']}
 adaptive_initial_guesses = {params['adaptive_initial_guesses']}
-adaptation_strategy = '{params['adaptation_strategy']}'
+adaptation_strategy = '{params.get('adaptation_strategy', 'individual')}'
 optimizer = '{params['optimizer']}'
 base_initial_parameters = {params['initial_parameters']}
 

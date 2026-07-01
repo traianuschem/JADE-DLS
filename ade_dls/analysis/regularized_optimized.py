@@ -64,7 +64,7 @@ def create_tikhonov_matrix_cached(n: int) -> np.ndarray:
     Returns:
         D2 matrix for regularization
     """
-    D2 = sparse.diags([1, -2, 1], [-1, 0, 1], shape=(n-2, n)).toarray()
+    D2 = sparse.diags([1, -2, 1], [-1, 0, 1], shape=(n-2, n), dtype=float).toarray()
     return D2
 
 
@@ -128,12 +128,13 @@ def nnls_optimized(df: pd.DataFrame, name: str, nnls_params: dict,
     # Normalization to the total sum
     normalized_amplitudes_sum = peak_amplitudes / np.sum(peak_amplitudes) if len(peak_amplitudes) > 0 else np.array([])
 
-    # Area-based normalization (trapz integral per peak segment)
+    # Area-based normalization (trapz integral per peak segment, log-τ space to
+    # match JADE — grid is log-spaced, so integrate over d(ln τ))
     peak_areas = []
     for peak_index in peaks:
         left  = max(0, peak_index - 10)
         right = min(len(decay_times), peak_index + 10)
-        area  = np.trapezoid(f_optimized[left:right], decay_times[left:right])
+        area  = np.trapezoid(f_optimized[left:right], np.log(decay_times[left:right]))
         peak_areas.append(max(area, 0.0))
     total_area = sum(peak_areas) if sum(peak_areas) > 0 else 1.0
     normalized_area_pct = [a / total_area * 100 for a in peak_areas]
@@ -300,6 +301,114 @@ def _plot_nnls_results(name: str, df: pd.DataFrame, decay_times: np.ndarray,
 
 
 # ===== CALCULATION HELPERS =====
+def _compute_peak_statistics(peaks, peak_properties, f_optimized, decay_times):
+    """Per-peak shape statistics in log-τ space (matches JADE regularized.py).
+
+    Since the decay-time grid is log-spaced, the peak area is integrated over
+    d(ln τ) and the FWHM and weighted moments (skewness, kurtosis) are computed
+    in log-τ space. Each peak segment is extended from its half-max width points
+    down to 1% of the peak height (its base) for the area/moment calculation.
+
+    Returns (peak_stats dict, normalized_area_percent list, normalized_sum_percent list).
+    """
+    peak_amplitudes = f_optimized[peaks]
+    peak_stats = {}
+
+    for i, peak_idx in enumerate(peaks):
+        #locate the peak base — start from the half-max width points, extend to 1% of peak height
+        try:
+            left_idx = int(peak_properties['left_ips'][i])
+            right_idx = int(peak_properties['right_ips'][i])
+            threshold = 0.01 * f_optimized[peak_idx]
+
+            left_base_idx = left_idx
+            while left_base_idx > 0 and f_optimized[left_base_idx] > threshold:
+                left_base_idx -= 1
+
+            right_base_idx = right_idx
+            while right_base_idx < len(f_optimized) - 1 and f_optimized[right_base_idx] > threshold:
+                right_base_idx += 1
+
+            left_base_idx = max(0, left_base_idx)
+            right_base_idx = min(len(f_optimized) - 1, right_base_idx)
+        except (IndexError, KeyError):
+            #fallback: walk down to the local minima on both sides of the peak
+            left_base_idx = max(0, peak_idx - 1)
+            while left_base_idx > 0 and f_optimized[left_base_idx] > f_optimized[left_base_idx - 1]:
+                left_base_idx -= 1
+            right_base_idx = min(len(f_optimized) - 1, peak_idx + 1)
+            while right_base_idx < len(f_optimized) - 1 and f_optimized[right_base_idx] > f_optimized[right_base_idx + 1]:
+                right_base_idx += 1
+
+        peak_segment = f_optimized[left_base_idx:right_base_idx + 1]
+        peak_x = decay_times[left_base_idx:right_base_idx + 1]
+
+        #area via trapezoidal rule in log-τ space (grid is log-spaced → integrate over d(ln τ))
+        peak_area = np.trapezoid(peak_segment, np.log(peak_x))
+
+        #FWHM in log-τ space
+        half_max = peak_amplitudes[i] / 2
+        above_half_max = peak_segment >= half_max
+        if np.sum(above_half_max) > 0:
+            idx_above = np.where(above_half_max)[0]
+            l_i, r_i = idx_above[0], idx_above[-1]
+            if r_i > l_i and r_i < len(peak_x) and l_i < len(peak_x):
+                fwhm = np.log(peak_x[r_i]) - np.log(peak_x[l_i])
+            else:
+                fwhm = 0
+        else:
+            fwhm = 0
+
+        #weighted moments in log-τ space — consistent with area computed via d(ln τ)
+        #note: skewness sign is opposite to cumulant skewness (τ vs Γ space)
+        ln_x = np.log(peak_x)
+        w = peak_segment / np.sum(peak_segment) if np.sum(peak_segment) > 0 else np.ones(len(peak_segment)) / len(peak_segment)
+        ln_mean = np.sum(ln_x * w)
+        weighted_mean = np.exp(ln_mean)                          # geometric mean in τ-space
+        variance = np.sum(w * (ln_x - ln_mean)**2)               # variance in log-τ space
+        std_dev = np.sqrt(variance) if variance > 0 else 0
+        if std_dev > 0 and len(peak_segment) >= 3:
+            peak_skewness = np.sum(w * (ln_x - ln_mean)**3) / std_dev**3
+        else:
+            peak_skewness = 0
+        if std_dev > 0 and len(peak_segment) >= 4:
+            peak_kurtosis = np.sum(w * (ln_x - ln_mean)**4) / std_dev**4 - 3
+        else:
+            peak_kurtosis = 0
+
+        peak_stats[f'peak_{i+1}'] = {
+            'position' : decay_times[peak_idx],
+            'amplitude': peak_amplitudes[i],
+            'area'     : peak_area,
+            'fwhm'     : fwhm,
+            'centroid' : weighted_mean,
+            'std_dev'  : std_dev,
+            'skewness' : peak_skewness,   # τ-space: positive = tail toward larger particles
+            'kurtosis' : peak_kurtosis,   # excess kurtosis: >0 = sharp, <0 = broad
+        }
+
+    #area-based normalization over detected peaks only (used for SLS intensity weighting)
+    if len(peaks) > 0 and peak_stats:
+        total_area = np.sum([peak_stats[f'peak_{i+1}']['area'] for i in range(len(peaks))])
+        if total_area > 0:
+            normalized_area_percent = [
+                peak_stats[f'peak_{i+1}']['area'] / total_area * 100 for i in range(len(peaks))
+            ]
+        else:
+            normalized_area_percent = [100.0 / len(peaks)] * len(peaks)
+
+        total_amp = np.sum(peak_amplitudes)
+        if total_amp > 0:
+            normalized_sum_percent = [peak_amplitudes[i] / total_amp * 100 for i in range(len(peaks))]
+        else:
+            normalized_sum_percent = [100.0 / len(peaks)] * len(peaks)
+    else:
+        normalized_area_percent = []
+        normalized_sum_percent = []
+
+    return peak_stats, normalized_area_percent, normalized_sum_percent
+
+
 def regularized_nnls_optimized(df: pd.DataFrame, name: str, params: dict,
                                plot_number: int = 1, T_matrix: Optional[np.ndarray] = None) -> Tuple:
     """
@@ -319,6 +428,7 @@ def regularized_nnls_optimized(df: pd.DataFrame, name: str, params: dict,
     prominence = params.get('prominence', 0.01)
     distance = params.get('distance', 1)
     alpha = params.get('alpha', 0.01)
+    fit_beta = params.get('fit_beta', False)
 
     # Create the vectors
     tau = df['t [s]'].to_numpy()
@@ -334,10 +444,18 @@ def regularized_nnls_optimized(df: pd.DataFrame, name: str, params: dict,
     n = len(decay_times)
     D2 = create_tikhonov_matrix_cached(n)
 
-    # Define the regularized objective function
-    def residuals_regularized(f, T, D, D2, alpha):
-        # g(2)(τ)-1 = (∑_i A_i * exp(-τ/τ_i))^2
-        model_output = (T @ f)**2
+    # Define the regularized objective function.
+    # Model: g(2)(τ)-1 = β · (∑_i A_i · exp(-τ/τ_i))², where β is the coherence
+    # factor (intercept). β is fitted as a separate parameter only when fit_beta.
+    def residuals_regularized(params_vec, T, D, D2, alpha):
+        if fit_beta:
+            beta_val = params_vec[0]
+            f = params_vec[1:]
+        else:
+            beta_val = 1.0
+            f = params_vec
+
+        model_output = beta_val * (T @ f)**2
 
         # data fidelity residuals
         fit_residuals = model_output - D
@@ -346,13 +464,19 @@ def regularized_nnls_optimized(df: pd.DataFrame, name: str, params: dict,
         smoothness_penalty = alpha * (D2 @ f)
         return np.concatenate([fit_residuals, smoothness_penalty])
 
-    # Initial guess (uniform distribution)
-    f0 = np.ones(T.shape[1])
+    # Initial guess (uniform distribution); prepend β (bounded 0–2) when fitting it.
+    if fit_beta:
+        beta_init = float(np.max(D[:min(5, len(D))]))  # g²(0)-1 ≈ β
+        f0 = np.concatenate([[beta_init], np.ones(T.shape[1])])
+        bounds = (np.concatenate([[0.0], np.zeros(T.shape[1])]),
+                  np.concatenate([[2.0], np.full(T.shape[1], np.inf)]))
+    else:
+        f0 = np.ones(T.shape[1])
+        bounds = (0, np.inf)
 
     # Perform non-negative least squares with regularization
-    bounds = (0, np.inf)
     result = least_squares(
-        lambda f: residuals_regularized(f, T, D, D2, alpha),
+        lambda p: residuals_regularized(p, T, D, D2, alpha),
         f0,
         bounds=bounds,
         method='trf',
@@ -360,27 +484,47 @@ def regularized_nnls_optimized(df: pd.DataFrame, name: str, params: dict,
         xtol=1e-8,
         max_nfev=500  # Limit iterations for performance
     )
-    f_optimized = result.x
+    if fit_beta:
+        beta_fitted = float(result.x[0])
+        f_optimized = result.x[1:]
+    else:
+        beta_fitted = 1.0
+        f_optimized = result.x
 
     # Calculate the optimized function
-    optimized_values = (T @ f_optimized)**2
+    optimized_values = beta_fitted * (T @ f_optimized)**2
     residuals_values = optimized_values - D
 
     # Calculate RMSE
     rmse = np.sqrt(np.mean(residuals_values**2))
 
-    # Find peaks
-    peaks, _ = find_peaks(f_optimized, prominence=prominence, distance=distance, width=0)
+    # Find peaks (width=0 so we get left_ips/right_ips for the peak-statistics base)
+    peaks, peak_properties = find_peaks(f_optimized, prominence=prominence, distance=distance, width=0)
 
     # Log convergence details
+    beta_str = f", β={beta_fitted:.3f}" if fit_beta else ""
     print(f"    └─ Fit: {result.status} (message: {result.message[:50]}...)")
-    print(f"    └─ Iterations: {result.nfev}, RMSE: {rmse:.4e}, Peaks found: {len(peaks)}")
+    print(f"    └─ Iterations: {result.nfev}, RMSE: {rmse:.4e}, Peaks found: {len(peaks)}{beta_str}")
+
+    # Per-peak shape statistics (log-τ space, matches JADE) → feeds SLS intensity weighting
+    peak_stats, normalized_area_percent, normalized_sum_percent = _compute_peak_statistics(
+        peaks, peak_properties, f_optimized, decay_times
+    )
 
     # Prepare results for this dataframe
-    results = {'filename': name}
-    for i, peak_index in enumerate(peaks):
-        results[f'tau_{i+1}'] = decay_times[peak_index]
-        results[f'intensity_{i+1}'] = f_optimized[peak_index]
+    results = {'filename': name, 'beta': beta_fitted}
+    for i in range(len(peaks)):
+        st = peak_stats[f'peak_{i+1}']
+        results[f'tau_{i+1}']                     = st['position']
+        results[f'intensity_{i+1}']               = st['amplitude']
+        results[f'normalized_sum_percent_{i+1}']  = normalized_sum_percent[i]
+        results[f'normalized_area_percent_{i+1}'] = normalized_area_percent[i]
+        results[f'area_{i+1}']                    = st['area']
+        results[f'fwhm_{i+1}']                    = st['fwhm']
+        results[f'skewness_{i+1}']                = st['skewness']
+        results[f'kurtosis_{i+1}']                = st['kurtosis']
+        results[f'std_dev_{i+1}']                 = st['std_dev']
+        results[f'centroid_{i+1}']                = st['centroid']
 
     return results, f_optimized, optimized_values, residuals_values, peaks
 

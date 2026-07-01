@@ -208,6 +208,8 @@ class InspectorPanel(QWidget):
             'cumulant_a': self.get_cumulant_a_docs(),
             'cumulant_b': self.get_cumulant_b_docs(),
             'cumulant_c': self.get_cumulant_c_docs(),
+            'cumulant_d': self.get_cumulant_d_docs(),
+            'method_d': self.get_cumulant_d_docs(),
             'nnls': self.get_nnls_docs(),
             'regularized': self.get_regularized_docs(),
         }
@@ -223,6 +225,7 @@ class InspectorPanel(QWidget):
 <li><b>Method A:</b> Uses cumulant fit data from ALV software (1st, 2nd, 3rd order)</li>
 <li><b>Method B:</b> Simple linear fit of ln[g(τ)^0.5] vs τ</li>
 <li><b>Method C:</b> Iterative non-linear least squares fit</li>
+<li><b>Method D:</b> Multi-exponential (Dirac-delta) decomposition into populations</li>
 </ul>
 
 <h4>Inverse Laplace Methods</h4>
@@ -289,6 +292,19 @@ in the provenance record for integrity verification.</p>
 <p><b>Optimization methods:</b> Levenberg-Marquardt, TRF, Dogbox</p>
 <p><b>Best for:</b> Accurate analysis of moderately polydisperse samples</p>
 <p><b>Features:</b> Adaptive initial parameter guessing</p>
+"""
+
+    def get_cumulant_d_docs(self):
+        return """
+<h3>Cumulant Method D</h3>
+<p>Multi-exponential decomposition: fits g²(τ) to a sum of Dirac-delta
+relaxation modes, g₁(τ) = (1/n)·Σᵢ exp(-Γᵢτ).</p>
+<p><b>Algorithm:</b> Iteratively increases the number of modes and selects the
+optimal order via AIC / convergence checks; fitted decay rates are then grouped
+into populations.</p>
+<p><b>Provides:</b> per-population Γ, D, Rh plus distribution moments
+(PDI, skewness, kurtosis)</p>
+<p><b>Best for:</b> Bimodal samples or when PDI &gt; 0.2 (e.g. monomer + aggregate)</p>
 """
 
     def get_nnls_docs(self):

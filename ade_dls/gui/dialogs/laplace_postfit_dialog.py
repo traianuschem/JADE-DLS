@@ -592,6 +592,15 @@ class LaplacePostFitRefinementDialog(QDialog):
         self.q_max.setSuffix(" nm⁻²")
         q_range_layout.addRow("Max Q²:", self.q_max)
 
+        # Fit through origin (Γ = D·q², intercept fixed at 0)
+        self.fit_origin_check = QCheckBox("Fit through origin (intercept = 0)")
+        self.fit_origin_check.setChecked(False)
+        self.fit_origin_check.setToolTip(
+            "Force the Γ vs. q² regression through the origin (D = Σxy/Σx²).\n"
+            "Physically Γ → 0 as q → 0, so a zero intercept is often appropriate."
+        )
+        q_range_layout.addRow("", self.fit_origin_check)
+
         q_range_group.setLayout(q_range_layout)
         layout.addWidget(q_range_group)
 
@@ -678,6 +687,18 @@ class LaplacePostFitRefinementDialog(QDialog):
         self._cl_distance.setToolTip("Log-space distance threshold. Lower = more populations detected.")
         form.addRow("Distance threshold:", self._cl_distance)
 
+        self._cl_abundance = QDoubleSpinBox()
+        self._cl_abundance.setRange(0.0, 1.0)
+        self._cl_abundance.setSingleStep(0.05)
+        self._cl_abundance.setDecimals(2)
+        current_ab = self._cluster_info.get('min_abundance', 0.3) if self._cluster_info else 0.3
+        self._cl_abundance.setValue(current_ab)
+        self._cl_abundance.setToolTip(
+            "Minimum fraction of angles a population must appear in to be treated as\n"
+            "reliable. Populations below this are flagged as outliers."
+        )
+        form.addRow("Min. population abundance:", self._cl_abundance)
+
         self._cl_silhouette = QCheckBox("Silhouette-based cluster refinement")
         self._cl_silhouette.setChecked('silhouette' in current_strategy.lower())
         form.addRow("", self._cl_silhouette)
@@ -746,6 +767,7 @@ class LaplacePostFitRefinementDialog(QDialog):
                 enable_clustering=self._cl_use.isChecked(),
                 normalize_by_q2=True,
                 distance_threshold=self._cl_distance.value(),
+                min_abundance=self._cl_abundance.value(),
                 clustering_strategy=strategy,
                 interactive=False,
                 plot=False,
@@ -1058,6 +1080,7 @@ class LaplacePostFitRefinementDialog(QDialog):
                 'use_clustering': self._cl_use.isChecked(),
                 'clustering_strategy': strategy,
                 'distance_threshold': self._cl_distance.value(),
+                'min_abundance': self._cl_abundance.value(),
             }
 
         # Collect per-population ranges and regression settings
@@ -1105,6 +1128,7 @@ class LaplacePostFitRefinementDialog(QDialog):
             'clustering': self._clustering_params,
             'per_pop_ranges': self._per_pop_ranges,
             'per_pop_settings': self._per_pop_settings,
+            'fit_through_origin': self.fit_origin_check.isChecked() if hasattr(self, 'fit_origin_check') else False,
         }
 
     # ------------------------------------------------------------------

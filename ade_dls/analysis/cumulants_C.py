@@ -103,7 +103,7 @@ def estimate_parameters_from_data(x_data, y_data, base_parameters):
 
         c_estimate = 0.05 * decay_rate_estimate**2   # PDI ≈ 0.05 starting point
         d_estimate = 0.01 * decay_rate_estimate**3   # small positive asymmetry prior
-        e_estimate = 0.5 * c_estimate**2             # κ₄ prior: moderate polydispersity (excess kurtosis ≈ 0.5)
+        e_estimate = 3    * c_estimate**2             # Gaussian-distribution assumption (μ₄ = 3·μ₂²)
 
         #apply physical bounds as a safety net
         decay_rate_estimate = np.clip(decay_rate_estimate, 1,    1e6)

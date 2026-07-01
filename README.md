@@ -2,7 +2,7 @@
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![Version](https://img.shields.io/badge/version-3.3.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-3.3.1-blue.svg)](CHANGELOG.md)
 
 ADE-DLS is a Python package for analyzing Dynamic Light Scattering (DLS) — and optionally Static Light Scattering (SLS) — data from multi-angle instruments. It determines hydrodynamic radii, diffusion coefficients, and particle size distributions via a full-featured PyQt5 GUI or a Python API.
 

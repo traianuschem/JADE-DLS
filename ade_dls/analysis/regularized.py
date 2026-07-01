@@ -230,7 +230,7 @@ def nnls_reg(df, name, nnls_reg_params, plot_number):
     # Create Tikhonov regularization matrix (2nd derivative)
     def create_tikhonov_matrix(n):
         #create a sparse matrix for computational efficiency
-        D2 = sparse.diags([1, -2, 1], [-1, 0, 1], shape=(n-2, n)).toarray()
+        D2 = sparse.diags([1, -2, 1], [-1, 0, 1], shape=(n-2, n), dtype=float).toarray()
         return D2
     
     #get the length of decay_times
@@ -599,7 +599,7 @@ def nnls_reg_simple(df, name, nnls_reg_params):
 
     #create Tikhonov regularization matrix (second derivative)
     def create_tikhonov_matrix(n):
-        D2 = sparse.diags([1, -2, 1], [-1, 0, 1], shape=(n-2, n)).toarray()
+        D2 = sparse.diags([1, -2, 1], [-1, 0, 1], shape=(n-2, n), dtype=float).toarray()
         return D2
     
     #get the length of decay_times

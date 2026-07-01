@@ -571,6 +571,8 @@ class LaplaceAnalyzer:
                 'Skewness':        [_col_mean(f'skewness_{peak_num}')],
                 'Kurtosis':        [_col_mean(f'kurtosis_{peak_num}')],
                 'Abundance [%]':   [_col_mean(f'normalized_area_percent_{peak_num}')],
+                'Intercept':       [self.nnls_diff_results['const_coef'][i] if 'const_coef' in self.nnls_diff_results.columns else np.nan],
+                'Intercept_se':    [self.nnls_diff_results['const_se'][i] if 'const_se' in self.nnls_diff_results.columns else np.nan],
             })
             temp_results.append(result)
 
@@ -579,7 +581,8 @@ class LaplaceAnalyzer:
             print("[NNLS] Warning: No valid results to finalize. Creating empty DataFrame.")
             new_results = pd.DataFrame(columns=[
                 'Rh [nm]', 'Rh error [nm]', 'D [m^2/s]', 'D error [m^2/s]',
-                'R_squared', 'Fit', 'Residuals', 'PDI', 'Skewness', 'Kurtosis', 'Abundance [%]'
+                'R_squared', 'Fit', 'Residuals', 'PDI', 'Skewness', 'Kurtosis', 'Abundance [%]',
+                'Intercept', 'Intercept_se'
             ])
         else:
             new_results = pd.concat(temp_results, ignore_index=True)
@@ -886,9 +889,11 @@ class LaplaceAnalyzer:
                                                     per_pop_ranges: Optional[dict] = None,
                                                     use_clustering: bool = True,
                                                     distance_threshold: float = 2.0,
+                                                    min_abundance: float = 0.3,
                                                     clustering_strategy: str = 'silhouette_refined',
                                                     use_robust_regression: bool = True,
-                                                    robust_method: str = 'ransac') -> pd.DataFrame:
+                                                    robust_method: str = 'ransac',
+                                                    fit_through_origin: bool = False) -> pd.DataFrame:
         """
         Calculate diffusion coefficients from regularized fit tau values using Ward hierarchical clustering.
 
@@ -908,9 +913,12 @@ class LaplaceAnalyzer:
         if self.regularized_data is None:
             raise ValueError("Must run regularized analysis first")
 
-        # Step 1: Auto-detect tau columns
+        # Step 1: Auto-detect tau columns (exclude tau_pop* — those are population-indexed
+        # columns written by a previous cluster_all_gammas() call, not raw per-peak columns;
+        # picking them up here would produce a bogus 'gamma_pop{n}' name in gamma_columns below)
         if tau_columns is None:
-            tau_columns = [col for col in self.regularized_data.columns if col.startswith('tau_')]
+            tau_columns = [col for col in self.regularized_data.columns
+                          if col.startswith('tau_') and not col.startswith('tau_pop')]
 
         print(f"\n[Regularized] Calculating diffusion coefficients for {len(tau_columns)} peaks...")
 
@@ -920,8 +928,11 @@ class LaplaceAnalyzer:
         gamma_columns = [col.replace('tau', 'gamma') for col in tau_columns]
 
         # Step 3: Ward hierarchical clustering (replaces DBSCAN)
-        # Remove stale gamma_pop columns from a previous run before re-clustering
-        old_pop_cols = [c for c in self.regularized_data.columns if c.startswith('gamma_pop')]
+        # Remove all stale population-indexed columns from a previous clustering run before
+        # re-clustering (cluster_all_gammas writes tau_pop*, gamma_pop*, intensity_pop*, and
+        # other per-peak-stat *_pop* columns — see clustering.py's _per_peak_prefixes). Without
+        # this, a re-run with a different population count leaves orphaned columns behind.
+        old_pop_cols = [c for c in self.regularized_data.columns if '_pop' in c]
         if old_pop_cols:
             self.regularized_data = self.regularized_data.drop(columns=old_pop_cols)
 
@@ -935,6 +946,7 @@ class LaplaceAnalyzer:
                 enable_clustering=True,
                 normalize_by_q2=True,
                 distance_threshold=distance_threshold,
+                min_abundance=min_abundance,
                 clustering_strategy=clustering_strategy,
                 interactive=False,
                 plot=True,
@@ -963,7 +975,8 @@ class LaplaceAnalyzer:
                         gamma_cols=[col],
                         x_range=pop_range,
                         robust_method=robust_method,
-                        show_plots=False
+                        show_plots=False,
+                        fit_through_origin=fit_through_origin
                     )
                     all_results.append(res)
             else:
@@ -975,7 +988,8 @@ class LaplaceAnalyzer:
                         q_squared_col='q^2',
                         gamma_cols=[col],
                         x_range=pop_range,
-                        show_plots=False
+                        show_plots=False,
+                        fit_through_origin=fit_through_origin
                     )
                     all_results.append(res)
             self.regularized_diff_results = pd.concat(all_results, ignore_index=True)
@@ -988,7 +1002,8 @@ class LaplaceAnalyzer:
                 gamma_cols=pop_columns,
                 x_range=x_range,
                 robust_method=robust_method,
-                show_plots=False
+                show_plots=False,
+                fit_through_origin=fit_through_origin
             )
         else:
             from ade_dls.analysis.cumulants import analyze_diffusion_coefficient
@@ -997,7 +1012,8 @@ class LaplaceAnalyzer:
                 q_squared_col='q^2',
                 gamma_cols=pop_columns,
                 x_range=x_range,
-                show_plots=False
+                show_plots=False,
+                fit_through_origin=fit_through_origin
             )
 
         # Step 5: Create summary plot (Gamma vs q²)
@@ -1076,7 +1092,9 @@ class LaplaceAnalyzer:
                 'R_squared': [self.regularized_diff_results['R_squared'][i]],
                 'Fit': [f'Regularized Peak {i+1}{label_suffix}'],
                 'Residuals': [np.nan],
-                'Alpha': [self.regularized_params.get('alpha', 0)]
+                'Alpha': [self.regularized_params.get('alpha', 0)],
+                'Intercept': [self.regularized_diff_results['const_coef'][i] if 'const_coef' in self.regularized_diff_results.columns else np.nan],
+                'Intercept_se': [self.regularized_diff_results['const_se'][i] if 'const_se' in self.regularized_diff_results.columns else np.nan],
             })
             temp_results.append(result)
 
@@ -1085,7 +1103,7 @@ class LaplaceAnalyzer:
             print("[Regularized] Warning: No valid results to finalize. Creating empty DataFrame.")
             new_results = pd.DataFrame(columns=[
                 'Rh [nm]', 'Rh error [nm]', 'D [m^2/s]', 'D error [m^2/s]',
-                'R_squared', 'Fit', 'Residuals', 'Alpha'
+                'R_squared', 'Fit', 'Residuals', 'Alpha', 'Intercept', 'Intercept_se'
             ])
         else:
             new_results = pd.concat(temp_results, ignore_index=True)

@@ -1,6 +1,6 @@
 # Analysis Methods
 
-ADE-DLS implements six analysis methods for DLS data. All methods operate on the field autocorrelation function g₁(τ), extracted from the measured intensity autocorrelation g₂(τ) via the Siegert relation:
+ADE-DLS implements seven analysis methods for DLS data. All methods operate on the field autocorrelation function g₁(τ), extracted from the measured intensity autocorrelation g₂(τ) via the Siegert relation:
 
 ```
 g₂(τ) = 1 + β · |g₁(τ)|²
@@ -27,6 +27,18 @@ Rh = kB T / (6π η D)
 ```
 
 where kB is Boltzmann's constant, T is temperature (K), and η is solvent viscosity.
+
+---
+
+## Method A — ALV Software Cumulants
+
+**Model:** Uses the cumulant fit results (1st, 2nd, 3rd order decay rates Γ) already computed by the instrument software (ALV correlator `.asc` files, or the per-order Rh values from LS Instruments exports).
+
+No correlation-function fitting is performed in ADE-DLS; instead the pre-computed per-file Γ values are regressed against q² to obtain D (and Rh via Stokes-Einstein). For LS Instruments "radius" exports, the per-order Rh values are averaged directly.
+
+**When to use:** Quick cross-check when the instrument software's own cumulant fits are trusted.
+
+**Output:** Γ (per order), D, Rh, PDI (2nd/3rd order), skewness (3rd order), R²
 
 ---
 

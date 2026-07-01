@@ -353,7 +353,8 @@ def analyze_diffusion_coefficient_robust(data_df: pd.DataFrame,
                                          method_names: Optional[List[str]] = None,
                                          robust_method: str = 'ransac',
                                          x_range: Optional[Tuple[float, float]] = None,
-                                         show_plots: bool = True) -> pd.DataFrame:
+                                         show_plots: bool = True,
+                                         fit_through_origin: bool = False) -> pd.DataFrame:
     """
     Analyze diffusion coefficients with robust regression and outlier detection
 
@@ -427,14 +428,31 @@ def analyze_diffusion_coefficient_robust(data_df: pd.DataFrame,
             print(f"Warning: Only {len(X_fit)} points for {gamma_col}. Need at least 3.")
             continue
 
-        # Perform robust regression
-        try:
-            slope, intercept, inlier_mask, stats = robust_linear_regression(
-                X_fit, Y_fit, method=robust_method
-            )
-        except Exception as e:
-            print(f"Error in robust regression for {gamma_col}: {e}")
-            continue
+        # Perform regression. When forcing through the origin (Γ = D·q², intercept 0)
+        # a robust intercept is meaningless, so fall back to a simple origin OLS.
+        if fit_through_origin:
+            X_arr = np.asarray(X_fit, dtype=float)
+            Y_arr = np.asarray(Y_fit, dtype=float)
+            slope     = float(np.dot(X_arr, Y_arr) / np.dot(X_arr, X_arr))
+            intercept = 0.0
+            residuals = Y_arr - slope * X_arr
+            sigma2    = np.sum(residuals**2) / max(len(X_arr) - 1, 1)
+            slope_se  = float(np.sqrt(sigma2 / np.dot(X_arr, X_arr)))
+            ss_tot    = float(np.sum((Y_arr - Y_arr.mean())**2))
+            r_sq      = 1.0 - float(np.sum(residuals**2)) / ss_tot if ss_tot > 0 else float('nan')
+            inlier_mask = np.ones(len(X_arr), dtype=bool)
+            stats = {
+                'r_squared': r_sq, 'slope_se': slope_se, 'intercept_se': 0.0,
+                'n_inliers': len(X_arr), 'n_outliers': 0, 'outlier_fraction': 0.0,
+            }
+        else:
+            try:
+                slope, intercept, inlier_mask, stats = robust_linear_regression(
+                    X_fit, Y_fit, method=robust_method
+                )
+            except Exception as e:
+                print(f"Error in robust regression for {gamma_col}: {e}")
+                continue
 
         # Plot if requested
         if show_plots:

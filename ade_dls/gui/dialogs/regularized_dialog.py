@@ -43,6 +43,7 @@ class RegularizedDialog(QDialog):
             'normalize': True,
             'sparsity_penalty': 0.0,
             'enforce_unimodality': False,
+            'fit_beta': False,                 # Fit coherence factor β (intercept) as free parameter
             'num_preview': 5,
             'distance_threshold': 2.0,         # Ward clustering distance threshold (log-space)
             'clustering_strategy': 'silhouette_refined',  # clustering strategy
@@ -413,6 +414,14 @@ class RegularizedDialog(QDialog):
         self.unimodal_check.setToolTip("Forces distribution to have only one peak (for monodisperse samples)")
         reg_layout.addWidget(self.unimodal_check)
 
+        self.fit_beta_check = QCheckBox("Fit beta (coherence factor β)")
+        self.fit_beta_check.setChecked(False)
+        self.fit_beta_check.setToolTip(
+            "Fit the coherence factor β (intercept) as a free parameter instead of\n"
+            "fixing β = 1. Model: g²(τ)-1 = β·(∑ Aᵢ·exp(-τ/τᵢ))². Bounds 0–2."
+        )
+        reg_layout.addWidget(self.fit_beta_check)
+
         sparsity_layout = QHBoxLayout()
         sparsity_layout.addWidget(QLabel("Sparsity penalty:"))
         self.sparsity_spin = QDoubleSpinBox()
@@ -636,7 +645,8 @@ class RegularizedDialog(QDialog):
                 'alpha': self.params['alpha'],
                 'normalize': self.params['normalize'],
                 'sparsity_penalty': self.params['sparsity_penalty'],
-                'enforce_unimodality': self.params['enforce_unimodality']
+                'enforce_unimodality': self.params['enforce_unimodality'],
+                'fit_beta': self.params.get('fit_beta', False)
             }
 
             # Generate preview using regularized fit
@@ -996,6 +1006,8 @@ class RegularizedDialog(QDialog):
 
         # Advanced options
         self.params['normalize'] = self.normalize_check.isChecked()
+        self.params['enforce_unimodality'] = self.unimodal_check.isChecked()
+        self.params['fit_beta'] = self.fit_beta_check.isChecked()
         self.params['sparsity_penalty'] = self.sparsity_spin.value()
         self.params['peak_method']  = 'centroid' if self.peak_method_centroid.isChecked() else 'maximum'
         self.params['use_centroid'] = self.peak_method_centroid.isChecked()  # backward compat

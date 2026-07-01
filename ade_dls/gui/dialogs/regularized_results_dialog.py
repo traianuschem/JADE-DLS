@@ -171,10 +171,10 @@ class RegularizedResultsDialog(QDialog):
 
         # Set up table
         self.results_table.setRowCount(len(df))
-        self.results_table.setColumnCount(8)
+        self.results_table.setColumnCount(9)
         self.results_table.setHorizontalHeaderLabels([
             'Peak', 'Rh [nm]', 'Error [nm]', 'R²', 'D [m²/s]',
-            'Skewness', 'Kurtosis', 'Alpha'
+            'Skewness', 'Kurtosis', 'Alpha', 'Intercept'
         ])
 
         def _fmt(val, fmt):
@@ -238,6 +238,22 @@ class RegularizedResultsDialog(QDialog):
             alpha_item.setTextAlignment(Qt.AlignCenter)
             self.results_table.setItem(i, 7, alpha_item)
 
+            # Intercept — color-coded by whether it's significantly different from zero
+            # (informs whether a fit_through_origin re-run would be appropriate)
+            intercept_val = row.get('Intercept', float('nan'))
+            intercept_se_val = row.get('Intercept_se', float('nan'))
+            intercept_text = _fmt(intercept_val, '.2e')
+            if pd.notna(intercept_se_val):
+                intercept_text += f" (±{_fmt(intercept_se_val, '.1e')})"
+            intercept_item = QTableWidgetItem(intercept_text)
+            intercept_item.setTextAlignment(Qt.AlignCenter)
+            from ade_dls.gui.core.quality_assessment import intercept_assessment
+            status, color = intercept_assessment(intercept_val, intercept_se_val)
+            intercept_item.setToolTip(status)
+            if color:
+                intercept_item.setBackground(QColor(color))
+            self.results_table.setItem(i, 8, intercept_item)
+
         # Adjust column widths
         self.results_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
 
@@ -267,17 +283,21 @@ class RegularizedResultsDialog(QDialog):
 
         df = self.laplace_analyzer.regularized_data
 
-        # Select relevant columns
-        display_cols = ['filename', 'angle [°]', 'q^2']
+        # Select relevant columns ('beta' = fitted coherence factor, per file)
+        display_cols = ['filename', 'angle [°]', 'q^2', 'beta']
 
         # Add tau and gamma columns
         tau_cols = [col for col in df.columns if col.startswith('tau_')]
         gamma_cols = [col for col in df.columns if col.startswith('gamma_')]
         intensity_cols = [col for col in df.columns if col.startswith('intensity_')]
         area_cols = [col for col in df.columns if col.startswith('area_')]
+        area_pct_cols = [col for col in df.columns if col.startswith('normalized_area_percent_')]
         fwhm_cols = [col for col in df.columns if col.startswith('fwhm_')]
+        skew_cols = [col for col in df.columns if col.startswith('skewness_')]
+        kurt_cols = [col for col in df.columns if col.startswith('kurtosis_')]
 
-        all_cols = display_cols + tau_cols + gamma_cols + intensity_cols + area_cols + fwhm_cols
+        all_cols = (display_cols + tau_cols + gamma_cols + intensity_cols + area_cols
+                    + area_pct_cols + fwhm_cols + skew_cols + kurt_cols)
         available_cols = [col for col in all_cols if col in df.columns]
 
         # Set up table

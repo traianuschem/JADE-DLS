@@ -2264,6 +2264,10 @@ class AnalysisView(QWidget):
                             q_range=ref_params.get('combined_q_range'),
                             excluded_files=excluded_files_d,
                             is_laplace=False,
+                            extra_params={
+                                'clustering': ref_params.get('clustering'),
+                                'mode_params': ref_params.get('mode_params'),
+                            }
                         )
                 except Exception:
                     pass
@@ -2324,6 +2328,7 @@ class AnalysisView(QWidget):
         excluded_files = params['excluded_files']
         clustering_params = params.get('clustering', {})
         per_pop_ranges = params.get('per_pop_ranges', {})
+        fit_through_origin = params.get('fit_through_origin', False)
 
         # Check if any changes were made
         if q_range is None and not excluded_files and not clustering_params and not per_pop_ranges:
@@ -2408,8 +2413,9 @@ class AnalysisView(QWidget):
                 the_analyzer.calculate_regularized_diffusion_coefficients(
                     x_range=q_range,
                     per_pop_ranges=per_pop_ranges or None,
+                    fit_through_origin=fit_through_origin,
                     **{k: v for k, v in clustering_params.items()
-                       if k in ('use_clustering', 'clustering_strategy', 'distance_threshold')}
+                       if k in ('use_clustering', 'clustering_strategy', 'distance_threshold', 'min_abundance')}
                 )
                 the_analyzer._calculate_regularized_final_results(
                     append_mode=True,
@@ -2431,7 +2437,12 @@ class AnalysisView(QWidget):
                         method_name="Regularized",
                         q_range=q_range,
                         excluded_files=excluded_files,
-                        is_laplace=True
+                        is_laplace=True,
+                        extra_params={
+                            'fit_through_origin': fit_through_origin,
+                            'clustering': clustering_params,
+                            'per_pop_ranges': per_pop_ranges,
+                        }
                     )
 
             print("="*60 + "\n")

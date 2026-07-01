@@ -173,7 +173,7 @@ def calculate_g2_B(dataframes_dict):
 
 
 #plot Gamma vs. q^2
-def analyze_diffusion_coefficient(data_df, q_squared_col, gamma_cols, method_names=None, gamma_unit='1/s', x_range=None, show_plots=True):
+def analyze_diffusion_coefficient(data_df, q_squared_col, gamma_cols, method_names=None, gamma_unit='1/s', x_range=None, show_plots=True, fit_through_origin=False):
     #validate inputs
     if not isinstance(gamma_cols, list):
         gamma_cols = [gamma_cols]
@@ -236,38 +236,69 @@ def analyze_diffusion_coefficient(data_df, q_squared_col, gamma_cols, method_nam
             Y_fit = Y_full
             fit_range_text = ""
         
-        #plot all data points
+        #plot all data points (extend x-axis to 0 when forcing through origin)
+        x_plot_min = 0.0 if fit_through_origin else float(X_full.min())
         plt.figure(figsize=(8, 4))
         plt.scatter(X_full, Y_full, alpha=0.6, label='All data')
-        
+
         # Highlight fitting data if x_range is specified
         if x_range is not None:
             plt.scatter(X_fit, Y_fit, color='red', alpha=0.8, label='Fitting data', s=30)
-        
-        #perform linear regression on fitting data
-        X_fit_with_constant = sm.add_constant(X_fit)
-        model = sm.OLS(Y_fit, X_fit_with_constant).fit()
-        
-        #plot regression line over the full x-range for visualization
-        X_line = np.linspace(X_full.min(), X_full.max(), 100)
-        X_line_with_constant = sm.add_constant(X_line)
-        y_predicted_line = model.predict(X_line_with_constant)
-        plt.plot(X_line, y_predicted_line, 'r-', label=f'Regression Line{fit_range_text}')
-        
-        #print regression results
-        print(f"\n--- Linear Regression Results {method_name}{fit_range_text} ---")
-        print(f"Number of data points used for fitting: {len(X_fit)}")
-        print(model.summary())
-        print("\n")
-        
-        #extract statistical results
-        r_squared = model.rsquared
-        jb_p_value = float(model.summary().tables[2].data[2][3])
-        residuals = model.resid
-        skewness = stats.skew(residuals)
-        kurtosis = stats.kurtosis(residuals)
-        omnibus_p_value = float(model.summary().tables[2].data[1][1])
-        
+
+        if fit_through_origin:
+            #forced-through-origin fit — Γ = D·q² with intercept fixed at 0.
+            #slope = Σxy/Σx², all statistics derived from this fit only.
+            X_arr = np.array(X_fit, dtype=float)
+            Y_arr = np.array(Y_fit, dtype=float)
+            slope     = float(np.dot(X_arr, Y_arr) / np.dot(X_arr, X_arr))
+            residuals = Y_arr - slope * X_arr
+            sigma2    = np.sum(residuals**2) / max(len(X_arr) - 1, 1)
+            slope_se  = float(np.sqrt(sigma2 / np.dot(X_arr, X_arr)))
+            ss_tot    = float(np.sum((Y_arr - Y_arr.mean())**2))
+            r_squared = 1.0 - float(np.sum(residuals**2)) / ss_tot if ss_tot > 0 else float('nan')
+            intercept    = 0.0
+            intercept_se = 0.0
+            skewness = stats.skew(residuals)
+            kurtosis = stats.kurtosis(residuals)
+            _, jb_p_value      = stats.jarque_bera(residuals)
+            _, omnibus_p_value = stats.normaltest(residuals)
+            jb_p_value      = float(jb_p_value)
+            omnibus_p_value = float(omnibus_p_value)
+
+            X_line = np.linspace(0.0, float(X_full.max()), 100)
+            plt.plot(X_line, slope * X_line, 'b-', label=f'OLS through origin{fit_range_text}')
+
+            print(f"\n--- Linear Regression Results {method_name}{fit_range_text} (forced through origin) ---")
+            print(f"Number of data points used for fitting: {len(X_fit)}")
+            print(f"  D (slope) = {slope:.4e} ± {slope_se:.4e} [{gamma_unit} nm²]")
+            print(f"  R²        = {r_squared:.4f}")
+            print("\n")
+        else:
+            #free-intercept OLS
+            X_fit_with_constant = sm.add_constant(X_fit)
+            model = sm.OLS(Y_fit, X_fit_with_constant).fit()
+            slope        = float(model.params.iloc[-1])
+            slope_se     = float(model.bse.iloc[-1])
+            intercept    = float(model.params.iloc[0])
+            intercept_se = float(model.bse.iloc[0])
+            r_squared    = model.rsquared
+            residuals    = model.resid
+            skewness     = stats.skew(residuals)
+            kurtosis     = stats.kurtosis(residuals)
+            jb_p_value      = float(model.summary().tables[2].data[2][3])
+            omnibus_p_value = float(model.summary().tables[2].data[1][1])
+
+            #plot regression line over the full x-range for visualization
+            X_line = np.linspace(x_plot_min, float(X_full.max()), 100)
+            X_line_with_constant = sm.add_constant(X_line)
+            plt.plot(X_line, model.predict(X_line_with_constant), 'r-', label=f'Regression Line{fit_range_text}')
+
+            #print regression results
+            print(f"\n--- Linear Regression Results {method_name}{fit_range_text} ---")
+            print(f"Number of data points used for fitting: {len(X_fit)}")
+            print(model.summary())
+            print("\n")
+
         #check normality conditions
         conditions_met = [
             jb_p_value >= 0.05, 
@@ -293,7 +324,11 @@ def analyze_diffusion_coefficient(data_df, q_squared_col, gamma_cols, method_nam
         results_dict = {
             'Column': gamma_col,
             'Method': method_name,
-            'R_squared': r_squared, 
+            'R_squared': r_squared,
+            'slope': slope,
+            'slope_se': slope_se,
+            'intercept': intercept,
+            'intercept_se': intercept_se,
             'Normality': normality_status,
             'Skewness': skewness,
             'Kurtosis': kurtosis,
@@ -303,12 +338,13 @@ def analyze_diffusion_coefficient(data_df, q_squared_col, gamma_cols, method_nam
             'X_range_min': X_fit.min() if len(X_fit) > 0 else None,
             'X_range_max': X_fit.max() if len(X_fit) > 0 else None
         }
-        
-        #add coefficients and standard errors
-        for param, coef, se in zip(model.params.index, model.params, model.bse):
-            results_dict[f'{param}_coef'] = coef
-            results_dict[f'{param}_se'] = se
-        
+
+        #add coefficients and standard errors (slope keyed by q² column for downstream D lookup)
+        results_dict[f'{q_squared_col}_coef'] = slope
+        results_dict[f'{q_squared_col}_se']   = slope_se
+        results_dict['const_coef'] = intercept
+        results_dict['const_se']   = intercept_se
+
         all_results.append(results_dict)
         
         #set labels and title

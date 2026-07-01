@@ -165,10 +165,10 @@ class NNLSResultsDialog(QDialog):
 
         # Set up table
         self.results_table.setRowCount(len(df))
-        self.results_table.setColumnCount(8)
+        self.results_table.setColumnCount(9)
         self.results_table.setHorizontalHeaderLabels([
             'Peak', 'Rh [nm]', 'Error [nm]', 'R²', 'D [m²/s]',
-            'Skewness', 'Kurtosis', 'Abundance [%]'
+            'Skewness', 'Kurtosis', 'Abundance [%]', 'Intercept'
         ])
 
         def _fmt(val, fmt):
@@ -227,6 +227,22 @@ class NNLSResultsDialog(QDialog):
             abund_item = QTableWidgetItem(_fmt(row.get('Abundance [%]', float('nan')), '.1f'))
             abund_item.setTextAlignment(Qt.AlignCenter)
             self.results_table.setItem(i, 7, abund_item)
+
+            # Intercept — color-coded by whether it's significantly different from zero
+            # (informs whether a fit_through_origin re-run would be appropriate)
+            intercept_val = row.get('Intercept', float('nan'))
+            intercept_se_val = row.get('Intercept_se', float('nan'))
+            intercept_text = _fmt(intercept_val, '.2e')
+            if pd.notna(intercept_se_val):
+                intercept_text += f" (±{_fmt(intercept_se_val, '.1e')})"
+            intercept_item = QTableWidgetItem(intercept_text)
+            intercept_item.setTextAlignment(Qt.AlignCenter)
+            from ade_dls.gui.core.quality_assessment import intercept_assessment
+            status, color = intercept_assessment(intercept_val, intercept_se_val)
+            intercept_item.setToolTip(status)
+            if color:
+                intercept_item.setBackground(QColor(color))
+            self.results_table.setItem(i, 8, intercept_item)
 
         # Adjust column widths
         self.results_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)

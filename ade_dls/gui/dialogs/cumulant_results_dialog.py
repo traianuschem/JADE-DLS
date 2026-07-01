@@ -63,6 +63,17 @@ class CumulantResultsDialog(QDialog):
         title_label = QLabel(f"<h2>Cumulant Analysis: {self.method_name}</h2>")
         layout.addWidget(title_label)
 
+        # Key-results summary (D, D_err, Rh, PDI, skewness, kurtosis, intercept)
+        summary_html = self._build_summary_html()
+        if summary_html:
+            self.summary_label = QLabel(summary_html)
+            self.summary_label.setWordWrap(True)
+            self.summary_label.setTextFormat(Qt.RichText)
+            self.summary_label.setStyleSheet(
+                "padding: 8px; background-color: #eef6ff; border-radius: 4px;"
+            )
+            layout.addWidget(self.summary_label)
+
         # Main splitter (horizontal)
         main_splitter = QSplitter(Qt.Horizontal)
 
@@ -108,6 +119,66 @@ class CumulantResultsDialog(QDialog):
         # Show first plot
         if self.filenames:
             self.show_plot(0)
+
+    def _build_summary_html(self):
+        """Build a compact HTML summary of the key final results shown at the top.
+
+        Surfaces D, D_err, Rh, PDI, skewness, kurtosis, intercept and R² so they
+        are visible for every method (not just in the results table below).
+        """
+        df = self.results_df
+        if df is None or df.empty:
+            return ""
+
+        def _get(row, *names):
+            for n in names:
+                if n in row.index and pd.notna(row[n]):
+                    return row[n]
+            return None
+
+        lines = []
+        for _, row in df.iterrows():
+            seg = []
+            fit_label = _get(row, 'Fit')
+            if fit_label:
+                seg.append(f"<b>{fit_label}</b>")
+
+            d = _get(row, 'D [m²/s]', 'D [m^2/s]')
+            if d is not None:
+                d_err = _get(row, 'D error [m²/s]', 'D error [m^2/s]', 'std err D [m^2/s]')
+                seg.append(f"D = {d:.3e}" + (f" ± {d_err:.1e}" if d_err is not None else "") + " m²/s")
+
+            rh = _get(row, 'Rh [nm]')
+            if rh is not None:
+                rh_err = _get(row, 'Rh error [nm]')
+                seg.append(f"R<sub>h</sub> = {rh:.2f}" + (f" ± {rh_err:.2f}" if rh_err is not None else "") + " nm")
+
+            for label, *keys in (('PDI', 'PDI'), ('Skewness', 'Skewness'),
+                                 ('Kurtosis', 'Kurtosis'),
+                                 ('Abundance', 'Abundance [%]', 'normalized_area_percent')):
+                val = _get(row, *keys)
+                if val is not None:
+                    seg.append(f"{label} = {val:.3g}")
+
+            intercept = _get(row, 'intercept')
+            if intercept is not None:
+                intercept_se = _get(row, 'intercept_se')
+                seg.append(f"Intercept = {intercept:.3g}"
+                           + (f" ± {intercept_se:.2g}" if intercept_se is not None else ""))
+                from ade_dls.gui.core.quality_assessment import intercept_assessment
+                status, _color = intercept_assessment(intercept, intercept_se)
+                seg.append(status)
+
+            r2 = _get(row, 'R_squared', 'R²')
+            if r2 is not None:
+                seg.append(f"R² = {r2:.4f}")
+
+            if seg:
+                lines.append(" &nbsp;|&nbsp; ".join(seg))
+
+        if not lines:
+            return ""
+        return "<div>" + "<br>".join(lines) + "</div>"
 
     def create_file_list_panel(self):
         """Create the left panel with file list"""
