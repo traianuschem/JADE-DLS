@@ -98,14 +98,16 @@ def nnls_optimized(df: pd.DataFrame, name: str, nnls_params: dict,
     else:
         T = T_matrix
 
-    # Use scipy's optimized NNLS solver (much faster than least_squares)
-    # Problem: minimize ||T @ f - sqrt(D)||^2 subject to f >= 0
-    # Since g(2) = (correlation)^2, we need sqrt(D) for the linear problem
-    D_sqrt = np.sqrt(np.abs(D))  # Take sqrt for linear NNLS formulation
+    # Nonlinear NNLS fit: g(2)(τ)-1 = (T @ f)^2, f >= 0.
+    # Must stay nonlinear (not linearized via sqrt(D)) since D = g(2)-1 can be
+    # negative (noise) and the model is genuinely quadratic in f, not linear.
+    def residuals(f, T, D):
+        return (T @ f)**2 - D
 
-    # Solve NNLS problem: min ||T @ f - D_sqrt||^2 with f >= 0
-    from scipy.optimize import nnls as scipy_nnls
-    f_optimized, rnorm = scipy_nnls(T, D_sqrt)
+    f0 = np.ones(T.shape[1])
+    bounds = (0, np.inf)
+    result = least_squares(residuals, f0, args=(T, D), bounds=bounds)
+    f_optimized = result.x
 
     # Calculate the optimized function values
     optimized_values = (T @ f_optimized)**2
@@ -118,7 +120,7 @@ def nnls_optimized(df: pd.DataFrame, name: str, nnls_params: dict,
     peaks, _ = find_peaks(f_optimized, prominence=prominence, distance=distance)
 
     # Log fit details
-    print(f"    └─ NNLS residual norm: {rnorm:.4e}, RMSE: {rmse:.4e}, Peaks found: {len(peaks)}")
+    print(f"    └─ Fit: {result.status} ({result.nfev} evals), RMSE: {rmse:.4e}, Peaks found: {len(peaks)}")
 
     # Get peak amplitudes/intensities
     peak_amplitudes = f_optimized[peaks]

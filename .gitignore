@@ -53,6 +53,9 @@ venv.bak/
 # Claude Code project settings (local only)
 .claude/
 
+#basis datei
+.JADE-DLS-main/
+
 # OS
 .DS_Store
 Thumbs.db
