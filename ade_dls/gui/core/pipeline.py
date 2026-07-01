@@ -555,7 +555,7 @@ Analysis Steps:
                 pdi_val = row.get('PDI', None)
                 pdi_str = f"{pdi_val:.4f}" if pdi_val is not None else "N/A"
                 report += f"  {order_label}:\n"
-                report += f"    D [m²/s]:             {row['D [m^2/s]']:.4e} ± {row['std err D [m^2/s]']:.4e}\n"
+                report += f"    D [m²/s]:             {row['D [m²/s]']:.4e} ± {row['D error [m²/s]']:.4e}\n"
                 report += f"    PDI:                  {pdi_str}\n"
                 report += f"    R²:                   {row['R_squared']:.6f}\n"
 

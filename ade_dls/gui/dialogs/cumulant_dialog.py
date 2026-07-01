@@ -325,6 +325,7 @@ class CumulantCDialog(QDialog):
         ])
         self.c_strategy.setCurrentIndex(0)
         options_form.addRow("Adaptation Strategy:", self.c_strategy)
+        self.c_strategy_label = options_form.labelForField(self.c_strategy)
 
         self.c_optimizer = QComboBox()
         self.c_optimizer.addItems([
@@ -375,6 +376,13 @@ class CumulantCDialog(QDialog):
         self.c_adaptive.toggled.connect(
             lambda checked: self.init_params_group.setVisible(not checked)
         )
+
+        # Adaptation Strategy only has an effect when adaptive guesses are
+        # enabled – hide it otherwise so it doesn't look like a no-op control.
+        self.c_strategy.setVisible(self.c_adaptive.isChecked())
+        self.c_strategy_label.setVisible(self.c_adaptive.isChecked())
+        self.c_adaptive.toggled.connect(self.c_strategy.setVisible)
+        self.c_adaptive.toggled.connect(self.c_strategy_label.setVisible)
 
         # --- Processing options ---
         proc_group = QGroupBox("Processing Options")
