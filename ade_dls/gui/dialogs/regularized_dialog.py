@@ -37,13 +37,13 @@ class RegularizedDialog(QDialog):
         # Default parameters
         self.params = {
             'decay_times': np.logspace(-8, 1, 200),
-            'alpha': 1.0,
-            'prominence': 0.05,
+            'alpha': 0.2,
+            'prominence': 0.005,
             'distance': 1,
             'normalize': True,
             'sparsity_penalty': 0.0,
             'enforce_unimodality': False,
-            'fit_beta': False,                 # Fit coherence factor β (intercept) as free parameter
+            'fit_beta': True,                  # Fit coherence factor β (intercept) as free parameter (JADE gold)
             'num_preview': 5,
             'distance_threshold': 2.0,         # Ward clustering distance threshold (log-space)
             'clustering_strategy': 'silhouette_refined',  # clustering strategy
@@ -191,7 +191,7 @@ class RegularizedDialog(QDialog):
         self.alpha_spin = QDoubleSpinBox()
         self.alpha_spin.setDecimals(4)
         self.alpha_spin.setRange(0.0001, 100.0)
-        self.alpha_spin.setValue(1.0)
+        self.alpha_spin.setValue(0.2)
         self.alpha_spin.setSingleStep(0.1)
         self.alpha_spin.setStyleSheet("QDoubleSpinBox { min-width: 120px; }")
         alpha_input_layout.addWidget(self.alpha_spin)
@@ -268,7 +268,7 @@ class RegularizedDialog(QDialog):
 
         self.prominence_slider = QSlider(Qt.Horizontal)
         self.prominence_slider.setRange(1, 500)  # 0.001 to 0.5 (scaled by 1000)
-        self.prominence_slider.setValue(50)  # 0.05
+        self.prominence_slider.setValue(5)  # 0.005
         self.prominence_slider.setTickPosition(QSlider.TicksBelow)
         self.prominence_slider.setTickInterval(50)
         self.prominence_slider.valueChanged.connect(self.on_prominence_slider_changed)
@@ -278,7 +278,7 @@ class RegularizedDialog(QDialog):
         self.prominence_input = QDoubleSpinBox()
         self.prominence_input.setDecimals(3)
         self.prominence_input.setRange(0.001, 0.5)
-        self.prominence_input.setValue(0.05)
+        self.prominence_input.setValue(0.005)
         self.prominence_input.setSingleStep(0.001)
         self.prominence_input.setMinimumWidth(80)
         self.prominence_input.valueChanged.connect(self.on_prominence_input_changed)
@@ -415,7 +415,7 @@ class RegularizedDialog(QDialog):
         reg_layout.addWidget(self.unimodal_check)
 
         self.fit_beta_check = QCheckBox("Fit beta (coherence factor β)")
-        self.fit_beta_check.setChecked(False)
+        self.fit_beta_check.setChecked(True)
         self.fit_beta_check.setToolTip(
             "Fit the coherence factor β (intercept) as a free parameter instead of\n"
             "fixing β = 1. Model: g²(τ)-1 = β·(∑ Aᵢ·exp(-τ/τᵢ))². Bounds 0–2."

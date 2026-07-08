@@ -36,8 +36,8 @@ class NNLSDialog(QDialog):
 
         # Default parameters
         self.params = {
-            'decay_times': np.logspace(-8, 1, 200),
-            'prominence': 0.05,
+            'decay_times': np.logspace(-8, 1, 100),
+            'prominence': 0.01,
             'distance': 1,
             'num_preview': 5,
             'distance_threshold': 2.0,         # Ward clustering distance threshold (log-space)
@@ -151,7 +151,7 @@ class NNLSDialog(QDialog):
         num_layout.addWidget(QLabel("Number of points:"))
         self.decay_num_spin = QSpinBox()
         self.decay_num_spin.setRange(50, 1000)
-        self.decay_num_spin.setValue(200)
+        self.decay_num_spin.setValue(100)
         self.decay_num_spin.setSingleStep(10)
         num_layout.addWidget(self.decay_num_spin)
         num_layout.addWidget(QLabel("(logarithmic spacing)"))
@@ -207,7 +207,7 @@ class NNLSDialog(QDialog):
 
         self.prominence_slider = QSlider(Qt.Horizontal)
         self.prominence_slider.setRange(1, 500)  # 0.001 to 0.5 (scaled by 1000)
-        self.prominence_slider.setValue(50)  # 0.05
+        self.prominence_slider.setValue(10)  # 0.01
         self.prominence_slider.setTickPosition(QSlider.TicksBelow)
         self.prominence_slider.setTickInterval(50)
         self.prominence_slider.valueChanged.connect(self.on_prominence_slider_changed)
@@ -217,7 +217,7 @@ class NNLSDialog(QDialog):
         self.prominence_input = QDoubleSpinBox()
         self.prominence_input.setDecimals(3)
         self.prominence_input.setRange(0.001, 0.5)
-        self.prominence_input.setValue(0.05)
+        self.prominence_input.setValue(0.01)
         self.prominence_input.setSingleStep(0.001)
         self.prominence_input.setMinimumWidth(80)
         self.prominence_input.valueChanged.connect(self.on_prominence_input_changed)

@@ -510,7 +510,7 @@ class CumulantDDialog(QDialog):
 
         self.d_gap_threshold = QDoubleSpinBox()
         self.d_gap_threshold.setRange(1.0, 10.0)
-        self.d_gap_threshold.setValue(1.5)
+        self.d_gap_threshold.setValue(3.0)
         self.d_gap_threshold.setDecimals(2)
         self.d_gap_threshold.setSingleStep(0.1)
         self.d_gap_threshold.setToolTip(
@@ -550,7 +550,7 @@ class CumulantDDialog(QDialog):
 
         self.d_distance_threshold = QDoubleSpinBox()
         self.d_distance_threshold.setRange(0.01, 2.0)
-        self.d_distance_threshold.setValue(0.3)
+        self.d_distance_threshold.setValue(2.0)
         self.d_distance_threshold.setDecimals(2)
         self.d_distance_threshold.setSingleStep(0.05)
         self.d_distance_threshold.setToolTip(
@@ -569,7 +569,7 @@ class CumulantDDialog(QDialog):
         cluster_form.addRow("Min. population abundance:", self.d_min_abundance)
 
         self.d_silhouette = QCheckBox("Enable silhouette-based cluster refinement")
-        self.d_silhouette.setChecked(False)
+        self.d_silhouette.setChecked(True)
         self.d_silhouette.setToolTip(
             "Optimize cluster assignment using silhouette scores (slower, more accurate)."
         )

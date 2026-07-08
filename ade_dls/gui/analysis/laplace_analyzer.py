@@ -126,7 +126,7 @@ class LaplaceAnalyzer:
         print("NNLS (NON-NEGATIVE LEAST SQUARES) ANALYSIS")
         print("="*60)
         print(f"Number of datasets: {len(self.processed_correlations)}")
-        print(f"Peak detection prominence: {params.get('prominence', 0.05)}")
+        print(f"Peak detection prominence: {params.get('prominence', 0.01)}")
         print(f"Peak detection distance: {params.get('distance', 1)}")
         print(f"Multiprocessing: {'Enabled' if use_multiprocessing else 'Disabled'}")
         print("="*60)
@@ -368,7 +368,7 @@ class LaplaceAnalyzer:
                                               use_clustering: bool = True,
                                               distance_threshold: float = 2.0,
                                               clustering_strategy: str = 'silhouette_refined',
-                                              use_robust_regression: bool = True,
+                                              use_robust_regression: bool = False,  # JADE gold uses OLS
                                               robust_method: str = 'ransac') -> pd.DataFrame:
         """
         Calculate diffusion coefficients from NNLS tau values using Ward hierarchical clustering.
@@ -891,7 +891,7 @@ class LaplaceAnalyzer:
                                                     distance_threshold: float = 2.0,
                                                     min_abundance: float = 0.3,
                                                     clustering_strategy: str = 'silhouette_refined',
-                                                    use_robust_regression: bool = True,
+                                                    use_robust_regression: bool = False,  # JADE gold uses OLS
                                                     robust_method: str = 'ransac',
                                                     fit_through_origin: bool = False) -> pd.DataFrame:
         """

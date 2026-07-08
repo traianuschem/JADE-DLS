@@ -85,7 +85,7 @@ def nnls_optimized(df: pd.DataFrame, name: str, nnls_params: dict,
         Dictionary with results
     """
     decay_times = nnls_params['decay_times']
-    prominence = nnls_params.get('prominence', 0.05)
+    prominence = nnls_params.get('prominence', 0.01)
     distance = nnls_params.get('distance', 1)
 
     # Create the vectors
@@ -429,6 +429,8 @@ def regularized_nnls_optimized(df: pd.DataFrame, name: str, params: dict,
     distance = params.get('distance', 1)
     alpha = params.get('alpha', 0.01)
     fit_beta = params.get('fit_beta', False)
+    normalize = params.get('normalize', False)
+    sparsity_penalty = params.get('sparsity_penalty', 0.0)
 
     # Create the vectors
     tau = df['t [s]'].to_numpy()
@@ -444,9 +446,15 @@ def regularized_nnls_optimized(df: pd.DataFrame, name: str, params: dict,
     n = len(decay_times)
     D2 = create_tikhonov_matrix_cached(n)
 
+    # Initial β estimate from the first few data points (g²(0)-1 ≈ β)
+    beta_init = float(np.max(D[:min(5, len(D))])) if fit_beta else 1.0
+
     # Define the regularized objective function.
     # Model: g(2)(τ)-1 = β · (∑_i A_i · exp(-τ/τ_i))², where β is the coherence
     # factor (intercept). β is fitted as a separate parameter only when fit_beta.
+    # When normalize=True the distribution f is constrained to sum to 1 — without
+    # that constraint β and the scale of f are not jointly identifiable and the
+    # solver drifts to a degenerate β→0 solution (JADE parity requires this path).
     def residuals_regularized(params_vec, T, D, D2, alpha):
         if fit_beta:
             beta_val = params_vec[0]
@@ -454,42 +462,71 @@ def regularized_nnls_optimized(df: pd.DataFrame, name: str, params: dict,
         else:
             beta_val = 1.0
             f = params_vec
+        if normalize:
+            f = f / np.sum(f) if np.sum(f) > 0 else f
 
         model_output = beta_val * (T @ f)**2
-
-        # data fidelity residuals
         fit_residuals = model_output - D
+        all_residuals = [fit_residuals, alpha * (D2 @ f)]
+        if sparsity_penalty > 0:
+            all_residuals.append(sparsity_penalty * f)
+        return np.concatenate(all_residuals)
 
-        # smoothness penalty
-        smoothness_penalty = alpha * (D2 @ f)
-        return np.concatenate([fit_residuals, smoothness_penalty])
+    if normalize:
+        # Constrained optimisation with Σf = 1 (SLSQP) — matches JADE gold path.
+        def objective_function(params_vec):
+            p = np.copy(params_vec)
+            if fit_beta:
+                p[0] = np.maximum(p[0], 0)
+                f_part = np.maximum(p[1:], 0)
+                f_part = f_part / np.sum(f_part) if np.sum(f_part) > 0 else f_part
+                p = np.concatenate([[p[0]], f_part])
+            else:
+                p = np.maximum(p, 0)
+                p = p / np.sum(p) if np.sum(p) > 0 else p
+            return np.sum(residuals_regularized(p, T, D, D2, alpha)**2)
 
-    # Initial guess (uniform distribution); prepend β (bounded 0–2) when fitting it.
-    if fit_beta:
-        beta_init = float(np.max(D[:min(5, len(D))]))  # g²(0)-1 ≈ β
-        f0 = np.concatenate([[beta_init], np.ones(T.shape[1])])
-        bounds = (np.concatenate([[0.0], np.zeros(T.shape[1])]),
-                  np.concatenate([[2.0], np.full(T.shape[1], np.inf)]))
+        if fit_beta:
+            f0 = np.concatenate([[beta_init], np.ones(T.shape[1]) / T.shape[1]])
+            bounds = [(0.0, 2.0)] + [(0, None)] * T.shape[1]
+            constraint = {'type': 'eq', 'fun': lambda p: np.sum(p[1:]) - 1.0}
+        else:
+            f0 = np.ones(T.shape[1]) / T.shape[1]
+            bounds = [(0, None)] * T.shape[1]
+            constraint = {'type': 'eq', 'fun': lambda p: np.sum(p) - 1.0}
+
+        result = minimize(
+            objective_function, f0, method='SLSQP',
+            bounds=bounds, constraints=constraint,
+            options={'ftol': 1e-8, 'disp': False, 'maxiter': 1000}
+        )
+        if fit_beta:
+            beta_fitted = float(result.x[0])
+            f_optimized = result.x[1:]
+        else:
+            beta_fitted = 1.0
+            f_optimized = result.x
+        f_optimized = f_optimized / np.sum(f_optimized) if np.sum(f_optimized) > 0 else f_optimized
     else:
-        f0 = np.ones(T.shape[1])
-        bounds = (0, np.inf)
+        # Unconstrained regularized least squares (TRF).
+        if fit_beta:
+            f0 = np.concatenate([[beta_init], np.ones(T.shape[1])])
+            bounds = (np.concatenate([[0.0], np.zeros(T.shape[1])]),
+                      np.concatenate([[2.0], np.full(T.shape[1], np.inf)]))
+        else:
+            f0 = np.ones(T.shape[1])
+            bounds = (0, np.inf)
 
-    # Perform non-negative least squares with regularization
-    result = least_squares(
-        lambda p: residuals_regularized(p, T, D, D2, alpha),
-        f0,
-        bounds=bounds,
-        method='trf',
-        ftol=1e-8,
-        xtol=1e-8,
-        max_nfev=500  # Limit iterations for performance
-    )
-    if fit_beta:
-        beta_fitted = float(result.x[0])
-        f_optimized = result.x[1:]
-    else:
-        beta_fitted = 1.0
-        f_optimized = result.x
+        result = least_squares(
+            lambda p: residuals_regularized(p, T, D, D2, alpha),
+            f0, bounds=bounds, method='trf', ftol=1e-8, xtol=1e-8
+        )
+        if fit_beta:
+            beta_fitted = float(result.x[0])
+            f_optimized = result.x[1:]
+        else:
+            beta_fitted = 1.0
+            f_optimized = result.x
 
     # Calculate the optimized function
     optimized_values = beta_fitted * (T @ f_optimized)**2
@@ -578,7 +615,7 @@ def nnls_preview_random(dataframes_dict: Dict[str, pd.DataFrame],
 
     # Create figure
     decay_times = nnls_params['decay_times']
-    prominence = nnls_params.get('prominence', 0.05)
+    prominence = nnls_params.get('prominence', 0.01)
     distance = nnls_params.get('distance', 1)
 
     # Calculate grid size
