@@ -316,6 +316,7 @@ class CumulantCDialog(QDialog):
             "2nd Cumulant (up to c parameter)",
             "3rd Cumulant (up to d parameter)",
             "4th Cumulant (up to e parameter) – Recommended",
+            "1st Cumulant (single exponential)",
         ])
         self.c_fit_function.setCurrentIndex(2)
         options_form.addRow("Fit Function:", self.c_fit_function)
@@ -425,7 +426,7 @@ class CumulantCDialog(QDialog):
         if q is False:
             return
 
-        fit_func_map = {0: 'fit_function2', 1: 'fit_function3', 2: 'fit_function4'}
+        fit_func_map = {0: 'fit_function2', 1: 'fit_function3', 2: 'fit_function4', 3: 'fit_function1'}
         optimizer_map = {0: 'lm', 1: 'trf', 2: 'dogbox'}
 
         self.params = {

@@ -116,6 +116,11 @@ def nnls_optimized(df: pd.DataFrame, name: str, nnls_params: dict,
     # Calculate RMSE
     rmse = np.sqrt(np.mean(residuals_values**2))
 
+    # Goodness of fit (JADE parity: R_squared per file)
+    ss_res = np.sum(residuals_values**2)
+    ss_tot = np.sum((D - np.mean(D))**2)
+    r_squared = 1 - ss_res / ss_tot if ss_tot != 0 else 0.0
+
     # Find peaks in the tau distribution
     peaks, _ = find_peaks(f_optimized, prominence=prominence, distance=distance)
 
@@ -140,7 +145,7 @@ def nnls_optimized(df: pd.DataFrame, name: str, nnls_params: dict,
     normalized_area_pct = [a / total_area * 100 for a in peak_areas]
 
     # Prepare results for this dataframe
-    results = {'filename': name}
+    results = {'filename': name, 'R_squared': r_squared}
     for i, peak_index in enumerate(peaks):
         pct_sum = normalized_amplitudes_sum[i] * 100
 
@@ -535,6 +540,11 @@ def regularized_nnls_optimized(df: pd.DataFrame, name: str, params: dict,
     # Calculate RMSE
     rmse = np.sqrt(np.mean(residuals_values**2))
 
+    # Goodness of fit (JADE parity: R_squared per file)
+    ss_res = np.sum(residuals_values**2)
+    ss_tot = np.sum((D - np.mean(D))**2)
+    r_squared = 1 - ss_res / ss_tot if ss_tot != 0 else 0.0
+
     # Find peaks (width=0 so we get left_ips/right_ips for the peak-statistics base)
     peaks, peak_properties = find_peaks(f_optimized, prominence=prominence, distance=distance, width=0)
 
@@ -549,7 +559,7 @@ def regularized_nnls_optimized(df: pd.DataFrame, name: str, params: dict,
     )
 
     # Prepare results for this dataframe
-    results = {'filename': name, 'beta': beta_fitted}
+    results = {'filename': name, 'beta': beta_fitted, 'R_squared': r_squared}
     for i in range(len(peaks)):
         st = peak_stats[f'peak_{i+1}']
         results[f'tau_{i+1}']                     = st['position']

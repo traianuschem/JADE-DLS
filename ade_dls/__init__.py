@@ -7,8 +7,8 @@ to determine hydrodynamic radius and particle size distributions.
 License: GPL-3.0-or-later
 """
 
-__version__ = "3.3.1"
-__author__ = "Your Name"
+__version__ = "3.3.2"
+__author__ = "Richard Neubert"
 __license__ = "GPL-3.0-or-later"
 
 __all__ = [

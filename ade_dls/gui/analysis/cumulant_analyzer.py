@@ -44,12 +44,15 @@ def _fit_single_method_d(name, x_data, y_data, n_max, n_start, gap_threshold):
     )
     import numpy as np
 
-    mask = y_data > 0
-    x_fit = x_data[mask]
-    y_fit = y_data[mask]
+    # JADE parity: fit the full raw g(2)-1 curve, including any negative tail
+    # at long lag times — that tail carries the signature of slow-diffusing
+    # minority populations, and dropping it prevents Method D's clustering
+    # from ever resolving them (see comparison report, Method D finding).
+    x_fit = x_data
+    y_fit = y_data
 
     if len(x_fit) < 5:
-        return name, None, "Too few positive data points"
+        return name, None, "Too few data points"
 
     try:
         result = fit_cumulant_D(x_fit, y_fit, n_max=n_max, n_start=n_start)
@@ -423,10 +426,10 @@ class CumulantAnalyzer:
         )
         polydispersity_method_A_3 = cumulant_method_A_data['polydispersity_3rd_order'].mean()
 
-        # Skewness from 3rd order expansion parameter (µ₃ / Γ³) – same as JADE 2.0
+        # Skewness from 3rd order expansion parameter (µ₃ / µ₂^1.5), matching JADE 2.0
         cumulant_method_A_data['Skewness_3rd'] = (
             cumulant_method_A_data['3rd order frequency exp param [ms^2]'] /
-            (cumulant_method_A_data['3rd order frequency [1/ms]'])**3
+            (cumulant_method_A_data['2nd order frequency exp param [ms^2]'])**(3/2)
         )
         skewness_method_A_3 = cumulant_method_A_data['Skewness_3rd'].mean()
 
@@ -869,6 +872,9 @@ class CumulantAnalyzer:
             self.prepare_processed_correlations()
 
         # Define fit functions
+        def fit_function1(x, a, b, f):
+            return f + a * np.exp(-2 * b * x)
+
         def fit_function2(x, a, b, c, f):
             inner_term = 1 + 0.5 * c * x**2
             term = f + a * (np.exp(-b * x) * inner_term)**2
@@ -886,6 +892,7 @@ class CumulantAnalyzer:
 
         # Select fit function
         fit_func_map = {
+            'fit_function1': fit_function1,
             'fit_function2': fit_function2,
             'fit_function3': fit_function3,
             'fit_function4': fit_function4
@@ -981,11 +988,17 @@ class CumulantAnalyzer:
         C_diff['D [m^2/s]'] = [slope_c * 10**(-18)]
         C_diff['std err D [m^2/s]'] = [slope_se_c * 10**(-18)]
 
-        # Calculate polydispersity
-        cumulant_method_C_data['polydispersity'] = (
-            cumulant_method_C_data['best_c'] / (cumulant_method_C_data['best_b'])**2
-        )
-        polydispersity_method_C = cumulant_method_C_data['polydispersity'].mean()
+        # Calculate polydispersity (needs the 2nd-cumulant 'c' parameter, which
+        # fit_function1's single-exponential model doesn't have — JADE reports
+        # PDI = NaN for the 1st order fit too)
+        if 'best_c' in cumulant_method_C_data.columns:
+            cumulant_method_C_data['polydispersity'] = (
+                cumulant_method_C_data['best_c'] / (cumulant_method_C_data['best_b'])**2
+            )
+            polydispersity_method_C = cumulant_method_C_data['polydispersity'].mean()
+        else:
+            cumulant_method_C_data['polydispersity'] = np.nan
+            polydispersity_method_C = np.nan
 
         # Calculate final results
         self.method_c_results = pd.DataFrame()
@@ -1002,7 +1015,8 @@ class CumulantAnalyzer:
         self.method_c_results['D error [m²/s]'] = [C_diff['std err D [m^2/s]'][0]]
         self.method_c_results['R_squared'] = [model.rsquared]
         fit_func_name = params['fit_function']
-        _order_label = {'fit_function2': '2nd order', 'fit_function3': '3rd order',
+        _order_label = {'fit_function1': '1st order', 'fit_function2': '2nd order',
+                        'fit_function3': '3rd order',
                         'fit_function4': '4th order'}.get(fit_func_name, fit_func_name)
         self.method_c_fit_label = _order_label  # store for recompute
         self.method_c_results['Fit'] = [f'Rh from iterative non-linear cumulant fit ({_order_label})']
@@ -1113,11 +1127,15 @@ class CumulantAnalyzer:
         C_diff['D [m^2/s]'] = [slope_rc * 10**(-18)]
         C_diff['std err D [m^2/s]'] = [slope_se_rc * 10**(-18)]
 
-        # Calculate polydispersity
-        cumulant_method_C_data['polydispersity'] = (
-            cumulant_method_C_data['best_c'] / (cumulant_method_C_data['best_b'])**2
-        )
-        polydispersity_method_C = cumulant_method_C_data['polydispersity'].mean()
+        # Calculate polydispersity (see run_method_c for why this is gated)
+        if 'best_c' in cumulant_method_C_data.columns:
+            cumulant_method_C_data['polydispersity'] = (
+                cumulant_method_C_data['best_c'] / (cumulant_method_C_data['best_b'])**2
+            )
+            polydispersity_method_C = cumulant_method_C_data['polydispersity'].mean()
+        else:
+            cumulant_method_C_data['polydispersity'] = np.nan
+            polydispersity_method_C = np.nan
 
         # Recomputed results
         recomputed_results = pd.DataFrame()
@@ -1296,6 +1314,9 @@ class CumulantAnalyzer:
                 'R-squared': r_squared,
                 'n_populations': cluster_info['n_clusters'],
                 'gamma_mean': moments['gamma_mean'],
+                'moment_2': moments['gamma_2'],
+                'moment_3': moments['gamma_3'],
+                'moment_4': moments['gamma_4'],
                 'pdi': moments['pdi'],
                 'skewness': moments['skewness'],
                 'kurtosis': moments['kurtosis'],

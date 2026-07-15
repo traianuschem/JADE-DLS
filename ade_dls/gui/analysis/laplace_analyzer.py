@@ -559,6 +559,13 @@ class LaplaceAnalyzer:
             def _col_mean(col):
                 return self.nnls_data[col].mean(skipna=True) if col in self.nnls_data.columns else np.nan
 
+            # JADE parity: Abundance = fraction of files this Ward-clustered
+            # population was detected in (same metric the clustering plot uses),
+            # not the mean per-file peak-area share (a different, file-local metric).
+            nnls_cluster_info = getattr(self, 'nnls_cluster_info', None) or {}
+            pop_abundances = nnls_cluster_info.get('population_abundances', [])
+            abundance_pct = pop_abundances[i] * 100 if i < len(pop_abundances) else np.nan
+
             result = pd.DataFrame({
                 'Rh [nm]':         [Rh_nm],
                 'Rh error [nm]':   [Rh_error_nm],
@@ -570,7 +577,7 @@ class LaplaceAnalyzer:
                 'PDI':             [np.nan],
                 'Skewness':        [_col_mean(f'skewness_{peak_num}')],
                 'Kurtosis':        [_col_mean(f'kurtosis_{peak_num}')],
-                'Abundance [%]':   [_col_mean(f'normalized_area_percent_{peak_num}')],
+                'Abundance [%]':   [abundance_pct],
                 'Intercept':       [self.nnls_diff_results['const_coef'][i] if 'const_coef' in self.nnls_diff_results.columns else np.nan],
                 'Intercept_se':    [self.nnls_diff_results['const_se'][i] if 'const_se' in self.nnls_diff_results.columns else np.nan],
             })
@@ -952,6 +959,11 @@ class LaplaceAnalyzer:
                 plot=True,
                 experiment_name='Regularized'
             )
+            # JADE parity: per-population skewness/kurtosis, averaged across files
+            # from the raw skewness_i/kurtosis_i columns (JADE notebook cell 53).
+            from ade_dls.analysis.clustering import aggregate_peak_stats
+            cluster_info = aggregate_peak_stats(cluster_info, self.regularized_data)
+
             self.regularized_cluster_info = cluster_info
             self.regularized_clustering_plot = cluster_info.get('clustering_plot')
             # Use Ward-assigned population columns for regression
@@ -1084,6 +1096,13 @@ class LaplaceAnalyzer:
             )
             Rh_error_nm = fractional_error * Rh_nm
 
+            # JADE parity: per-population skewness/kurtosis from aggregate_peak_stats
+            # (computed in calculate_regularized_diffusion_coefficients, cluster_info
+            # is keyed by 1-based population number).
+            cluster_info = getattr(self, 'regularized_cluster_info', None) or {}
+            skewness = cluster_info.get('population_skewness_mean', {}).get(i + 1, np.nan)
+            kurtosis = cluster_info.get('population_kurtosis_mean', {}).get(i + 1, np.nan)
+
             result = pd.DataFrame({
                 'Rh [nm]': [Rh_nm],
                 'Rh error [nm]': [Rh_error_nm],
@@ -1095,6 +1114,8 @@ class LaplaceAnalyzer:
                 'Alpha': [self.regularized_params.get('alpha', 0)],
                 'Intercept': [self.regularized_diff_results['const_coef'][i] if 'const_coef' in self.regularized_diff_results.columns else np.nan],
                 'Intercept_se': [self.regularized_diff_results['const_se'][i] if 'const_se' in self.regularized_diff_results.columns else np.nan],
+                'Skewness': [skewness],
+                'Kurtosis': [kurtosis],
             })
             temp_results.append(result)
 
@@ -1103,7 +1124,8 @@ class LaplaceAnalyzer:
             print("[Regularized] Warning: No valid results to finalize. Creating empty DataFrame.")
             new_results = pd.DataFrame(columns=[
                 'Rh [nm]', 'Rh error [nm]', 'D [m^2/s]', 'D error [m^2/s]',
-                'R_squared', 'Fit', 'Residuals', 'Alpha', 'Intercept', 'Intercept_se'
+                'R_squared', 'Fit', 'Residuals', 'Alpha', 'Intercept', 'Intercept_se',
+                'Skewness', 'Kurtosis'
             ])
         else:
             new_results = pd.concat(temp_results, ignore_index=True)

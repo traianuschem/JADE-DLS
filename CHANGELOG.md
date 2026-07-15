@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.2] - 2026-07-15
+
+### Fixed
+
+- **Cumulant Method D dropped the negative g(2)-1 tail before fitting** (`ade_dls/gui/analysis/cumulant_analyzer.py::_fit_single_method_d`): a `mask = y_data > 0` filter discarded every correlation-curve point at or below zero before the multi-exponential fit ran. The original JADE-DLS notebook fits the full raw curve, and the discarded long-lag-time tail carries the signature of slow-diffusing minority populations — dropping it prevented Method D's cross-file clustering from ever resolving them. The filter was removed; per-file `n_modes`/`pdi`/`kurtosis` now match the JADE reference far more closely (verified against a monomodal 39-file reference run). A residual discrepancy in per-file mode-count selection remains open, tracked for a follow-up pass.
+- **Cumulant Method C missing the 1st-order (single-exponential) fit**: `run_method_c()`'s `fit_func_map` only defined `fit_function2/3/4`; the JADE notebook's 1st-order fit (`f + a·exp(-2·b·x)`, no cumulant expansion terms) had no ADE equivalent. Added `fit_function1` to `cumulant_analyzer.py` (map, order label) and a matching "1st Cumulant (single exponential)" option to `CumulantCDialog` (`ade_dls/gui/dialogs/cumulant_dialog.py`). As part of this, fixed a latent crash (`KeyError: 'best_c'`) in the polydispersity calculation, which unconditionally referenced the 2nd-cumulant parameter `c` that a 1st-order fit never produces; PDI now correctly reports NaN for the 1st-order fit, matching JADE.
+- **Cumulant Method A `Skewness_3rd` used the wrong normalization**: divided by `(3rd order frequency)³` instead of `(2nd order frequency exp param)^1.5` (µ₂^1.5), despite a code comment claiming parity with JADE. Corrected to match the JADE notebook formula.
+- **Regularized fit never computed per-population Skewness/Kurtosis**: `aggregate_peak_stats()` (`ade_dls/analysis/clustering.py`) existed but was never called from `LaplaceAnalyzer.calculate_regularized_diffusion_coefficients()`, so the Regularized results table always omitted these columns even though the JADE notebook reports them. Wired up the call and merged `population_skewness_mean`/`population_kurtosis_mean` into the final results DataFrame.
+- **NNLS `Abundance [%]` used an inconsistent metric**: `_calculate_nnls_final_results()` averaged each file's own `normalized_area_percent_i` (a per-file, per-peak share that isn't comparable across the Ward-clustered population), rather than the population's file-abundance fraction already computed by `cluster_all_gammas()` and used everywhere else (the clustering plot, Regularized, JADE itself). Switched to `population_abundances` for consistency.
+- **Per-file R² was never computed for NNLS/Regularized** (`ade_dls/analysis/regularized_optimized.py::nnls_optimized`/`regularized_nnls_optimized`): only RMSE was tracked internally; the JADE reference exports an `R_squared` column per file that ADE had no equivalent for. Added the standard `1 - ss_res/ss_tot` computation to both functions' results dicts.
+- **Cumulant Method D dropped the raw `moment_2`/`moment_3`/`moment_4` values**: `calculate_moments_from_gammas()` already computed them, but `run_method_d()`'s per-file result dict only copied the normalized `pdi`/`skewness`/`kurtosis`, silently discarding the raw moments the JADE reference tables include. Added the three missing keys.
+
+Found via a systematic headless comparison against a fresh JADE-DLS notebook reference run (`_dev/comparison/`, not part of the shipped package); see `_dev/comparison/output/diff_report.md` for the full before/after numbers.
+
+---
+
 ## [3.3.1] - 2026-07-01
 
 ### Fixed
