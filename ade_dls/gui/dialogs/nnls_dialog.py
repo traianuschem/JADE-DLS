@@ -44,6 +44,7 @@ class NNLSDialog(QDialog):
             'clustering_strategy': 'silhouette_refined',  # clustering strategy
             'use_clustering': True,            # Enable automatic peak clustering
             'peak_method': 'maximum',          # Peak position method
+            'use_weighting': False,            # Biganzoli-Ferri noise weighting (JADE-DLS v3.0)
         }
 
         # Storage for preview
@@ -183,9 +184,37 @@ class NNLSDialog(QDialog):
         options_group.setLayout(options_layout)
         layout.addWidget(options_group)
 
+        # Noise weighting (JADE-DLS v3.0)
+        weighting_group = QGroupBox("Noise Weighting")
+        weighting_layout = QVBoxLayout()
+        self.weighting_check = QCheckBox("Use noise weighting (Biganzoli-Ferri)")
+        self.weighting_check.setChecked(False)
+        available = bool(getattr(self.laplace_analyzer, 'weights_dict', None))
+        self.weighting_check.setEnabled(available)
+        tooltip = ("Weight each lag-time channel by 1/σ² from the Biganzoli & Ferri "
+                   "(2018) heteroscedastic noise model. Off matches the JADE-DLS "
+                   "default (unweighted fit).")
+        if not available:
+            tooltip += "\n\nUnavailable for this dataset (see status bar after loading)."
+        self.weighting_check.setToolTip(tooltip)
+        # Live-toggle so the interactive preview also reflects the choice
+        self.weighting_check.toggled.connect(self._on_weighting_toggled)
+        weighting_layout.addWidget(self.weighting_check)
+        weighting_group.setLayout(weighting_layout)
+        layout.addWidget(weighting_group)
+
         layout.addStretch()
         widget.setLayout(layout)
         return widget
+
+    def _on_weighting_toggled(self, checked: bool) -> None:
+        try:
+            self.laplace_analyzer.set_weighting(checked)
+        except ValueError as exc:
+            self.weighting_check.blockSignals(True)
+            self.weighting_check.setChecked(False)
+            self.weighting_check.blockSignals(False)
+            QMessageBox.warning(self, "Noise weighting unavailable", str(exc))
 
     def create_peak_detection_tab(self):
         """Create peak detection parameters tab with interactive sliders"""
@@ -1026,6 +1055,9 @@ class NNLSDialog(QDialog):
         # Processing options
         self.params['use_multiprocessing'] = self.multiprocessing_check.isChecked()
         self.params['show_plots'] = self.show_plots_check.isChecked()
+
+        # Noise weighting (JADE-DLS v3.0)
+        self.params['use_weighting'] = self.weighting_check.isChecked()
 
     def accept_parameters(self):
         """Accept parameters and emit signal"""

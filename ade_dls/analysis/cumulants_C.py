@@ -198,6 +198,18 @@ def plot_processed_correlations_iterative(dataframes_dict, fit_function2, fit_x_
                 all_fit_results.append(fit_result)
                 continue
 
+            # Noise weighting (JADE-DLS v3.0): auto-detect a 'weight' column,
+            # convert to a curve_fit `sigma` array (1/sqrt of the normalized
+            # weight) so the weighted zoom-grid R² selection below and the
+            # LM/TRF/dogbox fit itself both respect it.
+            is_weighted = 'weight' in df.columns
+            if is_weighted:
+                w_fit = np.asarray(df['weight'], dtype=float)[mask_fit]
+                sigma_fit = 1.0 / np.sqrt(w_fit / np.mean(w_fit))
+            else:
+                sigma_fit = None
+            fit_result['weighted'] = is_weighted
+
             all_y_fits    = []
             all_r_squared = []
 
@@ -205,21 +217,32 @@ def plot_processed_correlations_iterative(dataframes_dict, fit_function2, fit_x_
             def _metrics(popt):
                 yc     = fit_function2(x_fit, *popt)
                 res    = y_fit - yc
-                ss_res = np.sum(res**2)
-                ss_tot = np.sum((y_fit - np.mean(y_fit))**2)
+                if is_weighted:
+                    w_arr  = sigma_fit ** -2
+                    ss_res = np.sum(w_arr * res**2)
+                    y_wmean = np.average(y_fit, weights=w_arr)
+                    ss_tot = np.sum(w_arr * (y_fit - y_wmean)**2)
+                else:
+                    ss_res = np.sum(res**2)
+                    ss_tot = np.sum((y_fit - np.mean(y_fit))**2)
                 r2     = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0
                 n      = len(y_fit)
                 k      = len(popt) + 1
-                return r2, float(np.sqrt(ss_res / n)), float(n * np.log(ss_res / n) + 2 * k)
+                # RMSE/AIC stay unweighted (JADE parity) -- always from the
+                # plain (unweighted) residual sum of squares.
+                unweighted_ss_res = np.sum(res**2)
+                return r2, float(np.sqrt(unweighted_ss_res / n)), float(n * np.log(unweighted_ss_res / n) + 2 * k)
 
             def _do_fit(p0, maxfev_override=None):
                 mfev = maxfev_override if maxfev_override is not None else maxfev
                 if method == 'lm':
-                    return curve_fit(fit_function2, x_fit, y_fit, p0=p0, maxfev=mfev)
+                    return curve_fit(fit_function2, x_fit, y_fit, p0=p0, maxfev=mfev,
+                                     sigma=sigma_fit, absolute_sigma=False)
                 bounds = ([_BOUNDS_LOWER[pn] for pn in param_names],
                           [_BOUNDS_UPPER[pn] for pn in param_names])
                 return curve_fit(fit_function2, x_fit, y_fit, p0=p0,
-                                 method=method, bounds=bounds, maxfev=mfev)
+                                 method=method, bounds=bounds, maxfev=mfev,
+                                 sigma=sigma_fit, absolute_sigma=False)
 
             best_popt = None
             best_pcov = None

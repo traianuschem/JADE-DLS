@@ -152,9 +152,39 @@ ln[I(q)] ≈ ln[I₀] − (Rg² / 3) · q²
 
 Fit over the range qRg < 1.3 (Guinier regime). Returns I₀, Rg, qRg_max, R².
 
-**Number-weighting correction:** Optional conversion from intensity-weighted to number-weighted distribution using a configurable Rh exponent.
+**Number-weighting correction:** The Guinier fit itself always runs on the real, intensity-weighted per-angle intensities. Afterwards, the extrapolated I₀ values are converted to number/concentration fractions using a configurable Rh exponent (c ∝ I₀/Rh^exponent; 6 = Rayleigh/compact spheres, 5 = Daoud-Cotton/star polymers), always computed alongside the intensity-weighted result — applying this correction to the raw per-angle intensities before the fit (as earlier versions did) would corrupt the q-dependence the Guinier fit relies on.
 
 **Output:** Guinier plots per population, I₀, Rg, qRg_max, R² for each population and total
+
+---
+
+## Noise Weighting (Biganzoli & Ferri)
+
+Optional, off by default. Real multi-tau DLS data is heteroscedastic: the
+statistical uncertainty of each lag-time channel varies strongly with τ —
+shot-noise dominated at the shortest gate times, decreasing as longer bins
+accumulate more photon counts, and rising again near the measuring-time
+limit. Enabling "Use noise weighting" in the Cumulant B/C/D, NNLS and
+Regularized dialogs weights each fit residual by the channel's true noise
+variance, computed from the Biganzoli & Ferri (2018) correction to the
+Schätzel (1990) formula (a correction for "triangular averaging", the
+finite-sampling-time effect of multi-tau correlators).
+
+Requires the Duration, MeanCR0 and MeanCR1 metadata from the ALV file
+header (extracted automatically alongside angle/temperature/etc.); the
+checkbox is disabled with an explanatory tooltip when this metadata is
+unavailable (e.g. LS Instruments data, or files with an incomplete header).
+Weights are computed once per (filtered) dataset and shared across all
+analyses; whether a given fit actually uses them is a separate, per-run
+choice. Method A (instrument-software cumulants) is unaffected — it reads
+pre-computed values and does not refit the correlation function.
+
+Weighted fits report an additional `weighted_R_squared` alongside the
+usual (unweighted) `R_squared`, and a `weighted` flag column.
+
+Reference: Biganzoli & Ferri, "Statistical analysis of dynamic light
+scattering data: revisiting and beyond the Schätzel formulas", *Optics
+Express* **26**(22), 29375–29395 (2018).
 
 ---
 

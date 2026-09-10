@@ -92,6 +92,46 @@ def _collect_q_range(dialog):
 
 
 # ---------------------------------------------------------------------------
+# Shared helper: noise-weighting checkbox (JADE-DLS v3.0)
+# ---------------------------------------------------------------------------
+
+def _weighting_availability(parent_dialog):
+    """Return (available: bool, reason: str|None) from the parent MainWindow's
+    pipeline data, computed once in MainWindow._preprocess_and_store()."""
+    main_window = parent_dialog.parent()
+    data = getattr(getattr(main_window, 'pipeline', None), 'data', None) or {}
+    return bool(data.get('weights')), data.get('weighting_unavailable_reason')
+
+
+def _build_weighting_group(parent_dialog):
+    """
+    Build a QGroupBox with the "Use noise weighting" checkbox and attach it
+    to *parent_dialog* as ``use_weighting_cb``. Disabled with an explanatory
+    tooltip when weights are unavailable for the current dataset (e.g. non-
+    ALV data, or missing Duration/MeanCR0/MeanCR1 metadata).
+    """
+    group = QGroupBox("Noise Weighting")
+    layout = QVBoxLayout()
+
+    parent_dialog.use_weighting_cb = QCheckBox("Use noise weighting (Biganzoli-Ferri)")
+    parent_dialog.use_weighting_cb.setChecked(False)
+
+    available, reason = _weighting_availability(parent_dialog)
+    parent_dialog.use_weighting_cb.setEnabled(available)
+    tooltip = ("Weight each lag-time channel by 1/σ² from the Biganzoli & Ferri "
+               "(2018) heteroscedastic noise model (needs Duration and "
+               "MeanCR0/MeanCR1 from the ALV header). Off matches the JADE-DLS "
+               "default (unweighted fit).")
+    if not available and reason:
+        tooltip += f"\n\nUnavailable for this dataset: {reason}"
+    parent_dialog.use_weighting_cb.setToolTip(tooltip)
+
+    layout.addWidget(parent_dialog.use_weighting_cb)
+    group.setLayout(layout)
+    return group
+
+
+# ---------------------------------------------------------------------------
 # Method A
 # ---------------------------------------------------------------------------
 
@@ -215,6 +255,7 @@ class CumulantBDialog(QDialog):
         layout.addWidget(time_group)
 
         layout.addWidget(_build_q_range_group(self))
+        layout.addWidget(_build_weighting_group(self))
         layout.addStretch()
         layout.addLayout(self._button_row())
         self.setLayout(layout)
@@ -255,6 +296,7 @@ class CumulantBDialog(QDialog):
             'fit_limits': self.fit_limits,
             'q_range': self.q_range,
             'fit_through_origin': self.fit_through_origin.isChecked(),
+            'use_weighting': self.use_weighting_cb.isChecked(),
         }
 
 
@@ -394,6 +436,7 @@ class CumulantCDialog(QDialog):
 
         # --- q² range ---
         layout.addWidget(_build_q_range_group(self))
+        layout.addWidget(_build_weighting_group(self))
 
         layout.addStretch()
         layout.addLayout(self._button_row())
@@ -453,6 +496,7 @@ class CumulantCDialog(QDialog):
             'method_c_params': self.params,
             'q_range': self.q_range,
             'fit_through_origin': self.fit_through_origin.isChecked(),
+            'use_weighting': self.use_weighting_cb.isChecked(),
         }
 
 
@@ -602,6 +646,7 @@ class CumulantDDialog(QDialog):
         layout.addWidget(proc_group)
 
         layout.addWidget(_build_q_range_group(self))
+        layout.addWidget(_build_weighting_group(self))
         layout.addStretch()
         layout.addLayout(self._button_row())
         self.setLayout(layout)
@@ -658,4 +703,5 @@ class CumulantDDialog(QDialog):
             'params': self.params,
             'q_range': self.q_range,
             'fit_through_origin': self.fit_through_origin.isChecked(),
+            'use_weighting': self.use_weighting_cb.isChecked(),
         }

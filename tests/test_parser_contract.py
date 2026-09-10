@@ -23,6 +23,10 @@ LS_FOLDER = _LS_LOCAL if os.path.isdir(_LS_LOCAL) else _LS_NC
 
 REQUIRED_BASE = {'angle [°]', 'temperature [K]', 'wavelength [nm]',
                  'refractive_index', 'viscosity [cp]', 'filename', 'folder'}
+# JADE v3.0: optional metadata used by analysis.weighting's noise model and
+# by SLS intensity normalization. Every parser must expose these columns
+# (NaN where the instrument/format doesn't provide them) for schema parity.
+OPTIONAL_BASE = {'duration [s]', 'meancr0 [kHz]', 'meancr1 [kHz]', 'monitordiode [cps]'}
 
 
 def _check_contract(parser, folder):
@@ -33,6 +37,8 @@ def _check_contract(parser, folder):
     assert bd is not None, "extract_basedata returned None"
     assert REQUIRED_BASE <= set(bd.columns), \
         f"Missing basedata columns: {REQUIRED_BASE - set(bd.columns)}"
+    assert OPTIONAL_BASE <= set(bd.columns), \
+        f"Missing optional (weighting/SLS) basedata columns: {OPTIONAL_BASE - set(bd.columns)}"
 
     corr = parser.extract_correlations(files[0])
     assert corr is not None, "extract_correlations returned None"

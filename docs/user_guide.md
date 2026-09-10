@@ -135,9 +135,9 @@ Use the heatmap to find a stable region where both the population count and silh
 
 ## Export
 
-### CSV
+### CSV (plot data)
 
-**File > Export CSV** writes one `.csv` per method with all results. A separate clustering file is written for Methods D and NNLS.
+In the **Analysis View > Plots** tab, **📤 Export current plot as CSV** writes one `.csv` per data series (measured points, fit curve, histogram bars, error bars — one set per panel) of the plot currently shown, named `<plot>__panel<k>__<series>.csv`, plus a `<plot>_export_metadata.json` with the analysis method, parameters and a summary. Every written file is registered in the FAIR provenance record with a structured description (plot, method, panel, series label, axis labels, columns) — see the Provenance Panel. This single button replaces the previous set of plot-type-specific export buttons (v3.4.0).
 
 ### Excel
 

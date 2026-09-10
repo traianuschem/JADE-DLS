@@ -33,11 +33,20 @@ def _normality_status(resid) -> str:
         return "N/A"
 
 
-def _fit_single_method_d(name, x_data, y_data, n_max, n_start, gap_threshold):
+def _fit_single_method_d(name, x_data, y_data, n_max, n_start, gap_threshold, weights=None):
     """
     Modul-Level-Wrapper für joblib-Parallelisierung von Method D.
     Führt Fitting, Clustering und Momentenberechnung durch – kein Plotting.
     Gibt (name, result_dict, error_str) zurück.
+
+    ``weights`` (JADE-DLS v3.0), when given, is the per-channel Biganzoli-
+    Ferri noise weight array for this file; it is passed through to
+    ``fit_cumulant_D`` as ``sigma = 1/sqrt(weights/mean(weights))`` in
+    ``curve_fit`` and used (instead of the plain residual sum of squares)
+    to select the best model order. Method D operates on raw numpy arrays
+    rather than a DataFrame, so the usual 'weight'-column auto-detection
+    used elsewhere does not apply here -- the caller must extract the
+    column and pass it explicitly.
     """
     from ade_dls.analysis.cumulants_D import (
         fit_cumulant_D, calculate_moments_from_gammas, cluster_gammas
@@ -55,7 +64,7 @@ def _fit_single_method_d(name, x_data, y_data, n_max, n_start, gap_threshold):
         return name, None, "Too few data points"
 
     try:
-        result = fit_cumulant_D(x_fit, y_fit, n_max=n_max, n_start=n_start)
+        result = fit_cumulant_D(x_fit, y_fit, n_max=n_max, n_start=n_start, weights=weights)
         clusters, representatives, cluster_info = cluster_gammas(
             result['gammas'], gap_threshold=gap_threshold
         )
@@ -73,6 +82,7 @@ def _fit_single_method_d(name, x_data, y_data, n_max, n_start, gap_threshold):
             'r_squared': r_squared,
             'x_fit': x_fit,
             'y_fit': y_fit,
+            'weighted': weights is not None,
         }, None
     except Exception as e:
         return name, None, str(e)
@@ -119,6 +129,17 @@ class CumulantAnalyzer:
         self.processed_correlations = None
         self.c_value = None
         self.delta_c = None
+
+        # Whether to attach Biganzoli-Ferri noise weights (JADE-DLS v3.0)
+        # before fitting Methods B/C/D -- set by the calling GUI dialog's
+        # "Use noise weighting" checkbox, default off (matches JADE default).
+        # Method A reads instrument-computed cumulants directly and ignores this.
+        self.use_weighting = False
+
+        # Last params dict passed to run_method_c/run_method_d, recorded for
+        # the plot-CSV export's analysis metadata (see csv_export.py).
+        self.method_c_params = None
+        self.method_d_params = None
 
     def prepare_basedata(self):
         """
@@ -176,27 +197,50 @@ class CumulantAnalyzer:
         Prepare processed correlation data
 
         Creates a dictionary with:
-        - 't (s)': time in seconds
-        - 'g(2)': mean of correlation detectors
+        - 't [s]': time in seconds
+        - 'g(2)-1': mean of correlation detectors
+
+        Prefers the canonical, already noise-corrected
+        ``loaded_data['processed_correlations']`` computed once by
+        ``MainWindow._preprocess_and_store()`` (JADE-DLS v3.0). Falls back
+        to computing it here (and applying ``self.noise_params`` if set) for
+        headless/legacy callers that build a CumulantAnalyzer directly
+        without going through that path (e.g. the comparison harness in
+        ``_dev/comparison/``).
+
+        When ``self.use_weighting`` is True, attaches the Biganzoli-Ferri
+        noise weights ('weight' column) from ``loaded_data['weights']`` --
+        raises if weighting was requested but is unavailable for this
+        dataset, so a silently-unweighted fit is never mistaken for a
+        weighted one.
         """
-        from ade_dls.core.preprocessing import process_correlation_data
+        pre = self.loaded_data.get('processed_correlations')
+        if pre is None:
+            from ade_dls.core.preprocessing import process_correlation_data
 
-        columns_to_drop = ['time [ms]', 'correlation 1', 'correlation 2',
-                          'correlation 3', 'correlation 4']
+            columns_to_drop = ['time [ms]', 'correlation 1', 'correlation 2',
+                              'correlation 3', 'correlation 4']
 
-        self.processed_correlations = process_correlation_data(
-            self.loaded_data['correlations'],
-            columns_to_drop
-        )
-
-        # Apply noise correction if parameters were set by the filter dialog
-        if getattr(self, 'noise_params', None):
-            from ade_dls.analysis.noise import apply_noise_corrections
-            self.processed_correlations = apply_noise_corrections(
-                self.processed_correlations,
-                **self.noise_params
+            pre = process_correlation_data(
+                self.loaded_data['correlations'],
+                columns_to_drop
             )
 
+            # Apply noise correction if parameters were set by the filter dialog
+            if getattr(self, 'noise_params', None):
+                from ade_dls.analysis.noise import apply_noise_corrections
+                pre = apply_noise_corrections(pre, **self.noise_params)
+
+        if getattr(self, 'use_weighting', False):
+            weights = self.loaded_data.get('weights')
+            if not weights:
+                raise ValueError(
+                    "Noise weighting was requested but no weights are available "
+                    "for this dataset (see loaded_data['weighting_unavailable_reason']).")
+            from ade_dls.analysis.weighting import apply_weights_to_correlations
+            pre = apply_weights_to_correlations(pre, weights)
+
+        self.processed_correlations = pre
         return self.processed_correlations
 
     @staticmethod
@@ -864,6 +908,9 @@ class CumulantAnalyzer:
         from ade_dls.analysis.cumulants_C import get_adaptive_initial_parameters, get_meaningful_parameters
         from ade_dls.gui.analysis.cumulant_plotting import plot_processed_correlations_iterative_no_show, create_summary_plot
 
+        # Recorded for the plot-CSV export's analysis metadata (csv_export.py)
+        self.method_c_params = params
+
         # Ensure data is prepared
         if self.df_basedata is None:
             self.prepare_basedata()
@@ -1223,6 +1270,9 @@ class CumulantAnalyzer:
         import statsmodels.api as sm
         import scipy.stats as scipy_stats
 
+        # Recorded for the plot-CSV export's analysis metadata (csv_export.py)
+        self.method_d_params = params
+
         n_max = params.get('n_max', 25)
         n_start = params.get('n_start', 1)
         gap_threshold = params.get('gap_threshold', 3.0)
@@ -1266,7 +1316,8 @@ class CumulantAnalyzer:
                         name,
                         df['t [s]'].values,
                         df['g(2)-1'].values,
-                        n_max, n_start, gap_threshold
+                        n_max, n_start, gap_threshold,
+                        df['weight'].values if 'weight' in df.columns else None
                     )
                     for name, df in self.processed_correlations.items()
                 )
@@ -1285,7 +1336,8 @@ class CumulantAnalyzer:
                         name,
                         df['t [s]'].values,
                         df['g(2)-1'].values,
-                        n_max, n_start, gap_threshold
+                        n_max, n_start, gap_threshold,
+                        df['weight'].values if 'weight' in df.columns else None
                     )
                 )
 
@@ -1320,6 +1372,7 @@ class CumulantAnalyzer:
                 'pdi': moments['pdi'],
                 'skewness': moments['skewness'],
                 'kurtosis': moments['kurtosis'],
+                'weighted': data.get('weighted', False),
             }
             for i, rep_gamma in enumerate(representatives):
                 fit_result[f'gamma_{i+1}'] = rep_gamma

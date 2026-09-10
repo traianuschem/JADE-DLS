@@ -202,8 +202,13 @@ class ProvenanceRecord:
         embedded in the entry so any artifact can be traced back here.
 
         *extra_fields* is an optional dict of additional key/value pairs
-        merged into the catalog entry (e.g. ``{"export_id": "<uuid>"}`` to
-        cross-link an export-metadata JSON back to its provenance record).
+        merged into the catalog entry. Two conventional keys:
+          - ``"export_id"``: cross-links an export-metadata JSON back to
+            this provenance record.
+          - ``"description"``: a small structured dict describing exactly
+            what this artifact is (e.g. for a plot-data CSV: ``{"plot":
+            ..., "method": ..., "panel": ..., "series": ..., "kind": ...,
+            "columns": [...]}``) -- also emitted in :meth:`to_prov_json`.
 
         Returns the new output id (e.g. ``"out-002"``).
         """
@@ -219,6 +224,7 @@ class ProvenanceRecord:
             "timestamp": datetime.now().isoformat(),
         }
         if filepath:
+            entry["path"] = str(Path(filepath).resolve())
             sha = compute_sha256(filepath)
             if sha:
                 entry["sha256"] = sha
@@ -314,6 +320,11 @@ class ProvenanceRecord:
             }
             if "sha256" in out:
                 doc["entity"][oid][jade("sha256")] = out["sha256"]
+            if "path" in out:
+                doc["entity"][oid][jade("path")] = out["path"]
+            if "description" in out:
+                doc["entity"][oid][jade("description")] = json.dumps(
+                    out["description"], ensure_ascii=False)
 
         # --- activities ---
         doc["activity"] = {}

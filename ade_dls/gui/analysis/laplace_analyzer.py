@@ -27,7 +27,8 @@ class LaplaceAnalyzer:
     def __init__(self, processed_correlations: Dict[str, pd.DataFrame],
                  df_basedata: pd.DataFrame,
                  c: float, delta_c: float,
-                 raw_correlations: Optional[Dict[str, pd.DataFrame]] = None):
+                 raw_correlations: Optional[Dict[str, pd.DataFrame]] = None,
+                 weights: Optional[Dict[str, "object"]] = None):
         """
         Initialize the Laplace analyzer
 
@@ -39,6 +40,11 @@ class LaplaceAnalyzer:
             c: Pre-calculated constant for Rh calculation (kB*T / 6*pi*eta)
             delta_c: Error in c
             raw_correlations: Optional raw correlation data (will be processed if processed_correlations is None)
+            weights: Optional {filename: weight_array} of Biganzoli-Ferri noise
+                weights (JADE-DLS v3.0), computed once by
+                ``gui.core.correlation_preprocessing.preprocess_correlations``.
+                ``None`` when unavailable for this dataset. See
+                :meth:`set_weighting`.
         """
         # If processed correlations not provided, process raw correlations
         if processed_correlations is None and raw_correlations is not None:
@@ -46,6 +52,13 @@ class LaplaceAnalyzer:
             self.processed_correlations = self._process_raw_correlations(raw_correlations)
         else:
             self.processed_correlations = processed_correlations
+
+        # Canonical unweighted correlations + available noise weights; kept
+        # separately so set_weighting() can toggle between them without
+        # ever recomputing/re-noise-correcting the data.
+        self._processed_unweighted = self.processed_correlations
+        self.weights_dict = weights
+        self.use_weighting = False
 
         self.df_basedata = df_basedata
         self.c = c
@@ -77,6 +90,30 @@ class LaplaceAnalyzer:
         self.guinier_results = None
         self.guinier_total = None
         self.sls_summary = None
+
+    def set_weighting(self, enabled: bool) -> None:
+        """
+        Toggle Biganzoli-Ferri noise weighting (JADE-DLS v3.0) for all
+        subsequent NNLS/Regularized fits, previews and post-fit refinement
+        dialogs -- they all read ``self.processed_correlations`` directly,
+        so this single attribute swap is the one place that needs to change.
+
+        Raises ValueError if *enabled* is True but no weights are available
+        for this dataset (e.g. non-ALV data, or missing Duration/MeanCR0/
+        MeanCR1 metadata) -- a silently-unweighted fit must never be
+        mistaken for a weighted one.
+        """
+        if enabled and not self.weights_dict:
+            raise ValueError(
+                "Noise weighting requested but no weights are available for "
+                "this dataset (see pipeline.data['weighting_unavailable_reason']).")
+        if enabled:
+            from ade_dls.analysis.weighting import apply_weights_to_correlations
+            self.processed_correlations = apply_weights_to_correlations(
+                self._processed_unweighted, self.weights_dict)
+        else:
+            self.processed_correlations = self._processed_unweighted
+        self.use_weighting = bool(enabled)
 
     def _process_raw_correlations(self, raw_correlations: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
         """
@@ -1324,7 +1361,7 @@ class LaplaceAnalyzer:
         return True
 
     def run_sls_analysis(self, n_populations: int, q2_range=None,
-                         exponent: int = 6, use_nw: bool = True) -> 'pd.DataFrame':
+                         exponent: int = 6) -> 'pd.DataFrame':
         """
         Run population-resolved SLS analysis on the regularized NNLS results.
 
@@ -1340,18 +1377,22 @@ class LaplaceAnalyzer:
         q2_range : tuple (q2_min, q2_max), dict {pop: (min, max)}, or None
             q² range for Guinier fit. None = all angles.
         exponent : int  (default 6)
-            Rh exponent for number-weighting correction.
+            Rh exponent for the number-weighting correction applied to the
+            extrapolated I0 values (JADE-DLS v2.3.0; see
+            ade_dls.analysis.sls.compute_number_weighted_I0).
             6 = Rayleigh (compact spheres), 5 = Daoud-Cotton (star polymers).
-        use_nw : bool  (default True)
-            If True, also compute number-weighted intensities.
 
         Returns
         -------
-        pd.DataFrame  summary table (from summarize_sls_combined)
+        pd.DataFrame  summary table (from summarize_sls_combined), always
+        including both intensity-weighted and number-weighted columns —
+        the number-weighting correction is applied only to the already-
+        extrapolated I0 values, never to the raw per-angle intensities fed
+        into the Guinier fit, so it is safe to compute unconditionally
+        (JADE-DLS v2.3.0 dropped the toggle for the same reason).
         """
         from ade_dls.analysis.sls import (
             compute_sls_data,
-            compute_sls_data_number_weighted,
             compute_guinier_total,
             compute_guinier_extrapolation,
             summarize_sls_combined,
@@ -1382,9 +1423,6 @@ class LaplaceAnalyzer:
                 rh_values[i] = float(row['Rh [nm]'])
 
         sls = compute_sls_data(self.regularized_data, self.df_intensity, n_populations)
-        if use_nw:
-            sls = compute_sls_data_number_weighted(sls, n_populations, rh_values,
-                                                    exponent)
         self.sls_data = sls
         self.guinier_total = compute_guinier_total(sls, q2_range)
         self.guinier_results = compute_guinier_extrapolation(sls, n_populations,

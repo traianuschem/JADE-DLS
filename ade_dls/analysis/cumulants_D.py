@@ -86,12 +86,24 @@ def dirac_sum_g2(t, beta, *gammas):
     return beta * g1**2
 
 #fit the redefined cumulant model to autocorrelation data.
-def fit_cumulant_D(x_data, y_data, n_max=25, beta_initial=1.0, gamma_initial=None, n_start=1):
+def fit_cumulant_D(x_data, y_data, n_max=25, beta_initial=1.0, gamma_initial=None,
+                    n_start=1, weights=None):
     """
     Iteratively increases the number of Dirac delta modes (n), using previous
     fit results as initial guesses for speed. Chooses the solution that minimizes
     residual sum of squares while ensuring monotonicity constraints (Γᵢ > Γᵢ₋₁ > 0).
+
+    ``weights`` (JADE-DLS v3.0, Biganzoli-Ferri noise weighting), when given,
+    is passed to ``curve_fit`` as ``sigma = 1/sqrt(weights/mean(weights))``
+    and used -- instead of the plain (unweighted) residual sum of squares --
+    to select the best-fitting model order (number of modes). The
+    convergence checks below (mode collapse / improvement thresholds) still
+    use the unweighted residual sum of squares, matching JADE.
     """
+    sigma = None
+    if weights is not None:
+        w = np.asarray(weights, dtype=float)
+        sigma = 1.0 / np.sqrt(w / np.mean(w))
 
     #estimate initial gamma from data if not provided
     if gamma_initial is None:
@@ -163,7 +175,9 @@ def fit_cumulant_D(x_data, y_data, n_max=25, beta_initial=1.0, gamma_initial=Non
                 p0=p0,
                 bounds=(bounds_lower, bounds_upper),
                 method='trf',
-                maxfev=5000)
+                maxfev=5000,
+                sigma=sigma,
+                absolute_sigma=False)
 
             #extract fitted parameters
             beta_fit = popt[0]
@@ -179,6 +193,9 @@ def fit_cumulant_D(x_data, y_data, n_max=25, beta_initial=1.0, gamma_initial=Non
             #calculate residuals
             residuals = y_data - g2_fit
             residual_ss = np.sum(residuals**2)
+            # Weighted RSS drives best-model selection (JADE parity); the
+            # convergence checks below stay on the unweighted residual_ss.
+            selection_ss = np.sum((residuals / sigma)**2) if sigma is not None else residual_ss
 
             #store result
             result = {
@@ -186,6 +203,7 @@ def fit_cumulant_D(x_data, y_data, n_max=25, beta_initial=1.0, gamma_initial=Non
                 'beta': beta_fit,
                 'gammas': gammas_fit,
                 'residual_ss': residual_ss,
+                'selection_ss': selection_ss,
                 'g1_fit': g1_fit,
                 'g2_fit': g2_fit,
                 'convergence': 'success'
@@ -193,8 +211,8 @@ def fit_cumulant_D(x_data, y_data, n_max=25, beta_initial=1.0, gamma_initial=Non
             all_results.append(result)
 
             #update best result if this is better
-            if residual_ss < best_residual:
-                best_residual = residual_ss
+            if selection_ss < best_residual:
+                best_residual = selection_ss
                 best_result = result
 
             # === CONVERGENCE CHECKS ===
@@ -250,8 +268,8 @@ def calculate_moments_from_gammas(gammas):
     gamma_3 = np.mean(gammas**3)  # ⟨Γ³⟩ = (1/n)Σ Γᵢ³
     gamma_4 = np.mean(gammas**4)  # ⟨Γ⁴⟩ = (1/n)Σ Γᵢ⁴
 
-    #calculate polydispersity index
-    pdi = gamma_2 / gamma_mean**2 - 1
+    #calculate polydispersity index (JADE parity: guard against gamma_mean == 0)
+    pdi = gamma_2 / gamma_mean**2 - 1 if gamma_mean != 0 else float('nan')
 
     #calculate skewness
     numerator = gamma_3 - 3*gamma_2*gamma_mean + 2*gamma_mean**3
@@ -340,14 +358,19 @@ def fit_correlations_method_D(dataframes_dict, x_col='t [s]', y_col='g(2)-1',
             x_data = df[x_col].values
             y_data = df[y_col].values
 
+            # Noise weighting (JADE-DLS v3.0): auto-detect a 'weight' column
+            is_weighted = 'weight' in df.columns
+            weights = df['weight'].values if is_weighted else None
+
             # Perform fit
             print(f"\nProcessing: {name}")
-            result = fit_cumulant_D(x_data, y_data, n_max=n_max, n_start=n_start)
+            result = fit_cumulant_D(x_data, y_data, n_max=n_max, n_start=n_start, weights=weights)
 
             # Store fit parameters
             fit_result['n_modes'] = result['n_modes']
             fit_result['beta'] = result['beta']
             fit_result['residual_ss'] = result['residual_ss']
+            fit_result['weighted'] = is_weighted
 
             # === CLUSTERING: Group gammas into distinct populations ===
             clusters, representatives, cluster_info = cluster_gammas(

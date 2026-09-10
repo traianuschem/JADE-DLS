@@ -51,12 +51,30 @@ def extract_data(file_path):
                 'viscosity [cp]': [None]
             }
 
-            # Read file line by line (memory efficient)
-            # Only read first 200 lines (metadata is always at the top)
+            # Additional metadata (JADE v3.0): measuring duration and the two
+            # ALV detector count rates, used by analysis.weighting's
+            # heteroscedastic noise model and for angle-resolved SLS
+            # intensity (formerly the retired intensity.py). Unlike `data`
+            # above these are NOT required for a file to be considered valid
+            # -- a file missing them still yields base data, just without
+            # noise-weighting support (see the completeness check below).
+            extra = {
+                'duration [s]': [None],
+                'meancr0 [kHz]': [None],
+                'meancr1 [kHz]': [None],
+                'monitordiode [cps]': [None],
+            }
+
+            # Read file line by line (memory efficient). The 5 required
+            # fields always live in the header (first ~30 lines), but
+            # `Monitor Diode` is a trailer value written AFTER the full
+            # count-rate trace (position depends on measurement duration,
+            # can be several hundred lines in) -- matching JADE, which reads
+            # the whole file. A generous safety cap guards against
+            # pathological/corrupt files rather than imposing a real limit.
             with open(file_path, 'r', encoding=encoding, errors='replace') as file:
                 for line_num, line in enumerate(file):
-                    # Stop after 200 lines (all metadata should be found by then)
-                    if line_num > 200:
+                    if line_num > 20000:
                         break
 
                     try:
@@ -95,8 +113,37 @@ def extract_data(file_path):
                             except (ValueError, IndexError):
                                 pass
 
-                        # Early exit if all data found
-                        if all(v[0] is not None for v in data.values()):
+                        # Extract measuring duration (used by weighting's noise model)
+                        elif extra['duration [s]'][0] is None and "Duration [s]" in line:
+                            try:
+                                extra['duration [s]'][0] = float(line.split(":")[1].strip())
+                            except (ValueError, IndexError):
+                                pass
+
+                        # Extract MeanCR0/MeanCR1 (detector count rates)
+                        elif extra['meancr0 [kHz]'][0] is None and "MeanCR0 [kHz]" in line:
+                            try:
+                                extra['meancr0 [kHz]'][0] = float(line.split(":")[1].strip())
+                            except (ValueError, IndexError):
+                                pass
+
+                        elif extra['meancr1 [kHz]'][0] is None and "MeanCR1 [kHz]" in line:
+                            try:
+                                extra['meancr1 [kHz]'][0] = float(line.split(":")[1].strip())
+                            except (ValueError, IndexError):
+                                pass
+
+                        # Extract monitor diode reading (used for SLS intensity normalization)
+                        elif extra['monitordiode [cps]'][0] is None and "Monitor Diode" in line:
+                            try:
+                                # split by whitespace and get the last element
+                                extra['monitordiode [cps]'][0] = float(line.split()[-1])
+                            except (ValueError, IndexError):
+                                pass
+
+                        # Early exit if all data found (required + optional fields)
+                        if all(v[0] is not None for v in data.values()) and \
+                                all(v[0] is not None for v in extra.values()):
                             break
 
                     except Exception as line_error:
@@ -104,7 +151,10 @@ def extract_data(file_path):
                         continue
 
             # Verify we got ALL required data (not just some)
-            # All fields must be present for valid DLS analysis
+            # All fields must be present for valid DLS analysis. The `extra`
+            # fields (duration/meancr0/meancr1/monitordiode) are optional --
+            # a file missing them is still valid base data, just NaN there
+            # (e.g. LS Instruments imports, or older/truncated ALV headers).
             if any(v[0] is None for v in data.values()):
                 missing_fields = [k for k, v in data.items() if v[0] is None]
                 if encoding_idx == len(encodings) - 1:
@@ -115,6 +165,8 @@ def extract_data(file_path):
                     continue  # Try next encoding
 
             # Successfully extracted complete data, return DataFrame
+            for key, val in extra.items():
+                data[key] = [float('nan') if val[0] is None else val[0]]
             return pd.DataFrame(data)
 
         except UnicodeDecodeError:

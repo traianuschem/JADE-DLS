@@ -2,7 +2,7 @@
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![Version](https://img.shields.io/badge/version-3.3.2-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-3.5.0-blue.svg)](CHANGELOG.md)
 
 ADE-DLS is a Python package for analyzing Dynamic Light Scattering (DLS) — and optionally Static Light Scattering (SLS) — data from multi-angle instruments. It determines hydrodynamic radii, diffusion coefficients, and particle size distributions via a full-featured PyQt5 GUI or a Python API.
 
@@ -26,12 +26,13 @@ ADE-DLS is a Python package for analyzing Dynamic Light Scattering (DLS) — and
   - Population-resolved intensity decomposition from Regularized NNLS results
   - Monitor-corrected, geometry-corrected count rates
   - Guinier analysis per population (I₀, Rg, qRg_max, R²) and for total intensity
-  - Number-weighting correction (configurable Rh exponent)
+  - Number-weighting correction applied to the extrapolated I0 (configurable Rh exponent)
 
 - **Data Processing**
   - Multi-instrument file loading (ALV .ASC, LS Instruments directory format)
   - Interactive count-rate and correlation filtering dialogs
   - Baseline and intercept noise correction
+  - Heteroscedastic noise weighting (Biganzoli & Ferri, Opt. Express 26, 29375, 2018), opt-in per analysis
   - Diffusion coefficient calculation (D = Γ / q²) and hydrodynamic radius via Stokes-Einstein
 
 ### GUI Application
@@ -42,7 +43,7 @@ ADE-DLS is a Python package for analyzing Dynamic Light Scattering (DLS) — and
 - **Comprehensive visualization** — per-dataset diagnostic plots (correlation fit, residuals, Q-Q, τ distribution); D vs. q² scatter; log₁₀(D) histogram
 - **Post-fit refinement dialogs** — adjust fit ranges, regularization, clustering parameters without reloading; clustering parameter sweep heatmap (distance threshold × min abundance) for guided parameter selection
 - **Report panel** — compose custom reports from result blocks and plots; export as TXT, Markdown, or PDF
-- **Export** — CSV (plot data), Excel, Jupyter notebooks, Python scripts, PROV-JSON
+- **Export** — CSV (one file per data series of the currently displayed plot, with provenance descriptions), Excel, Jupyter notebooks, Python scripts, PROV-JSON
 
 ## Installation
 

@@ -136,28 +136,24 @@ class AnalysisView(QWidget):
         nav_buttons.addWidget(self.next_plot_btn)
         nav_buttons.addStretch()
 
-        # CSV plot-data export buttons
-        self.csv_diffusion_btn = QPushButton("\U0001f4e4 Export Diffusion as CSV")
-        self.csv_diffusion_btn.setToolTip(
-            "Export Γ/D vs q² data points, fit curve and fit parameters as CSV tables"
-        )
-        self.csv_diffusion_btn.clicked.connect(self._on_export_diffusion_csv)
-        self.csv_cluster_btn = QPushButton("\U0001f4e4 Export Clustering as CSV")
-        self.csv_cluster_btn.setToolTip(
-            "Export cluster populations (as columns) and raw cluster points as CSV tables"
-        )
-        self.csv_cluster_btn.clicked.connect(self._on_export_clustering_csv)
-        nav_buttons.addWidget(self.csv_diffusion_btn)
-        nav_buttons.addWidget(self.csv_cluster_btn)
-
         nav_layout.addLayout(nav_buttons)
 
-        # Send to Report button
+        # Send to Report / Export buttons (act on the currently displayed plot)
         report_btn_row = QHBoxLayout()
         self.send_plot_btn = QPushButton("📤 Send Plot to Report")
         self.send_plot_btn.setToolTip("Add the current plot as an image block to the Report tab")
         self.send_plot_btn.clicked.connect(self._send_plot_to_report)
         report_btn_row.addWidget(self.send_plot_btn)
+
+        self.export_plot_csv_btn = QPushButton("\U0001f4e4 Export current plot as CSV")
+        self.export_plot_csv_btn.setToolTip(
+            "Write one CSV per data series (points, fit curve, histogram, ...) of the\n"
+            "plot shown above, plus an export_metadata.json; every file is registered\n"
+            "in the provenance record"
+        )
+        self.export_plot_csv_btn.clicked.connect(self._on_export_current_plot_csv)
+        report_btn_row.addWidget(self.export_plot_csv_btn)
+
         report_btn_row.addStretch()
         nav_layout.addLayout(report_btn_row)
 
@@ -1368,127 +1364,75 @@ class AnalysisView(QWidget):
         """Store the provenance panel so CSV exports register their hashes."""
         self.provenance_panel = panel
 
-    def _on_export_diffusion_csv(self):
-        """Export the Cumulant Method A diffusion plot data as CSV tables."""
-        from ade_dls.gui.export.csv_export import (
-            build_diffusion_tables, write_tables, register_outputs_in_provenance,
-            build_export_metadata, write_metadata,
-        )
-        from PyQt5.QtWidgets import QFileDialog, QMessageBox
+    def _analyzer_for_method(self, method_tag):
+        """Resolve the analyzer instance that produced *method_tag*'s plots."""
+        tag = method_tag or ''
+        if 'Regularized' in tag:
+            return getattr(self, 'laplace_analyzer_regularized', None) or getattr(self, 'laplace_analyzer', None)
+        if 'NNLS' in tag:
+            return getattr(self, 'laplace_analyzer_nnls', None) or getattr(self, 'laplace_analyzer', None)
+        return getattr(self, 'cumulant_analyzer', None)
 
-        if self.cumulant_analyzer is None:
-            QMessageBox.warning(self, "No Data",
-                                "Please run Cumulants Method A first.")
+    def _on_export_current_plot_csv(self):
+        """Export every data series of the currently displayed plot as separate CSV files."""
+        from PyQt5.QtWidgets import QFileDialog, QMessageBox
+        from ade_dls.gui.export.plot_series_export import (
+            extract_plot_series, series_to_tables, describe_series,
+        )
+        from ade_dls.gui.export.csv_export import (
+            write_tables, build_export_metadata, write_metadata,
+            register_outputs_in_provenance, _safe_filename,
+        )
+
+        item = self.plot_list.currentItem()
+        name = item.data(Qt.UserRole) if item else None
+        if not name or name not in self.current_plots:
+            QMessageBox.warning(self, "No plot selected", "Select a plot in the list first.")
             return
-        try:
-            tables = build_diffusion_tables(self.cumulant_analyzer)
-        except ValueError as exc:
-            QMessageBox.warning(self, "Export not possible", str(exc))
+        fig, _ = self.current_plots[name]
+        if fig is None:
+            QMessageBox.warning(self, "No plot", "The selected entry has no figure to export.")
+            return
+
+        method_tag = self.all_plot_methods.get(name, '')
+        series = extract_plot_series(fig, name)
+        if not series:
+            QMessageBox.warning(self, "Nothing to export",
+                                "This plot contains no exportable data series.")
             return
 
         target_dir = QFileDialog.getExistingDirectory(
-            self, "Select destination folder for diffusion CSV")
+            self, "Select destination folder for plot CSV")
         if not target_dir:
             return
         try:
-            written = write_tables(tables, target_dir, prefix="")
+            tables = series_to_tables(series, name)
+            written = write_tables(tables, target_dir)
+            descriptions = [describe_series(s, name, method_tag) for s in series]
+
             metadata = build_export_metadata(
-                "diffusion_csv", written,
-                analyzer=self.cumulant_analyzer,
+                'plot_csv', written,
+                analyzer=self._analyzer_for_method(method_tag),
                 provenance_panel=self.provenance_panel,
+                method_tag=method_tag,
             )
-            meta_path = write_metadata(metadata, target_dir)
-            register_outputs_in_provenance(self.provenance_panel, written)
+            metadata['export'].update({
+                'plot': name, 'method': method_tag or None, 'series': descriptions,
+            })
+            meta_prefix = _safe_filename(name)[:40] + '_'
+            meta_path = write_metadata(metadata, target_dir, prefix=meta_prefix)
+
+            for path, desc in zip(written, descriptions):
+                register_outputs_in_provenance(
+                    self.provenance_panel, [path], output_type='plot_data_csv',
+                    extra_fields={'export_id': metadata['export_id'], 'description': desc})
             register_outputs_in_provenance(
-                self.provenance_panel, [meta_path], output_type="export_metadata",
-                extra_fields={"export_id": metadata["export_id"]})
-        except Exception as exc:
-            QMessageBox.critical(self, "Export failed", f"Error:\n{exc}")
-            return
-
-        names = "\n".join(os.path.basename(p) for p in written)
-        QMessageBox.information(
-            self, "Export successful",
-            f"{len(written)} CSV file(s) written to:\n{target_dir}\n\n{names}")
-
-    def _on_export_clustering_csv(self):
-        """Export clustering data as CSV tables.
-
-        Detects which analyzer has cluster data and routes accordingly:
-        Method D (Cumulants) > NNLS > Regularized NNLS.
-        """
-        from ade_dls.gui.export.csv_export import (
-            build_clustering_tables, write_tables, register_outputs_in_provenance,
-            build_export_metadata, write_metadata,
-        )
-        from PyQt5.QtWidgets import QFileDialog, QMessageBox
-
-        # --- detect which analyzer/method has cluster data ---
-        cluster_info = None
-        clustered_df = None
-        analyzer = None
-        prefix = ""
-
-        # 1. Method D (Cumulants)
-        if self.cumulant_analyzer is not None:
-            ci = getattr(self.cumulant_analyzer, 'method_d_cluster_info', None)
-            if ci is not None:
-                cluster_info = ci
-                clustered_df = getattr(self.cumulant_analyzer, 'method_d_clustered_df', None)
-                analyzer = self.cumulant_analyzer
-                prefix = ""
-
-        # 2. NNLS
-        if cluster_info is None:
-            la_nnls = getattr(self, 'laplace_analyzer_nnls', None) or getattr(self, 'laplace_analyzer', None)
-            if la_nnls is not None:
-                ci = getattr(la_nnls, 'nnls_cluster_info', None)
-                if ci is not None:
-                    cluster_info = ci
-                    clustered_df = getattr(la_nnls, 'nnls_data', None)
-                    analyzer = la_nnls
-                    prefix = "nnls_"
-
-        # 3. Regularized NNLS
-        if cluster_info is None:
-            la_reg = getattr(self, 'laplace_analyzer_regularized', None) or getattr(self, 'laplace_analyzer', None)
-            if la_reg is not None:
-                ci = getattr(la_reg, 'regularized_cluster_info', None)
-                if ci is not None:
-                    cluster_info = ci
-                    clustered_df = getattr(la_reg, 'regularized_data', None)
-                    analyzer = la_reg
-                    prefix = "regularized_"
-
-        if cluster_info is None:
-            QMessageBox.warning(
-                self, "No Cluster Data",
-                "No clustering data available. Please run a multimodal analysis "
-                "(Cumulant Method D, NNLS, or Regularized NNLS) with clustering enabled.")
-            return
-
-        try:
-            tables = build_clustering_tables(clustered_df, cluster_info)
-        except ValueError as exc:
-            QMessageBox.warning(self, "Export not possible", str(exc))
-            return
-
-        target_dir = QFileDialog.getExistingDirectory(
-            self, "Select destination folder for clustering CSV")
-        if not target_dir:
-            return
-        try:
-            written = write_tables(tables, target_dir, prefix=prefix)
-            metadata = build_export_metadata(
-                "clustering_csv", written,
-                analyzer=analyzer,
-                provenance_panel=self.provenance_panel,
-            )
-            meta_path = write_metadata(metadata, target_dir, prefix=prefix)
-            register_outputs_in_provenance(self.provenance_panel, written)
-            register_outputs_in_provenance(
-                self.provenance_panel, [meta_path], output_type="export_metadata",
-                extra_fields={"export_id": metadata["export_id"]})
+                self.provenance_panel, [meta_path], output_type='export_metadata',
+                extra_fields={
+                    'export_id': metadata['export_id'],
+                    'description': {'plot': name, 'method': method_tag or None,
+                                     'kind': 'export_metadata', 'n_files': len(written)},
+                })
         except Exception as exc:
             QMessageBox.critical(self, "Export failed", f"Error:\n{exc}")
             return

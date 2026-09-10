@@ -59,6 +59,10 @@ class JADEDLSMainWindow(QMainWindow):
         # Data storage
         self.loaded_data = None
 
+        # Noise-correction parameters set by CorrelationFilterDialog, applied
+        # once in _preprocess_and_store() (see gui/core/correlation_preprocessing.py)
+        self._pending_noise_params = None
+
         # Setup UI
         self.init_ui()
 
@@ -384,6 +388,71 @@ class JADEDLSMainWindow(QMainWindow):
             self.inspector_panel.provenance_panel._export_json_to(filename)
 
     # ------------------------------------------------------------------
+    # Noise weighting (JADE-DLS v3.0) – computed once per filtered dataset
+    # ------------------------------------------------------------------
+
+    def _preprocess_and_store(self, data: dict) -> None:
+        """
+        Compute the canonical unweighted processed correlations, apply any
+        pending noise correction, and estimate Biganzoli-Ferri noise weights
+        for the given (filtered) data dict -- exactly once. Stores the
+        results directly on *data* (which is normally `self.pipeline.data`)
+        and records a pipeline step so the choice is traceable in
+        provenance.
+
+        Safe to call multiple times (e.g. once per filtering pass); each
+        call recomputes from the current `data['correlations']`/`basedata`,
+        so a re-filter never carries a stale processed-correlations cache
+        forward.
+        """
+        from ade_dls.gui.core.correlation_preprocessing import preprocess_correlations
+        from ade_dls.gui.core.pipeline import AnalysisStep
+
+        correlations = data.get('correlations')
+        if not correlations:
+            return
+
+        processed, weights, reason = preprocess_correlations(
+            correlations, data.get('basedata'), self._pending_noise_params)
+
+        data['processed_correlations'] = processed
+        data['weights'] = weights
+        data['weighting_available'] = weights is not None
+        data['weighting_unavailable_reason'] = reason
+        data['noise_params'] = self._pending_noise_params
+
+        weighting_step_code = """
+# Noise weighting (Biganzoli & Ferri, Opt. Express 26, 29375, 2018):
+# per-channel weights computed once after preprocessing. A correction to
+# the Schaetzel (1990) DLS noise formula for the "triangular averaging"
+# effect of finite per-channel sampling time in multi-tau correlators.
+from ade_dls.core.preprocessing import process_correlation_data
+from ade_dls.analysis.weighting import compute_weights_for_all, apply_weights_to_correlations
+
+columns_to_drop = ['time [ms]', 'correlation 1', 'correlation 2', 'correlation 3', 'correlation 4']
+processed_correlations = process_correlation_data(correlations_data, columns_to_drop)
+weights_dict = compute_weights_for_all(processed_correlations, df_basedata)
+# Each analysis then opts in individually (checkbox, default off):
+# processed_correlations_weighted = apply_weights_to_correlations(processed_correlations, weights_dict)
+"""
+        step = AnalysisStep(
+            name="Noise weighting (Biganzoli-Ferri)",
+            step_type='custom',
+            custom_code=weighting_step_code,
+            params={
+                'n_files': len(processed),
+                'weighting_available': weights is not None,
+                'reason': reason,
+                'noise_params': self._pending_noise_params or {},
+            },
+        )
+        self.pipeline.steps.append(step)
+        self.pipeline.step_added.emit(step.to_dict())
+
+        if reason:
+            self.status_manager.update(f"Noise weighting unavailable: {reason}")
+
+    # ------------------------------------------------------------------
     # Cumulant analysis – shared helper
     # ------------------------------------------------------------------
 
@@ -421,8 +490,11 @@ class JADEDLSMainWindow(QMainWindow):
         from .analysis.cumulant_analyzer import CumulantAnalyzer
         analyzer = CumulantAnalyzer(working_data, working_data['data_folder'])
 
-        if getattr(self, '_pending_noise_params', None):
-            analyzer.noise_params = self._pending_noise_params
+        # NOTE: noise correction is no longer applied here -- it already
+        # happened once in _preprocess_and_store() when the data was
+        # (re-)filtered, and CumulantAnalyzer.prepare_processed_correlations()
+        # reads that cached `working_data['processed_correlations']` directly.
+        # Setting analyzer.noise_params here would apply it a second time.
 
         self.status_manager.update("Preparing basedata...")
         analyzer.prepare_basedata()
@@ -485,6 +557,7 @@ class JADEDLSMainWindow(QMainWindow):
                 self.status_manager.error("Cumulant Method B: no data available")
                 return
 
+            analyzer.use_weighting = config.get('use_weighting', False)
             result = analyzer.run_method_b(config['fit_limits'],
                                            q_range=config['q_range'],
                                            fit_through_origin=config.get('fit_through_origin', False))
@@ -493,6 +566,7 @@ class JADEDLSMainWindow(QMainWindow):
             self._display_cumulant_results([('Method B', result)], analyzer)
             self._add_cumulant_step_to_pipeline('B', {'q_range': config['q_range'],
                                                        'fit_through_origin': config.get('fit_through_origin', False),
+                                                       'use_weighting': config.get('use_weighting', False),
                                                        'methods': ['B'],
                                                        'method_a_params': {},
                                                        'method_b_params': {'fit_limits': config['fit_limits']},
@@ -523,12 +597,14 @@ class JADEDLSMainWindow(QMainWindow):
                 self.status_manager.error("Cumulant Method C: no data available")
                 return
 
+            analyzer.use_weighting = config.get('use_weighting', False)
             result = analyzer.run_method_c(config['method_c_params'],
                                            q_range=config['q_range'])
 
             self.status_manager.complete_operation("Cumulant Method C completed")
             self._display_cumulant_results([('Method C', result)], analyzer)
             self._add_cumulant_step_to_pipeline('C', {'q_range': config['q_range'],
+                                                       'use_weighting': config.get('use_weighting', False),
                                                        'methods': ['C'],
                                                        'method_a_params': {},
                                                        'method_b_params': {},
@@ -559,6 +635,7 @@ class JADEDLSMainWindow(QMainWindow):
                 self.status_manager.error("Cumulant Method D: no data available")
                 return
 
+            analyzer.use_weighting = config.get('use_weighting', False)
             result = analyzer.run_method_d(config['params'],
                                            q_range=config['q_range'])
 
@@ -566,6 +643,7 @@ class JADEDLSMainWindow(QMainWindow):
             self._display_cumulant_results([('Method D', result)], analyzer)
             self._add_cumulant_step_to_pipeline('D', {
                 'q_range': config['q_range'],
+                'use_weighting': config.get('use_weighting', False),
                 'methods': ['D'],
                 'method_d_params': config['params'],
             })
@@ -950,6 +1028,10 @@ print(f"Extracted correlations from {len(correlations_data)} files")
             filtered_data['basedata'] = filtered_basedata
             filtered_data['num_files'] = len(remaining_files)
 
+        # Compute processed correlations + noise correction + noise weights
+        # ONCE for this (possibly filtered) dataset (JADE-DLS v3.0)
+        self._preprocess_and_store(filtered_data)
+
         # Store filtered data in pipeline
         self.pipeline.data = filtered_data
         self.pipeline.data_loaded.emit(filtered_data.get('data_folder', 'Unknown'))
@@ -1045,6 +1127,9 @@ print(f"Extracted correlations from {len(correlations_data)} files")
                 remaining_count=len(filtered_countrates)
             )
 
+            # Recompute processed correlations + noise weights for the new subset
+            self._preprocess_and_store(self.pipeline.data)
+
             # Update view
             self.analysis_view.update_data_overview()
 
@@ -1110,6 +1195,10 @@ print(f"Extracted correlations from {len(correlations_data)} files")
                 remaining_count=len(filtered_correlations),
                 noise_params=noise_params if noise_active else None,
             )
+
+            # Recompute processed correlations + noise correction + noise
+            # weights for the new subset (uses the noise params just set above)
+            self._preprocess_and_store(self.pipeline.data)
 
             # Update view
             self.analysis_view.update_data_overview()
@@ -1242,6 +1331,19 @@ print(f"Relative error in c: {(delta_c/c):.4%}\\n")
         self.pipeline.step_added.emit(step.to_dict())
         self._basedata_calc_added = True
 
+    @staticmethod
+    def _weighting_code_snippet(use_weighting: bool, dict_var: str) -> str:
+        """Reproducibility-script fragment that opts *dict_var* into noise
+        weighting (Biganzoli-Ferri), or an empty string when unused."""
+        if not use_weighting:
+            return ""
+        return f"""
+# Noise weighting (Biganzoli-Ferri) -- opted in via GUI checkbox
+from ade_dls.analysis.weighting import compute_weights_for_all, apply_weights_to_correlations
+weights_dict = compute_weights_for_all({dict_var}, df_basedata)
+{dict_var} = apply_weights_to_correlations({dict_var}, weights_dict)
+"""
+
     def _add_cumulant_step_to_pipeline(self, method: str, config: dict):
         """
         Add cumulant analysis step to pipeline for code export
@@ -1334,6 +1436,8 @@ print(method_a_results)
 
         elif method == 'B':
             fit_limits = config['method_b_params']['fit_limits']
+            weighting_snippet = self._weighting_code_snippet(
+                config.get('use_weighting', False), 'processed_correlations_1')
             code = f"""
 # Cumulant Method B: Linear fit method (JADE 2.2: linregress)
 from ade_dls.analysis.cumulants import calculate_g2_B, plot_processed_correlations, analyze_diffusion_coefficient
@@ -1342,7 +1446,7 @@ from ade_dls.core.preprocessing import process_correlation_data
 # Process correlations
 columns_to_drop = ['time [ms]', 'correlation 1', 'correlation 2', 'correlation 3', 'correlation 4']
 processed_correlations_1 = process_correlation_data(correlations_data, columns_to_drop)
-
+{weighting_snippet}
 # Calculate ln√(g2-1)
 processed_correlations = calculate_g2_B(processed_correlations_1)
 
@@ -1384,6 +1488,8 @@ print(method_b_results)
 
         elif method == 'C':
             params = config['method_c_params']
+            weighting_snippet = self._weighting_code_snippet(
+                config.get('use_weighting', False), 'processed_correlations_1')
             code = f"""
 # Cumulant Method C: Iterative non-linear fit
 from ade_dls.analysis.cumulants_C import plot_processed_correlations_iterative, get_adaptive_initial_parameters, get_meaningful_parameters
@@ -1393,7 +1499,7 @@ from ade_dls.core.preprocessing import process_correlation_data
 # Process correlations
 columns_to_drop = ['time [ms]', 'correlation 1', 'correlation 2', 'correlation 3', 'correlation 4']
 processed_correlations_1 = process_correlation_data(correlations_data, columns_to_drop)
-
+{weighting_snippet}
 # Define fit function
 def {params['fit_function']}(x, a, b, c, *args):
     # Function defined based on selection: {params['fit_function']}
@@ -1458,6 +1564,8 @@ print(method_c_results)
 
         elif method == 'D':
             d_params = config.get('method_d_params', {})
+            weighting_snippet = self._weighting_code_snippet(
+                config.get('use_weighting', False), 'processed_correlations')
             code = f"""
 # Cumulant Method D: Multi-Exponential Decomposition
 from ade_dls.analysis.cumulants_D import fit_correlations_method_D
@@ -1467,7 +1575,7 @@ import statsmodels.api as sm
 # Process correlations
 columns_to_drop = ['time [ms]', 'correlation 1', 'correlation 2', 'correlation 3', 'correlation 4']
 processed_correlations = process_correlation_data(correlations_data, columns_to_drop)
-
+{weighting_snippet}
 # Run Method D fitting (plot=False for non-interactive use)
 method_d_fit = fit_correlations_method_D(
     processed_correlations,
@@ -1696,9 +1804,14 @@ print(method_d_results)
             self._calculate_c_and_delta_c_for_data(working_data)
 
         try:
-            # Always recreate laplace analyzer to ensure we use current (possibly filtered) data
-            # Check if processed correlations exist, otherwise use raw correlations
-            processed_corr = working_data.get('processed_correlations', None)
+            # Always recreate laplace analyzer to ensure we use current (possibly filtered) data.
+            # processed_correlations / weights are normally already computed once by
+            # _preprocess_and_store() (called from perform_filtering()); compute them
+            # now as a fallback for callers that never went through filtering
+            # (data_source == "original").
+            if working_data.get('processed_correlations') is None:
+                self._preprocess_and_store(working_data)
+            processed_corr = working_data.get('processed_correlations')
             raw_corr = working_data.get('correlations', None) if processed_corr is None else None
 
             from .analysis.laplace_analyzer import LaplaceAnalyzer
@@ -1707,23 +1820,15 @@ print(method_d_results)
                 df_basedata=working_data['df_basedata'],
                 c=working_data['c'],
                 delta_c=working_data['delta_c'],
-                raw_correlations=raw_corr
+                raw_correlations=raw_corr,
+                weights=working_data.get('weights'),
             )
             self.laplace_analyzer_nnls = self.laplace_analyzer
 
-            # Apply noise correction if parameters were set by CorrelationFilterDialog
-            if getattr(self, '_pending_noise_params', None) and \
-                    self.laplace_analyzer.processed_correlations is not None:
-                from ade_dls.analysis.noise import apply_noise_corrections
-                self.laplace_analyzer.processed_correlations = apply_noise_corrections(
-                    self.laplace_analyzer.processed_correlations,
-                    **self._pending_noise_params
-                )
-
-            # Store processed correlations back for future use
-            if processed_corr is None and self.laplace_analyzer.processed_correlations is not None:
-                working_data['processed_correlations'] = self.laplace_analyzer.processed_correlations
-                print("[NNLS] Stored processed correlations")
+            # NOTE: noise correction is no longer applied here -- it already
+            # happened once in _preprocess_and_store() above/in
+            # perform_filtering(). Re-applying it here on every NNLS run was
+            # the cause of a double-correction bug when re-filtering data.
 
             # Inform user about data source
             if data_source == "filtered":
@@ -1741,6 +1846,7 @@ print(method_d_results)
             dialog = NNLSDialog(self.laplace_analyzer, self)
             if dialog.exec_() == dialog.Accepted:
                 params = dialog.get_parameters()
+                self.laplace_analyzer.set_weighting(params.get('use_weighting', False))
 
                 # Start analysis
                 self.status_manager.start_operation("Running NNLS analysis...")
@@ -1913,8 +2019,14 @@ print(method_d_results)
             self._calculate_c_and_delta_c_for_data(working_data)
 
         try:
-            # Always recreate laplace analyzer to use current data
-            processed_corr = working_data.get('processed_correlations', None)
+            # Always recreate laplace analyzer to use current data.
+            # processed_correlations / weights are normally already computed
+            # once by _preprocess_and_store() (called from perform_filtering());
+            # compute them now as a fallback for callers that never went
+            # through filtering (data_source == "original").
+            if working_data.get('processed_correlations') is None:
+                self._preprocess_and_store(working_data)
+            processed_corr = working_data.get('processed_correlations')
             raw_corr = working_data.get('correlations', None) if processed_corr is None else None
 
             from .analysis.laplace_analyzer import LaplaceAnalyzer
@@ -1923,23 +2035,15 @@ print(method_d_results)
                 df_basedata=working_data['df_basedata'],
                 c=working_data['c'],
                 delta_c=working_data['delta_c'],
-                raw_correlations=raw_corr
+                raw_correlations=raw_corr,
+                weights=working_data.get('weights'),
             )
             self.laplace_analyzer_regularized = self.laplace_analyzer
 
-            # Apply noise correction if parameters were set by CorrelationFilterDialog
-            if getattr(self, '_pending_noise_params', None) and \
-                    self.laplace_analyzer.processed_correlations is not None:
-                from ade_dls.analysis.noise import apply_noise_corrections
-                self.laplace_analyzer.processed_correlations = apply_noise_corrections(
-                    self.laplace_analyzer.processed_correlations,
-                    **self._pending_noise_params
-                )
-
-            # Store processed correlations back for future use
-            if processed_corr is None and self.laplace_analyzer.processed_correlations is not None:
-                working_data['processed_correlations'] = self.laplace_analyzer.processed_correlations
-                print("[Regularized] Stored processed correlations")
+            # NOTE: noise correction is no longer applied here -- it already
+            # happened once in _preprocess_and_store() above/in
+            # perform_filtering(). Re-applying it here on every Regularized
+            # run was the cause of a double-correction bug when re-filtering.
 
             # Inform user about data source
             if data_source == "filtered":
@@ -1957,6 +2061,7 @@ print(method_d_results)
             dialog = RegularizedDialog(self.laplace_analyzer, self)
             if dialog.exec_() == dialog.Accepted:
                 params = dialog.get_parameters()
+                self.laplace_analyzer.set_weighting(params.get('use_weighting', False))
 
                 # Start analysis
                 self.status_manager.start_operation("Running Regularized NNLS analysis...")

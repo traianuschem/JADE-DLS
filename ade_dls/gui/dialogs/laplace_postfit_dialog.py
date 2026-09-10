@@ -1179,10 +1179,6 @@ class LaplacePostFitRefinementDialog(QDialog):
         )
         form.addRow("Rh exponent:", self._sls_exponent_spin)
 
-        self._sls_use_nw_cb = QCheckBox("Apply number-weighting correction")
-        self._sls_use_nw_cb.setChecked(True)
-        form.addRow("", self._sls_use_nw_cb)
-
         config_group.setLayout(form)
         outer.addWidget(config_group)
 
@@ -1335,7 +1331,6 @@ class LaplacePostFitRefinementDialog(QDialog):
         q2_min = self._sls_q2_min.value()
         q2_max = self._sls_q2_max.value()
         exponent = self._sls_exponent_spin.value()
-        use_nw = self._sls_use_nw_cb.isChecked()
 
         q2_range = None
         if q2_min > 0 or q2_max > 0:
@@ -1347,7 +1342,6 @@ class LaplacePostFitRefinementDialog(QDialog):
                 n_populations=n_pop,
                 q2_range=q2_range,
                 exponent=exponent,
-                use_nw=use_nw,
             )
             self._sls_update_plot()
             self._sls_populate_table(summary_df)

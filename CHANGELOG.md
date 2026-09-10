@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.5.0] - 2026-09-10
+
+### Changed
+
+- **SLS number-weighting correction reworked to match JADE-DLS v2.3.0** (`ade_dls/analysis/sls.py`): the Rh^exponent number/concentration-fraction correction is now applied only to the already-extrapolated, intensity-weighted Guinier I0 values (new `compute_number_weighted_I0()`, ported verbatim from JADE and verified numerically identical), never to the raw per-angle intensities that feed the Guinier fit itself. Applying it beforehand (the previous ADE behaviour, `compute_sls_data_number_weighted()`, now removed) mixes in the q-dependence of every other population's area fraction and corrupts the fit's Guinier-law assumption. `compute_guinier_extrapolation()` lost its `use_nw_columns` parameter — it always fits the real `I_popN [kHz]` columns now. Because the correction is applied post-fit it is always numerically safe, so `LaplaceAnalyzer.run_sls_analysis()` lost its `use_nw` parameter and the matching "Apply number-weighting correction" checkbox was removed from the Regularized results and post-fit refinement SLS panels — the summary table's `N-fraction [%]`/`I0 (number) [kHz]` columns are now always computed alongside the intensity-weighted ones.
+
+---
+
+## [3.4.0] - 2026-09-10
+
+### Added
+
+- **Heteroscedastic noise weighting (Biganzoli & Ferri 2018), ported from JADE-DLS v3.0** (`ade_dls/analysis/weighting.py`, new module — verbatim port of JADE's `weighting.py`, verified bit-identical against the original on real ALV data): corrects the classical Schätzel (1990) DLS noise formula for "triangular averaging", the finite-sampling-time effect of multi-tau correlators. Weights are computed **once** per filtered dataset (`ade_dls/gui/core/correlation_preprocessing.py`, new module) from `Duration`/`MeanCR0`/`MeanCR1` (see below), stored on the pipeline data dict, and opted into **per analysis** via a "Use noise weighting" checkbox (default off, matching the JADE-DLS default) in the Cumulant B/C/D, NNLS and Regularized dialogs. `LaplaceAnalyzer.set_weighting()` / `CumulantAnalyzer.use_weighting` toggle between the weighted and unweighted correlation dict without recomputing or re-noise-correcting it. Every fitting function auto-detects a `'weight'` column exactly like JADE: `regularized_optimized.nnls_optimized`/`regularized_nnls_optimized`, Method B (`cumulant_plotting.plot_processed_correlations_no_show`, `analysis/cumulants.plot_processed_correlations`), Method C (`analysis/cumulants_C.plot_processed_correlations_iterative`), Method D (`analysis/cumulants_D.fit_cumulant_D`). New `weighted` / `weighted_R_squared` result columns. Unweighted results are numerically unchanged (verified via the `_dev/comparison` harness: 0 of 22 compared metrics changed after the port).
+- **`preprocessing.extract_data()` now also extracts `Duration [s]`, `MeanCR0 [kHz]`, `MeanCR1 [kHz]`, `Monitor Diode [cps]`** from the ALV header (JADE-DLS v3.0 parity), needed for noise weighting and SLS intensity normalization. Optional fields (NaN when absent, e.g. LS Instruments data) — does not affect the existing required-field validation. The file-read line cap was removed (`Monitor Diode` is a trailer field written after the full count-rate trace, far beyond the previous 200-line window).
+- `regularized_nnls_optimized`: `peak_method='centroid'` is now actually wired up (previously silently ignored despite a GUI option for it).
+- **Provenance output entries now carry an absolute `path`** (previously only a hash and a label), and an optional structured `description` dict (plot/method/panel/series/kind/columns/...) — both are also emitted in the PROV-JSON export as `jade:path`/`jade:description` (`ade_dls/gui/core/provenance.py`).
+
+### Changed
+
+- **A single "📤 Export current plot as CSV" button replaces the five separate plot-type-specific CSV exports** (Diffusion/Clustering in the Analysis View, Distributions/Clustering in the NNLS and Regularized result dialogs). It exports the plot currently shown in the Analysis View: every matplotlib artist (line, scatter, error bar, histogram) becomes its own CSV, one file per data series per panel, generically extracted from the Figure — this works uniformly for every plot in the app (Cumulant B/C/D fit panels, Γ-vs-q² summaries, NNLS/Regularized distributions, clustering overviews, ...) instead of a handful of hand-written table builders. New module `ade_dls/gui/export/plot_series_export.py`. `DistributionExportDialog` and the old per-plot-type table builders (`csv_export.build_diffusion_tables`/`build_clustering_tables`/`build_distribution_tables`/`full_results_from_plots`) were removed.
+
+### Fixed
+
+- **Double noise correction on repeated NNLS/Regularized runs**: `run_nnls_analysis`/`run_regularized_analysis` used to re-apply `apply_noise_corrections` to an already-corrected cached `processed_correlations` dict after a re-filter. Noise correction (and now weighting) is computed exactly once, in `MainWindow._preprocess_and_store()`.
+- `cumulants_D.calculate_moments_from_gammas`: PDI could divide by zero when `gamma_mean == 0`; now returns NaN in that case (JADE parity).
+
+### Known limitations
+
+- A CSV export's provenance `wasGeneratedBy` still points at the most recently added pipeline activity, not necessarily the one that produced the exported plot (pre-existing limitation, unchanged by this release).
+
+---
+
 ## [3.3.2] - 2026-07-15
 
 ### Fixed

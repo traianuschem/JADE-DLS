@@ -70,16 +70,21 @@ def create_tikhonov_matrix_cached(n: int) -> np.ndarray:
 
 # ===== OPTIMIZED NNLS FUNCTION =====
 def nnls_optimized(df: pd.DataFrame, name: str, nnls_params: dict,
-                   plot_number: int = 1, T_matrix: Optional[np.ndarray] = None) -> dict:
+                   plot_number: int = 1, T_matrix: Optional[np.ndarray] = None,
+                   weights: Optional[np.ndarray] = None) -> dict:
     """
     Optimized NNLS fit with pre-computed matrix support
 
     Args:
-        df: DataFrame with 't [s]' and 'g(2)-1' columns
+        df: DataFrame with 't [s]' and 'g(2)-1' columns. If it carries a
+            'weight' column (JADE-DLS v3.0, Biganzoli-Ferri noise weighting)
+            and *weights* is not given explicitly, that column is used.
         name: Dataset name
         nnls_params: Parameters dict with 'decay_times', 'prominence', 'distance'
         plot_number: Plot number for visualization
         T_matrix: Pre-computed exponential matrix (optional, for performance)
+        weights: Optional explicit per-channel weight array (overrides the
+            df['weight'] column when given).
 
     Returns:
         Dictionary with results
@@ -98,15 +103,28 @@ def nnls_optimized(df: pd.DataFrame, name: str, nnls_params: dict,
     else:
         T = T_matrix
 
+    # Noise weighting (JADE-DLS v3.0): auto-detect a 'weight' column, scale
+    # the data-fidelity residual by sqrt(weight/mean(weight)). Reproduces
+    # the unweighted result exactly when no weights are given/present.
+    if weights is None and 'weight' in df.columns:
+        weights = df['weight'].to_numpy()
+    if weights is None:
+        sqrt_w = np.ones_like(tau)
+        is_weighted = False
+    else:
+        w = np.asarray(weights, dtype=float)
+        sqrt_w = np.sqrt(w / np.mean(w))
+        is_weighted = True
+
     # Nonlinear NNLS fit: g(2)(τ)-1 = (T @ f)^2, f >= 0.
     # Must stay nonlinear (not linearized via sqrt(D)) since D = g(2)-1 can be
     # negative (noise) and the model is genuinely quadratic in f, not linear.
-    def residuals(f, T, D):
-        return (T @ f)**2 - D
+    def residuals(f, T, D, sqrt_w):
+        return sqrt_w * ((T @ f)**2 - D)
 
     f0 = np.ones(T.shape[1])
     bounds = (0, np.inf)
-    result = least_squares(residuals, f0, args=(T, D), bounds=bounds)
+    result = least_squares(residuals, f0, args=(T, D, sqrt_w), bounds=bounds)
     f_optimized = result.x
 
     # Calculate the optimized function values
@@ -116,10 +134,15 @@ def nnls_optimized(df: pd.DataFrame, name: str, nnls_params: dict,
     # Calculate RMSE
     rmse = np.sqrt(np.mean(residuals_values**2))
 
-    # Goodness of fit (JADE parity: R_squared per file)
+    # Goodness of fit (JADE parity: R_squared per file, unweighted)
     ss_res = np.sum(residuals_values**2)
     ss_tot = np.sum((D - np.mean(D))**2)
     r_squared = 1 - ss_res / ss_tot if ss_tot != 0 else 0.0
+
+    # Weighted goodness of fit (JADE parity, only meaningful when weighted)
+    weighted_ss_res = np.sum((sqrt_w * residuals_values)**2)
+    weighted_ss_tot = np.sum((sqrt_w * (D - np.mean(D)))**2)
+    weighted_r_squared = 1 - weighted_ss_res / weighted_ss_tot if weighted_ss_tot != 0 else 0.0
 
     # Find peaks in the tau distribution
     peaks, _ = find_peaks(f_optimized, prominence=prominence, distance=distance)
@@ -145,7 +168,8 @@ def nnls_optimized(df: pd.DataFrame, name: str, nnls_params: dict,
     normalized_area_pct = [a / total_area * 100 for a in peak_areas]
 
     # Prepare results for this dataframe
-    results = {'filename': name, 'R_squared': r_squared}
+    results = {'filename': name, 'R_squared': r_squared,
+               'weighted_R_squared': weighted_r_squared, 'weighted': is_weighted}
     for i, peak_index in enumerate(peaks):
         pct_sum = normalized_amplitudes_sum[i] * 100
 
@@ -415,16 +439,21 @@ def _compute_peak_statistics(peaks, peak_properties, f_optimized, decay_times):
 
 
 def regularized_nnls_optimized(df: pd.DataFrame, name: str, params: dict,
-                               plot_number: int = 1, T_matrix: Optional[np.ndarray] = None) -> Tuple:
+                               plot_number: int = 1, T_matrix: Optional[np.ndarray] = None,
+                               weights: Optional[np.ndarray] = None) -> Tuple:
     """
     Optimized Regularized NNLS (Tikhonov) with pre-computed matrix support
 
     Args:
-        df: DataFrame with 't [s]' and 'g(2)-1' columns
+        df: DataFrame with 't [s]' and 'g(2)-1' columns. If it carries a
+            'weight' column (JADE-DLS v3.0, Biganzoli-Ferri noise weighting)
+            and *weights* is not given explicitly, that column is used.
         name: Dataset name
         params: Parameters dict with 'decay_times', 'alpha', 'prominence', 'distance'
         plot_number: Plot number for visualization
         T_matrix: Pre-computed exponential matrix (optional, for performance)
+        weights: Optional explicit per-channel weight array (overrides the
+            df['weight'] column when given).
 
     Returns:
         Tuple of (results dict, f_optimized, optimized_values, residuals_values, peaks)
@@ -436,10 +465,25 @@ def regularized_nnls_optimized(df: pd.DataFrame, name: str, params: dict,
     fit_beta = params.get('fit_beta', False)
     normalize = params.get('normalize', False)
     sparsity_penalty = params.get('sparsity_penalty', 0.0)
+    peak_method = params.get('peak_method', 'maximum')
 
     # Create the vectors
     tau = df['t [s]'].to_numpy()
     D = df['g(2)-1'].to_numpy()
+
+    # Noise weighting (JADE-DLS v3.0): auto-detect a 'weight' column, scale
+    # the data-fidelity residual by sqrt(weight/mean(weight)); the Tikhonov
+    # smoothness and sparsity penalty terms below are left unweighted.
+    # Reproduces the unweighted result exactly when no weights are present.
+    if weights is None and 'weight' in df.columns:
+        weights = df['weight'].to_numpy()
+    if weights is None:
+        sqrt_w = np.ones_like(tau)
+        is_weighted = False
+    else:
+        w = np.asarray(weights, dtype=float)
+        sqrt_w = np.sqrt(w / np.mean(w))
+        is_weighted = True
 
     # Use pre-computed matrix if provided, otherwise compute
     if T_matrix is None:
@@ -471,7 +515,7 @@ def regularized_nnls_optimized(df: pd.DataFrame, name: str, params: dict,
             f = f / np.sum(f) if np.sum(f) > 0 else f
 
         model_output = beta_val * (T @ f)**2
-        fit_residuals = model_output - D
+        fit_residuals = sqrt_w * (model_output - D)
         all_residuals = [fit_residuals, alpha * (D2 @ f)]
         if sparsity_penalty > 0:
             all_residuals.append(sparsity_penalty * f)
@@ -540,10 +584,15 @@ def regularized_nnls_optimized(df: pd.DataFrame, name: str, params: dict,
     # Calculate RMSE
     rmse = np.sqrt(np.mean(residuals_values**2))
 
-    # Goodness of fit (JADE parity: R_squared per file)
+    # Goodness of fit (JADE parity: R_squared per file, unweighted)
     ss_res = np.sum(residuals_values**2)
     ss_tot = np.sum((D - np.mean(D))**2)
     r_squared = 1 - ss_res / ss_tot if ss_tot != 0 else 0.0
+
+    # Weighted goodness of fit (JADE parity, only meaningful when weighted)
+    weighted_ss_res = np.sum((sqrt_w * residuals_values)**2)
+    weighted_ss_tot = np.sum((sqrt_w * (D - np.mean(D)))**2)
+    weighted_r_squared = 1 - weighted_ss_res / weighted_ss_tot if weighted_ss_tot != 0 else 0.0
 
     # Find peaks (width=0 so we get left_ips/right_ips for the peak-statistics base)
     peaks, peak_properties = find_peaks(f_optimized, prominence=prominence, distance=distance, width=0)
@@ -559,10 +608,11 @@ def regularized_nnls_optimized(df: pd.DataFrame, name: str, params: dict,
     )
 
     # Prepare results for this dataframe
-    results = {'filename': name, 'beta': beta_fitted, 'R_squared': r_squared}
+    results = {'filename': name, 'beta': beta_fitted, 'R_squared': r_squared,
+               'weighted_R_squared': weighted_r_squared, 'weighted': is_weighted}
     for i in range(len(peaks)):
         st = peak_stats[f'peak_{i+1}']
-        results[f'tau_{i+1}']                     = st['position']
+        results[f'tau_{i+1}']                     = st['centroid'] if peak_method == 'centroid' else st['position']
         results[f'intensity_{i+1}']               = st['amplitude']
         results[f'normalized_sum_percent_{i+1}']  = normalized_sum_percent[i]
         results[f'normalized_area_percent_{i+1}'] = normalized_area_percent[i]

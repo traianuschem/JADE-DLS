@@ -79,6 +79,15 @@ class LSInstrumentsParser(InstrumentParser):
             'wavelength [nm]':  [wavelength_nm],
             'refractive_index': [n],
             'viscosity [cp]':   [float(s['Solvent viscosity [mPas]'])],  # mPas = cP
+            # Not available from LS Instruments' Summary.csv -- noise
+            # weighting (analysis.weighting) and SLS monitor-diode
+            # normalization are therefore unavailable for this instrument;
+            # these columns exist purely for schema parity with the ALV
+            # parser so downstream code can rely on their presence.
+            'duration [s]':       [np.nan],
+            'meancr0 [kHz]':      [np.nan],
+            'meancr1 [kHz]':      [np.nan],
+            'monitordiode [cps]': [np.nan],
             'filename':         [self.get_label(measurement_id)],
             'folder':           [measurement_id],
         })
