@@ -1,0 +1,43 @@
+{
+  "created": "2026-05-28T15:47:55.349272+02:00",
+  "software": "mergeSAXS.py v1.1.0",
+  "sample_name": "Citric Buffer",
+  "q_center_nm-1": 0.122459,
+  "sigmoid_width": 0.3,
+  "scale_factor": 1.71543,
+  "scale_applied": false,
+  "overlap_chi2_reduced": 21.290666256408677,
+  "source_long": {
+    "file": "D:\\Uni BAF\\Cloud\\Zentrales Home\\RiNe_Mat-NP_Au_1\\3_ProcessedData\\DataProcessed_1D\\Citric Buffer_1610.h5z",
+    "sdd_mm": 1610,
+    "q_range_nm-1": [
+      0.023692,
+      1.991361
+    ],
+    "n_points": 354
+  },
+  "source_short": {
+    "file": "D:\\Uni BAF\\Cloud\\Zentrales Home\\RiNe_Mat-NP_Au_1\\3_ProcessedData\\DataProcessed_1D\\Citric Buffer_491.h5z",
+    "sdd_mm": 491,
+    "q_range_nm-1": [
+      0.101804,
+      5.976189
+    ],
+    "n_points": 371
+  },
+  "merged": {
+    "q_range_nm-1": [
+      0.023692,
+      5.976189
+    ],
+    "n_points": 725
+  },
+  "sample_metadata": {
+    "temperature_K": 293.1473331451416,
+    "concentration_kg_m3": 0.0,
+    "thickness_m": 0.0096,
+    "transmittance": 0.28373398820912565,
+    "flux_entering_cts": 4597920.25,
+    "flux_exiting_cts": 1304586.25
+  }
+}

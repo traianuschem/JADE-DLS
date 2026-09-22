@@ -1,0 +1,210 @@
+{
+  "schema_version": "2.0",
+  "type": "saxs_processed_curve",
+  "label": "Au NP 200 nm",
+  "created_at": "2026-06-23T11:45:26.108065+00:00",
+  "software": {
+    "saxs_lib": "1.0.0",
+    "mergeSAXS": "1.3.0",
+    "python": "3.13.14",
+    "numpy": "2.2.3",
+    "h5py": "3.13.0",
+    "saxs_process_nb": "2.0.0"
+  },
+  "steps": [
+    {
+      "step": "merge_sample",
+      "source_type": "merged_saxs_waxs",
+      "label": "Au NP 200 nm/sample",
+      "q_center_nm-1": 0.424825447272602,
+      "q_center_method": "SNR crossover",
+      "sigmoid_width": 0.3,
+      "scale_factor": 1.4765758610893238,
+      "scale_applied": false,
+      "overlap_chi2_reduced": 18.974558392826847,
+      "source_long": {
+        "source_type": "merged_same_sdd",
+        "label": "Au NP 200 nm/sample/long",
+        "sample_name": "Au NP 200 nm",
+        "method": "concatenate",
+        "n_files": 1,
+        "sources": [
+          {
+            "path": "C:\\Users\\traja\\TUBAF_Nextcloud\\Zentrales Home\\RiNe_Mat-NP_Au_1\\3_ProcessedData\\DataProcessed_1D\\Au NP 200 nm_1608_0005.h5z",
+            "sha256": "9e75ede7f05e8ee227604b137faac463a9f78e1500f0bd8fb830db90138578b7",
+            "size_bytes": 14456,
+            "mtime_utc": "2026-06-23T11:25:42.427509+00:00"
+          }
+        ],
+        "q_range_nm-1": [
+          0.02528071339514667,
+          1.990764168679324
+        ],
+        "n_points": 353
+      },
+      "source_short": {
+        "source_type": "merged_same_sdd",
+        "label": "Au NP 200 nm/sample/short",
+        "sample_name": "Au NP 200 nm",
+        "method": "concatenate",
+        "n_files": 1,
+        "sources": [
+          {
+            "path": "C:\\Users\\traja\\TUBAF_Nextcloud\\Zentrales Home\\RiNe_Mat-NP_Au_1\\3_ProcessedData\\DataProcessed_1D\\Au NP 200 nm_489_0006.h5z",
+            "sha256": "6ef7134942ea267bd4852bbdbbe9099f2ee810cdc3d964e012d8572c0803fae9",
+            "size_bytes": 14827,
+            "mtime_utc": "2026-06-23T11:25:42.444053+00:00"
+          }
+        ],
+        "q_range_nm-1": [
+          0.10505331263302214,
+          5.975307463673535
+        ],
+        "n_points": 370
+      },
+      "q_range_nm-1": [
+        0.02528071339514667,
+        5.975307463673535
+      ],
+      "n_points": 723
+    },
+    {
+      "step": "merge_buffer",
+      "source_type": "merged_saxs_waxs",
+      "label": "Au NP 200 nm/buffer",
+      "q_center_nm-1": 0.2604367314211855,
+      "q_center_method": "SNR crossover",
+      "sigmoid_width": 0.3,
+      "scale_factor": 1.6020610538736695,
+      "scale_applied": false,
+      "overlap_chi2_reduced": 17.19290902885094,
+      "source_long": {
+        "source_type": "merged_same_sdd",
+        "label": "Au NP 200 nm/buffer/long",
+        "sample_name": "Citric Buffer",
+        "method": "concatenate",
+        "n_files": 1,
+        "sources": [
+          {
+            "path": "C:\\Users\\traja\\TUBAF_Nextcloud\\Zentrales Home\\RiNe_Mat-NP_Au_1\\3_ProcessedData\\DataProcessed_1D\\Citric Buffer_1608_0007.h5z",
+            "sha256": "35145ba161419573fa0c7c524622dd3db78ed09285ea6c604601ec7c352c88e6",
+            "size_bytes": 14471,
+            "mtime_utc": "2026-06-23T11:25:42+00:00"
+          }
+        ],
+        "q_range_nm-1": [
+          0.02528071339514667,
+          1.990764168679324
+        ],
+        "n_points": 353
+      },
+      "source_short": {
+        "source_type": "merged_same_sdd",
+        "label": "Au NP 200 nm/buffer/short",
+        "sample_name": "Citric Buffer",
+        "method": "concatenate",
+        "n_files": 1,
+        "sources": [
+          {
+            "path": "C:\\Users\\traja\\TUBAF_Nextcloud\\Zentrales Home\\RiNe_Mat-NP_Au_1\\3_ProcessedData\\DataProcessed_1D\\Citric Buffer_489_0008.h5z",
+            "sha256": "701d584adc8b2eec2bc9108a08d8513edd5a9f23fdc4afcef4431cb554b2ce73",
+            "size_bytes": 14841,
+            "mtime_utc": "2026-06-23T11:25:42+00:00"
+          }
+        ],
+        "q_range_nm-1": [
+          0.10505331263302214,
+          5.975307463673535
+        ],
+        "n_points": 370
+      },
+      "q_range_nm-1": [
+        0.02528071339514667,
+        5.975307463673535
+      ],
+      "n_points": 723
+    },
+    {
+      "step": "rebin_sample",
+      "pipeline": [
+        {
+          "mode": "log",
+          "n_bins": 600,
+          "q_trim": [
+            0.01,
+            10
+          ]
+        }
+      ],
+      "reports": [
+        {
+          "n_input_pts": 723,
+          "n_output_pts": 481,
+          "n_bins_requested": 600,
+          "bins_populated_pct": 80.16666666666667,
+          "pts_per_bin_min": 1,
+          "pts_per_bin_mean": 1.501039501039501,
+          "pts_per_bin_max": 3,
+          "snr_before_mean": 23.12,
+          "snr_after_mean": 29.23,
+          "snr_gain_factor": 1.26,
+          "q_range_nm-1": [
+            0.025396115929314084,
+            5.9481550587287515
+          ],
+          "n_output_pts_after_trim": 481,
+          "step": 1,
+          "mode": "log"
+        }
+      ]
+    },
+    {
+      "step": "rebin_buffer",
+      "pipeline": [
+        {
+          "mode": "log",
+          "n_bins": 600,
+          "q_trim": [
+            0.01,
+            10
+          ]
+        }
+      ],
+      "reports": [
+        {
+          "n_input_pts": 723,
+          "n_output_pts": 481,
+          "n_bins_requested": 600,
+          "bins_populated_pct": 80.16666666666667,
+          "pts_per_bin_min": 1,
+          "pts_per_bin_mean": 1.501039501039501,
+          "pts_per_bin_max": 3,
+          "snr_before_mean": 19.47,
+          "snr_after_mean": 23.92,
+          "snr_gain_factor": 1.23,
+          "q_range_nm-1": [
+            0.025396115929314084,
+            5.9481550587287515
+          ],
+          "n_output_pts_after_trim": 481,
+          "step": 1,
+          "mode": "log"
+        }
+      ]
+    },
+    {
+      "step": "subtract",
+      "method": "direct"
+    }
+  ],
+  "output": {
+    "q_range_nm-1": [
+      0.025396115929314084,
+      5.9481550587287515
+    ],
+    "n_points": 481
+  },
+  "corrections_applied": [
+    "buffer_subtraction"
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "created": "2026-05-28T15:43:23.884229+02:00",
+  "software": "mergeSAXS.py v1.1.0",
+  "sample_name": "Au NP 200 nm",
+  "q_center_nm-1": 0.104259,
+  "sigmoid_width": 0.3,
+  "scale_factor": 1.784679,
+  "scale_applied": false,
+  "overlap_chi2_reduced": 20.94286075599931,
+  "source_long": {
+    "file": "D:\\Uni BAF\\Cloud\\Zentrales Home\\RiNe_Mat-NP_Au_1\\3_ProcessedData\\DataProcessed_1D\\Au NP 200 nm_1610.h5z",
+    "sdd_mm": 1610,
+    "q_range_nm-1": [
+      0.023692,
+      1.991361
+    ],
+    "n_points": 354
+  },
+  "source_short": {
+    "file": "D:\\Uni BAF\\Cloud\\Zentrales Home\\RiNe_Mat-NP_Au_1\\3_ProcessedData\\DataProcessed_1D\\Au NP 200 nm_491.h5z",
+    "sdd_mm": 491,
+    "q_range_nm-1": [
+      0.101804,
+      5.976189
+    ],
+    "n_points": 371
+  },
+  "merged": {
+    "q_range_nm-1": [
+      0.023692,
+      5.976189
+    ],
+    "n_points": 725
+  },
+  "sample_metadata": {
+    "temperature_K": 293.1473331451416,
+    "concentration_kg_m3": 0.0,
+    "thickness_m": 0.0013,
+    "transmittance": 0.2467340295347651,
+    "flux_entering_cts": 4694450.75,
+    "flux_exiting_cts": 1158280.75
+  }
+}
