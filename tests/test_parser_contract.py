@@ -15,6 +15,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ALV_FOLDER = os.path.join(_REPO, "example_files_monomodal", "example_files_monomodal")
+if not os.path.isdir(ALV_FOLDER):
+    # Fallback: small committed extract (see tests/data/README.md)
+    ALV_FOLDER = os.path.join(_REPO, "tests", "data", "alv_mono")
 # Primary: repo-local copy; fallback: Nextcloud mount
 _LS_LOCAL = os.path.join(_REPO, "example_files_monomodal", "LS Instruments", "2D", "csv")
 _LS_NC = (r"C:\Users\traja\TUBAF_Nextcloud\Zentrales Home\Messdaten"

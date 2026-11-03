@@ -1,0 +1,37 @@
+[
+  {
+    "file": "alv_mono/080622_5_0053_0001.ASC",
+    "size": 41859,
+    "sha256": "e67f67fa0753491f5805973dcbe3d1c8e2d00ca830c5a51bee70b6605da5ed15"
+  },
+  {
+    "file": "alv_mono/080622_5_0053_0002.ASC",
+    "size": 41859,
+    "sha256": "3ffceef6d0d6f1c735733813dee722a04702bd867b9f776c4ecadf9854ada9a4"
+  },
+  {
+    "file": "alv_mono/080622_5_0056_0001.ASC",
+    "size": 41859,
+    "sha256": "3802fb2ac773a56a931361b112b7ed0108c4a8a19604b8d830ddd70da7ce8f1f"
+  },
+  {
+    "file": "alv_mono/080622_5_0056_0002.ASC",
+    "size": 41859,
+    "sha256": "b5957f5d971ffd92887504acc3c7a70e3739d89d528c76019e8f7411748fe4dd"
+  },
+  {
+    "file": "alv_mono/080622_5_0059_0001.ASC",
+    "size": 41859,
+    "sha256": "ac6146bc5cf3058b630465a53470315296d766df671e1cc3c06d46c531901383"
+  },
+  {
+    "file": "alv_mono/080622_5_0059_0002.ASC",
+    "size": 41859,
+    "sha256": "dea0ca718362f6f3cade05bcc26bf4502cfc8d95e4a28f2566eeab29921a97f0"
+  },
+  {
+    "file": "alv_mono/080622_5_0053_averaged.ASC",
+    "size": 41859,
+    "sha256": "09d37068b7147484ff94f96c163016c9b5bff9ea8581e4bde2a480d30dc24a1c"
+  }
+]

@@ -1,0 +1,2 @@
+# Test fixtures are byte-exact (sha256 manifest): no end-of-line conversion
+tests/data/** -text
