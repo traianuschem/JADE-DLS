@@ -114,3 +114,15 @@ pythonpath = ["."]
 markers = [
     "slow: tests that take more than a few seconds (e.g. NNLS/Regularized fits); deselect with -m \"not slow\"",
 ]
+
+[tool.coverage.run]
+# Line coverage (as in the baseline measurement); no branch coverage, no omit list.
+source = ["ade_dls"]
+
+[tool.coverage.report]
+precision = 1
+show_missing = false
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+]
