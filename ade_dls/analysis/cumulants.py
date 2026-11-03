@@ -122,12 +122,26 @@ def extract_cumulants(file_path, encodings=['Windows-1252', 'utf-8', 'latin1', '
 
                 if not found_cumulant:
                     print(f"3rd order cumulant not found in {file_path}")
-                    
+
+                #extract cumulant 3rd order: 3rd expansion parameter mu3 (line i+5 of the block;
+                #i+4 is mu2 of the 3rd-order fit). Optional: missing/unparsable -> NaN, file is kept.
+                cumulant_3rd_order_mu3 = None
+                for i, line in enumerate(lines):
+                    if "Cumulant 3.Order" in line:
+                        try:
+                            match = re.search(r"[-+]?\d*\.\d+(?:[eE][-+]?\d+)?", lines[i + 5])
+                            if match:
+                                cumulant_3rd_order_mu3 = float(match.group(0))
+                        except (ValueError, IndexError):
+                            pass
+                        break
+
                 data = {'1st order frequency [1/ms]': [cumulant_1st_order], 
                         '2nd order frequency [1/ms]': [cumulant_2nd_order], 
                         '3rd order frequency [1/ms]': [cumulant_3rd_order],
                         '2nd order frequency exp param [ms^2]': [cumulant_2nd_order_exp_param],
-                        '3rd order frequency exp param [ms^2]': [cumulant_3rd_order_exp_param]}
+                        '3rd order frequency exp param [ms^2]': [cumulant_3rd_order_exp_param],
+                        '3rd order frequency 3rd param [1/ms^3]': [cumulant_3rd_order_mu3]}
                 return pd.DataFrame(data)
 
         except UnicodeDecodeError:
@@ -141,6 +155,19 @@ def extract_cumulants(file_path, encodings=['Windows-1252', 'utf-8', 'latin1', '
     
     print(f"Failed to extract cumulants from {file_path} with any encoding")
     return None
+
+def calculate_skewness_3rd(cumulant_data):
+    """Skewness of the 3rd-order cumulant fit: mu3 / mu2**1.5 (both from the 3rd-order block).
+
+    Returns a Series aligned to ``cumulant_data``; NaN where mu3/mu2 is missing
+    (e.g. instruments that do not report mu3). Does not modify the input.
+    """
+    mu2_col = '3rd order frequency exp param [ms^2]'
+    mu3_col = '3rd order frequency 3rd param [1/ms^3]'
+    if mu3_col not in cumulant_data.columns or mu2_col not in cumulant_data.columns:
+        return pd.Series(np.nan, index=cumulant_data.index, dtype=float)
+    return cumulant_data[mu3_col] / cumulant_data[mu2_col] ** (3 / 2)
+
 
 #calculation of g2-values for cumulant-method-B
 def calculate_g2_B(dataframes_dict):
@@ -254,7 +281,8 @@ def analyze_diffusion_coefficient(data_df, q_squared_col, gamma_cols, method_nam
             residuals = Y_arr - slope * X_arr
             sigma2    = np.sum(residuals**2) / max(len(X_arr) - 1, 1)
             slope_se  = float(np.sqrt(sigma2 / np.dot(X_arr, X_arr)))
-            ss_tot    = float(np.sum((Y_arr - Y_arr.mean())**2))
+            #uncentered R² (D-12, same definition as the GUI regression): 1 - SSR / Σy²
+            ss_tot    = float(np.sum(Y_arr**2))
             r_squared = 1.0 - float(np.sum(residuals**2)) / ss_tot if ss_tot > 0 else float('nan')
             intercept    = 0.0
             intercept_se = 0.0

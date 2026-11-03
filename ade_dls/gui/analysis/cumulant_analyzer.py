@@ -10,6 +10,8 @@ from scipy.stats import jarque_bera, normaltest, skew, kurtosis
 from typing import Dict, List, Tuple, Any
 import os
 
+from ade_dls.analysis.cumulants import calculate_skewness_3rd
+
 
 def _normality_status(resid) -> str:
     """
@@ -470,11 +472,9 @@ class CumulantAnalyzer:
         )
         polydispersity_method_A_3 = cumulant_method_A_data['polydispersity_3rd_order'].mean()
 
-        # Skewness from 3rd order expansion parameter (µ₃ / µ₂^1.5), matching JADE 2.0
-        cumulant_method_A_data['Skewness_3rd'] = (
-            cumulant_method_A_data['3rd order frequency exp param [ms^2]'] /
-            (cumulant_method_A_data['2nd order frequency exp param [ms^2]'])**(3/2)
-        )
+        # Skewness of the 3rd-order fit: µ₃ / µ₂^1.5 (µ₂, µ₃ both from the 3rd-order block).
+        # Corrected 2026-11-03 (D-11): JADE/earlier ADE used µ₂(3rd)/µ₂(2nd)^1.5, never µ₃.
+        cumulant_method_A_data['Skewness_3rd'] = calculate_skewness_3rd(cumulant_method_A_data)
         skewness_method_A_3 = cumulant_method_A_data['Skewness_3rd'].mean()
 
         # Stokes-Einstein: Rh = (kT / 6πη) / D  [nm]

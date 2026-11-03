@@ -225,8 +225,10 @@ def test_oracle_O01_two_groups_simple():
                      "n_outlier_points", "gammas_df", "cluster_id_to_pop", "clustering_plot",
                      "population_D_means", "population_D_stds",
                      "n_dropped_points", "population_n_dropped", "population_stats_pre_refinement",
-                     "n_reassigned", "silhouette_before_refinement", "silhouette_after_refinement"}
+                     "n_reassigned", "silhouette_before_refinement", "silhouette_after_refinement",
+                     "populations_below_min_abundance"}
     assert set(info) == expected_keys
+    assert info["populations_below_min_abundance"] == []
     assert info["n_reassigned"] == 0
     assert info["silhouette_before_refinement"] is None
     assert info["silhouette_after_refinement"] is None
@@ -284,6 +286,68 @@ def test_oracle_O05_zscore_uncertainty_single():
     assert info["gammas_df"]["z_score"].to_numpy() == pytest.approx(expected, **TOL)
     assert clustered["uncertain_pop1"].astype(bool).tolist() == [True, False, True, False, True]
     np.testing.assert_array_equal(clustered["gamma_pop1"].to_numpy(float), df["gamma_1"].to_numpy())
+
+
+def test_oracle_D05_zscore_threshold_own_parameter_overrides_legacy():
+    """D-05: z-score (single population) has its own threshold; legacy uncertainty_threshold=0.5
+    is overridden by uncertainty_threshold_zscore."""
+    kw = dict(distance_threshold=2.0, min_abundance=0.3, clustering_strategy="silhouette_refined",
+              uncertainty_flags=True)
+    clustered, info = run(d_single(), ["gamma_1"], uncertainty_threshold=0.5,
+                          uncertainty_threshold_zscore=1.0, **kw)
+    # |z| = [1.2787, 0.1162, 1.6275, 0.4650, 0.6975]  -> > 1.0: points 0 and 2 only
+    assert clustered["uncertain_pop1"].tolist() == [1.0, 0.0, 1.0, 0.0, 0.0]
+    # the silhouette threshold is irrelevant for one population
+    c2, _ = run(d_single(), ["gamma_1"], uncertainty_threshold_zscore=1.0,
+                uncertainty_threshold_silhouette=99.0, **kw)
+    assert c2["uncertain_pop1"].tolist() == [1.0, 0.0, 1.0, 0.0, 0.0]
+    # legacy parameter alone still drives both (backwards compatible)
+    c3, _ = run(d_single(), ["gamma_1"], uncertainty_threshold=1.0, **kw)
+    assert c3["uncertain_pop1"].tolist() == [1.0, 0.0, 1.0, 0.0, 0.0]
+
+
+def test_oracle_D05_silhouette_threshold_own_parameter_overrides_legacy():
+    """D-05: silhouette (several populations) has its own threshold. d_ref after refinement has
+    silhouettes [0.6186, 0.6591, 0.2241, 0.3000, 0.7941, 0.7941] (see C05)."""
+    kw = dict(method="simple", distance_threshold=0.3, min_abundance=0.3,
+              clustering_strategy="silhouette_refined", silhouette_threshold=0.3,
+              uncertainty_flags=True)
+    c_a, _ = run(d_ref(), ["gamma_1"], uncertainty_threshold=0.5,
+                 uncertainty_threshold_silhouette=0.25, uncertainty_threshold_zscore=9.0, **kw)
+    assert c_a["uncertain_pop1"].dropna().tolist() == [0.0, 0.0, 1.0]
+    assert c_a["uncertain_pop2"].dropna().tolist() == [0.0, 0.0, 0.0]
+    c_b, _ = run(d_ref(), ["gamma_1"], uncertainty_threshold=0.25, **kw)
+    assert c_b["uncertain_pop1"].dropna().tolist() == [0.0, 0.0, 1.0]
+    c_c, _ = run(d_ref(), ["gamma_1"], uncertainty_threshold=0.5, **kw)
+    assert c_c["uncertain_pop1"].dropna().tolist() == [0.0, 0.0, 1.0]
+    assert c_c["uncertain_pop2"].dropna().tolist() == [1.0, 0.0, 0.0]   # silhouette 0.3 < 0.5
+
+
+def test_oracle_D06_population_below_min_abundance_after_refinement_kept_and_flagged(monkeypatch):
+    """D-06 (decided): a population that falls below min_abundance through refinement is kept
+    but flagged in cluster_info['populations_below_min_abundance'] (numbers, 1-based)."""
+    df = make_df([1.0] * 6, {"gamma_1": [0.0, 0.05, 0.1, 0.15, 1.0, 1.05]})
+
+    def fake_refine(gdf, threshold, normalize_by_q2):
+        idx = gdf.index[gdf["cluster"] == 1][0]
+        gdf.loc[idx, "cluster"] = 0
+        return 1
+
+    monkeypatch.setattr(cl, "_refine_clusters_with_silhouette", fake_refine)
+    clustered, info = run(df, ["gamma_1"], method="simple", distance_threshold=0.3,
+                          min_abundance=0.3, clustering_strategy="silhouette_refined")
+    assert info["n_reassigned"] == 1
+    assert info["population_stats_pre_refinement"]["abundance"].tolist() == pytest.approx(
+        [4 / 6, 2 / 6], **TOL)
+    assert info["n_populations"] == 2                     # kept, not dropped
+    assert info["population_abundances"] == pytest.approx([5 / 6, 1 / 6], **TOL)
+    assert info["populations_below_min_abundance"] == [2]
+    assert clustered["gamma_pop2"].notna().sum() == 1
+
+
+def test_oracle_D06_no_flag_when_all_populations_stay_above_min_abundance():
+    _, info = _ref_call()
+    assert info["populations_below_min_abundance"] == []
 
 
 def test_oracle_O06_outlier_population():
@@ -673,7 +737,7 @@ def test_edge_E11_no_reliable_population():
     assert info["cluster_id_to_pop"] == {}
     assert info["n_outlier_points"] == 8
     assert info["population_stats"].empty
-    assert "population_D_means" not in info
+    assert info["population_D_means"] == [] and info["population_D_stds"] == []   # F-17
     assert not any(c.startswith(("gamma_pop", "outlier_pop")) for c in clustered.columns)
     assert len(info["gammas_df"]) == 0
     assert info["population_n_dropped"] == [] and info["n_dropped_points"] == 0
@@ -863,7 +927,8 @@ def test_char_C07_signature_defaults_documents_current_behavior():
         q_squared_col=None, enable_clustering=True, normalize_by_q2=False, method="hierarchical",
         n_clusters="auto", distance_threshold=0.3, min_abundance=0.3, clustering_strategy="simple",
         silhouette_threshold=0.3, uncertainty_flags=False, uncertainty_threshold=0.5,
-        plot=True, interactive=True, experiment_name="")
+        plot=True, interactive=True, experiment_name="",
+        uncertainty_threshold_zscore=None, uncertainty_threshold_silhouette=None)
     assert defaults(cl.clustering_parameter_sweep) == dict(
         q_squared_col="q^2", distance_thresholds=(0.3, 0.7, 1.0, 1.5, 2.0),
         min_abundances=(0.1, 0.2, 0.3, 0.4, 0.5), normalize_by_q2=True,
@@ -962,10 +1027,12 @@ def test_regression_F21_uncertainty_flags_no_crash():
     assert set(col.dropna().unique()) <= {0.0, 1.0}
 
 
-def test_char_C15_D_keys_absent_not_empty_documents_current_behavior():
-    """documents current behavior, not desired behavior (F-17)."""
+def test_oracle_C15_D_keys_present_and_empty_without_populations():
+    """F-17 fixed (D-10): with normalize_by_q2 the D keys always exist (empty lists without
+    populations); without normalization they stay absent."""
     _, info = run(d_o1(), COLS2, distance_threshold=1.0, min_abundance=1.01)
-    assert "population_D_means" not in info and "population_D_stds" not in info
+    assert info["n_populations"] == 0
+    assert info["population_D_means"] == [] and info["population_D_stds"] == []
     _, info2 = run(d_o1(), COLS2, normalize_by_q2=False, q_squared_col=None, distance_threshold=1.0)
     assert "population_D_means" not in info2
 
@@ -1149,13 +1216,24 @@ def test_oracle_A01_clustering_mode_stats():
     assert "population_kurtosis_mean" not in info and "population_kurtosis_std" not in info
 
 
-def test_oracle_A02_passthrough_ddof1():
+def test_oracle_A02_passthrough_ddof0():
+    """D-03 (decided): pass-through std uses np.std (ddof=0), like the clustering path."""
     df = d_o1_peaks()
     _, info = cl.cluster_all_gammas(df, COLS2, enable_clustering=False)
     cl.aggregate_peak_stats(info, df)
     assert info["population_skewness_mean"] == pytest.approx({1: 0.25, 2: 1.5}, **TOL)
     assert info["population_skewness_std"] == pytest.approx(
-        {1: math.sqrt(0.05 / 3), 2: math.sqrt(1 / 3)}, **TOL)
+        {1: math.sqrt(0.05 / 4), 2: math.sqrt(1 / 4)}, **TOL)
+    assert info["population_skewness_std"][2] == pytest.approx(0.5, **TOL)
+
+
+def test_meta_A02b_passthrough_std_equals_clustering_path_std():
+    """D-03: one convention. Single population holding exactly the same values in both modes."""
+    df = d_o1_peaks()
+    _, info_pt = cl.cluster_all_gammas(df, COLS2, enable_clustering=False)
+    cl.aggregate_peak_stats(info_pt, df)
+    vals = df["skewness_1"].dropna().to_numpy(float)
+    assert info_pt["population_skewness_std"][1] == pytest.approx(np.std(vals), **TOL)
 
 
 def test_char_A03_single_population_uses_all_points_documents_current_behavior():
@@ -1261,13 +1339,15 @@ def test_char_A11_missing_clustering_enabled_is_passthrough_documents_current_be
 # clustering_parameter_sweep
 # ----------------------------------------------------------------------------
 SUMMARY_COLS = (["distance_threshold", "min_abundance", "n_populations", "silhouette"]
-                + [f"pop{i}_{s}" for i in range(1, 5) for s in ("D_mean", "D_std", "abund")])
+                + [f"pop{i}_{s}" for i in range(1, 5) for s in ("D_mean", "D_std", "abund")]
+                + ["error"])
 
 
 def test_oracle_S01_sweep_two_thresholds():
     summ, scat = cl.clustering_parameter_sweep(d_o1(), COLS2, distance_thresholds=(1.0, 2.0),
                                                min_abundances=(0.3,))
-    assert list(summ.columns) == SUMMARY_COLS and len(summ.columns) == 16
+    assert list(summ.columns) == SUMMARY_COLS and len(summ.columns) == 17
+    assert summ["error"].isna().all()
     assert len(summ) == 2
     r1, r2 = summ.iloc[0], summ.iloc[1]
     assert (r1["distance_threshold"], r2["distance_threshold"]) == (1.0, 2.0)
@@ -1341,20 +1421,27 @@ def test_meta_S04_sweep_reversed_thresholds():
     pd.testing.assert_frame_equal(s_f.iloc[::-1].reset_index(drop=True), s_r)
 
 
-def test_char_S05_sweep_pyplot_side_effects_documents_current_behavior():
-    """documents current behavior, not desired behavior (F-14)."""
-    plt.ioff()
-    plt.figure()
+@pytest.mark.parametrize("was_interactive", [False, True])
+def test_oracle_S05_sweep_restores_pyplot_state(was_interactive):
+    """D-08 (decided): the sweep restores the interactive flag and leaves foreign figures open."""
+    plt.interactive(was_interactive)
+    fig = plt.figure()
     cl.clustering_parameter_sweep(d_o1(), COLS2, distance_thresholds=(1.0,), min_abundances=(0.3,))
-    assert plt.isinteractive() is True
-    assert plt.get_fignums() == []
+    assert plt.isinteractive() is was_interactive
+    assert fig.number in plt.get_fignums()
 
 
-def test_char_S06_sweep_swallows_exceptions_documents_current_behavior():
-    """documents current behavior, not desired behavior (F-14)."""
+def test_oracle_S06_sweep_collects_exceptions_in_error_column():
+    """D-08 (decided): a failing combination yields a row with the error text, not a silent skip."""
     summ, scat = cl.clustering_parameter_sweep(d_o1(), COLS2, q_squared_col="nope",
-                                               distance_thresholds=(1.0,), min_abundances=(0.3,))
-    assert summ.empty and list(summ.columns) == []
+                                               distance_thresholds=(1.0, 2.0), min_abundances=(0.3,))
+    assert list(summ.columns) == SUMMARY_COLS
+    assert len(summ) == 2
+    assert list(zip(summ["distance_threshold"], summ["min_abundance"])) == [(1.0, 0.3), (2.0, 0.3)]
+    for msg in summ["error"]:
+        assert isinstance(msg, str) and "ValueError" in msg and "nope" in msg
+    assert summ["n_populations"].isna().all()
+    assert summ["silhouette"].isna().all()
     assert scat.empty
 
 

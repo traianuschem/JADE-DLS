@@ -191,7 +191,8 @@ PC_COLUMNS = ['filename', 'Gamma', 'Gamma_error', 'Gamma_relative_error', 'a', '
               'R_squared']
 CUM_COLUMNS = ['1st order frequency [1/ms]', '2nd order frequency [1/ms]',
                '3rd order frequency [1/ms]', '2nd order frequency exp param [ms^2]',
-               '3rd order frequency exp param [ms^2]']
+               '3rd order frequency exp param [ms^2]',
+               '3rd order frequency 3rd param [1/ms^3]']
 
 
 def cmp_rows(r1, r2, factors=None, skip=(), cols=NUMCOLS):
@@ -233,12 +234,12 @@ B3 = ['"Cumulant 3.Order"',
       '"Expansion Parameter µ3"\t   8.62400E-002']
 TAIL = ['"StandardDeviation"']
 BASE = HEAD + B1 + B2 + B3 + TAIL
-EXPECT = [1.71578, 1.80455, 1.83178, 0.25836, 0.35512]
-CUM_PARAMS = ["1st", "2nd", "3rd", "2nd exp", "3rd exp"]
+EXPECT = [1.71578, 1.80455, 1.83178, 0.25836, 0.35512, 0.08624]
+CUM_PARAMS = ["1st", "2nd", "3rd", "2nd exp", "3rd exp", "3rd mu3"]
 
 
 def check_expect(df, expect=EXPECT):
-    assert df.shape == (1, 5)
+    assert df.shape == (1, 6)
     assert list(df.columns) == CUM_COLUMNS
     for c, v in zip(CUM_COLUMNS, expect):
         assert df[c].iloc[0] == pytest.approx(v, rel=1e-12)
@@ -322,19 +323,20 @@ def test_extract_cumulants_XE05_no_third_block(tmp_path):
         assert df[c].iloc[0] == pytest.approx(v, rel=1e-12)
     assert df[CUM_COLUMNS[3]].iloc[0] == pytest.approx(0.25836, rel=1e-12)
     assert pd.isna(df[CUM_COLUMNS[2]].iloc[0]) and pd.isna(df[CUM_COLUMNS[4]].iloc[0])
+    assert pd.isna(df[CUM_COLUMNS[5]].iloc[0])
 
 
 def test_extract_cumulants_XE06_truncated_second_block(tmp_path):
     df = cu.extract_cumulants(write_asc(tmp_path, HEAD + B1 + B2[:3]))
     assert df[CUM_COLUMNS[1]].iloc[0] == pytest.approx(1.80455, rel=1e-12)
-    for i in (2, 3, 4):
+    for i in (2, 3, 4, 5):
         assert pd.isna(df[CUM_COLUMNS[i]].iloc[0])
 
 
 def test_extract_cumulants_XE07_first_order_is_last_line(tmp_path):
     df = cu.extract_cumulants(write_asc(tmp_path, HEAD + B2 + B3 + [B1[0]]))
     assert pd.isna(df[CUM_COLUMNS[0]].iloc[0])
-    for i in (1, 2, 3, 4):
+    for i in (1, 2, 3, 4, 5):
         assert df[CUM_COLUMNS[i]].iloc[0] == pytest.approx(EXPECT[i], rel=1e-12)
 
 
@@ -348,16 +350,12 @@ def test_extract_cumulants_XE09_empty_encodings(tmp_path):
     assert cu.extract_cumulants(write_asc(tmp_path, BASE), encodings=[]) is None
 
 
-def test_extract_cumulants_XC01_third_exp_is_mu2_documents_current_behavior(tmp_path):
-    """documents current behavior, not desired behavior (F-07)."""
+def test_extract_cumulants_XC01_third_exp_stays_mu2_and_mu3_is_separate(tmp_path):
+    """F-07 fix (D-11): '3rd order ... exp param' stays mu2 of the 3rd-order fit (PDI_3rd uses it);
+    mu3 is exposed in its own column."""
     df = cu.extract_cumulants(write_asc(tmp_path, BASE))
-    v = df[CUM_COLUMNS[4]].iloc[0]
-    assert v == pytest.approx(0.35512, rel=1e-12)
-    assert v != pytest.approx(0.08624, rel=1e-6)
-    assert not np.isclose(df.to_numpy(float), 0.08624, rtol=1e-9).any()
-    skew = v / df[CUM_COLUMNS[3]].iloc[0] ** 1.5
-    assert skew == pytest.approx(0.35512 / 0.25836 ** 1.5, rel=1e-6)
-    assert skew == pytest.approx(2.70420, rel=1e-4)
+    assert df[CUM_COLUMNS[4]].iloc[0] == pytest.approx(0.35512, rel=1e-12)
+    assert df[CUM_COLUMNS[5]].iloc[0] == pytest.approx(0.08624, rel=1e-12)
 
 
 def _real_block_lines():
@@ -371,22 +369,52 @@ def _real_block_lines():
     return out
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError,
-                   reason="FINDING F-07 (Skewness_3rd: mu3 wird nicht gelesen), Fix-Freigabe offen, "
-                          "siehe _dev/notes/open_discussion_points.md")
-def test_extract_cumulants_XF05_mu3_should_be_read(tmp_path):
+def test_extract_cumulants_XF05_mu3_is_read(tmp_path):
+    """F-07 fix (D-11): mu3 (line i+5 of the 3rd-order block) is read."""
     df = cu.extract_cumulants(write_asc(tmp_path, _real_block_lines()))
-    assert any(np.isclose(v, 9.1452) for v in df.iloc[0])
+    assert df[CUM_COLUMNS[5]].iloc[0] == pytest.approx(9.1452, rel=1e-12)
 
 
-def test_extract_cumulants_XC01b_skewness_formula_value_documents_current_behavior(tmp_path):
-    """documents current behavior, not desired behavior (F-07): formula mu2(3.)/mu2(2.)^1.5 gives
-    4.8281/2.1284^1.5 ~ 1.555; the correct mu3/mu2(3.)^1.5 = 9.1452/4.8281^1.5 ~ 0.862."""
+def test_extract_cumulants_XE10_missing_mu3_line_gives_nan_keeps_other_columns(tmp_path):
+    """Optional mu3 must not discard a file that parsed before (3rd-order block ends at mu2)."""
+    df = cu.extract_cumulants(write_asc(tmp_path, HEAD + B1 + B2 + B3[:5] + TAIL))
+    assert df is not None
+    assert pd.isna(df[CUM_COLUMNS[5]].iloc[0])
+    for i in (0, 1, 2, 3, 4):
+        assert df[CUM_COLUMNS[i]].iloc[0] == pytest.approx(EXPECT[i], rel=1e-12)
+
+
+def test_calculate_skewness_3rd_oracle_mu3_over_mu2_pow_1p5(tmp_path):
+    """Skewness_3rd = mu3 / mu2(3rd-order fit)^1.5 = 9.1452 / 4.8281^1.5 = 0.862 (real ASC block)."""
     df = cu.extract_cumulants(write_asc(tmp_path, _real_block_lines()))
-    skew = df[CUM_COLUMNS[4]].iloc[0] / df[CUM_COLUMNS[3]].iloc[0] ** 1.5
-    assert skew == pytest.approx(4.8281 / 2.1284 ** 1.5, rel=1e-6)
-    assert skew == pytest.approx(1.555, rel=1e-3)
-    assert 9.1452 / 4.8281 ** 1.5 == pytest.approx(0.862, rel=1e-3)
+    s = cu.calculate_skewness_3rd(df)
+    assert s.iloc[0] == pytest.approx(9.1452 / 4.8281 ** 1.5, rel=1e-6)
+    assert s.iloc[0] == pytest.approx(0.862, rel=1e-3)
+    # the former (wrong) value mu2(3.)/mu2(2.)^1.5 = 1.555 must not come back
+    assert s.iloc[0] != pytest.approx(1.555, rel=1e-2)
+
+
+def test_calculate_skewness_3rd_per_row_and_nan_propagation():
+    d = pd.DataFrame({CUM_COLUMNS[4]: [4.0, 1.0, np.nan],
+                      CUM_COLUMNS[5]: [8.0, -0.5, 1.0]})
+    s = cu.calculate_skewness_3rd(d)
+    assert list(s.index) == [0, 1, 2]
+    assert s.iloc[0] == pytest.approx(8.0 / 4.0 ** 1.5, rel=1e-12)   # = 1.0
+    assert s.iloc[1] == pytest.approx(-0.5, rel=1e-12)               # sign preserved
+    assert np.isnan(s.iloc[2])
+
+
+def test_calculate_skewness_3rd_missing_mu3_column_gives_nan_not_error():
+    d = pd.DataFrame({CUM_COLUMNS[4]: [4.0, 1.0]})
+    s = cu.calculate_skewness_3rd(d)
+    assert len(s) == 2 and s.isna().all()
+
+
+def test_calculate_skewness_3rd_does_not_modify_input():
+    d = pd.DataFrame({CUM_COLUMNS[4]: [4.0], CUM_COLUMNS[5]: [8.0]})
+    before = d.copy()
+    cu.calculate_skewness_3rd(d)
+    pd.testing.assert_frame_equal(d, before)
 
 
 @pytest.mark.parametrize("content", [b"", b"hello\n"], ids=["empty", "hello"])
@@ -396,7 +424,7 @@ def test_extract_cumulants_XC02_no_block_gives_all_none_frame_documents_current_
     p = tmp_path / "e.asc"
     p.write_bytes(content)
     df = cu.extract_cumulants(p)
-    assert df is not None and df.shape == (1, 5)
+    assert df is not None and df.shape == (1, 6)
     assert list(df.columns) == CUM_COLUMNS
     assert df.isna().all().all()
 
@@ -981,7 +1009,9 @@ def test_analyze_diffusion_coefficient_RO04_normal_residuals_origin():
     ssr = np.sum(R_NORM ** 2)
     assert r["slope"] == pytest.approx(2.0, rel=1e-6)
     assert r["slope_se"] == pytest.approx(math.sqrt(ssr / 19 / 2870), rel=1e-6)
-    assert r["R_squared"] == pytest.approx(1 - ssr / (2660 + ssr), rel=1e-6)
+    # D-12: origin fit uses the uncentered R2 = 1 - SSR / sum(y^2) (R_NORM is orthogonal to q)
+    assert r["R_squared"] == pytest.approx(1 - ssr / (4 * 2870 + ssr), rel=1e-6)
+    assert r["R_squared"] == pytest.approx(origin_hand(Q_20, 2 * Q_20 + R_NORM)["R2u"], rel=1e-6)
     for c in ("intercept", "intercept_se", "const_coef", "const_se"):
         assert r[c] == 0.0
     assert r["JB_p_value"] == pytest.approx(jb_p(R_NORM), rel=1e-6)
@@ -1036,7 +1066,9 @@ def test_analyze_diffusion_coefficient_RO08_offset_data():
     o = adc(q, g, fit_through_origin=True).iloc[0]
     assert o["slope"] == pytest.approx(77 / 34, **TOL)
     assert o["slope_se"] == pytest.approx(math.sqrt((400 / 17) / 204), **TOL)
-    assert o["R_squared"] == pytest.approx(1 - (2800 / 17) / 10.5, **TOL)
+    # D-12: uncentered R2 (same as GUI): 1 - SSR/sum(y^2) = 0.863992
+    assert o["R_squared"] == pytest.approx(origin_hand(q, g)["R2u"], **TOL)
+    assert o["R_squared"] == pytest.approx(0.863992, rel=1e-5)
     f = adc(q, g).iloc[0]
     assert f["slope"] == pytest.approx(0.5, abs=1e-9)
     assert f["intercept"] == pytest.approx(10, abs=1e-9)
@@ -1049,11 +1081,19 @@ def test_analyze_diffusion_coefficient_RO09_string_arguments():
     assert len(r) == 1 and r.iloc[0]["Column"] == "g" and r.iloc[0]["Method"] == "M"
 
 
-def test_analyze_diffusion_coefficient_RO10_zero_sst_origin_nan_r2():
+def test_analyze_diffusion_coefficient_RO10_constant_y_origin_uncentered_r2():
+    """D-12: constant y has zero centered variance but sum(y^2) > 0 -> uncentered R2 is defined:
+    SSR = 200 - 180^2/204, R2 = (180^2/204)/200 = 0.794118."""
     q = np.arange(1, 9, dtype=float)
     r = adc(q, [5.0] * 8, fit_through_origin=True).iloc[0]
-    assert pd.isna(r["R_squared"])
     assert r["slope"] == pytest.approx(5 * 36 / 204, **TOL)
+    assert r["R_squared"] == pytest.approx(180 ** 2 / 204 / 200, **TOL)
+
+
+def test_analyze_diffusion_coefficient_RO10b_all_zero_y_origin_nan_r2():
+    q = np.arange(1, 9, dtype=float)
+    r = adc(q, [0.0] * 8, fit_through_origin=True).iloc[0]
+    assert pd.isna(r["R_squared"])
 
 
 # --- metamorphic -------------------------------------------------------------
@@ -1252,12 +1292,14 @@ def test_analyze_diffusion_coefficient_RC02_p_value_rounding_documents_current_b
     assert r["JB_p_value"] == pytest.approx(jb_p(res), **PTOL)
 
 
-def test_analyze_diffusion_coefficient_RC03_origin_centered_r2_negative_documents_current_behavior():
-    """documents current behavior (F-02): centered R2 of origin fit can be negative."""
+def test_analyze_diffusion_coefficient_RC03_origin_r2_is_uncentered_and_never_negative():
+    """F-02 resolved (D-12): origin fit reports the uncentered R2; module == GUI definition.
+    (The centered value would be -14.686275 for this data.)"""
     q = np.arange(1, 9, dtype=float)
     r = adc(q, 10 + 0.5 * q, fit_through_origin=True).iloc[0]
-    assert r["R_squared"] == pytest.approx(-14.686275, rel=1e-6)
-    assert origin_hand(q, 10 + 0.5 * q)["R2c"] == pytest.approx(r["R_squared"], **TOL)
+    assert r["R_squared"] == pytest.approx(origin_hand(q, 10 + 0.5 * q)["R2u"], **TOL)
+    assert 0.0 <= r["R_squared"] <= 1.0
+    assert r["R_squared"] != pytest.approx(origin_hand(q, 10 + 0.5 * q)["R2c"], rel=1e-3)
 
 
 def test_analyze_diffusion_coefficient_RC18_gui_uncentered_r2_documents_current_behavior():

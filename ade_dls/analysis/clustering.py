@@ -58,12 +58,24 @@ def cluster_all_gammas(data_df, gamma_cols, q_squared_col=None,
                        distance_threshold=0.3, min_abundance=0.3,
                        clustering_strategy='simple', silhouette_threshold=0.3,
                        uncertainty_flags=False, uncertainty_threshold=0.5,
-                       plot=True, interactive=True, experiment_name=''):
+                       plot=True, interactive=True, experiment_name='',
+                       uncertainty_threshold_zscore=None,
+                       uncertainty_threshold_silhouette=None):
     """
     Can operate in two modes:
     1. Clustering enabled: Groups gammas across files by similarity
     2. Clustering disabled: Pass-through mode (returns data unchanged)
+
+    Uncertainty thresholds: the z-score flag (single population, |z| > threshold) and the
+    silhouette flag (several populations, silhouette < threshold) have separate parameters
+    ``uncertainty_threshold_zscore`` / ``uncertainty_threshold_silhouette``. If one is None it
+    falls back to the legacy shared ``uncertainty_threshold``.
     """
+    zscore_threshold = (uncertainty_threshold if uncertainty_threshold_zscore is None
+                        else uncertainty_threshold_zscore)
+    silhouette_uncertainty_threshold = (uncertainty_threshold
+                                        if uncertainty_threshold_silhouette is None
+                                        else uncertainty_threshold_silhouette)
 
     #PASS-THROUGH MODE
     if not enable_clustering:
@@ -102,7 +114,8 @@ def cluster_all_gammas(data_df, gamma_cols, q_squared_col=None,
     print(f"Method: {method}")
     print(f"Strategy: {clustering_strategy}")
     if uncertainty_flags:
-        print(f"Uncertainty flags: enabled (threshold={uncertainty_threshold})")
+        print(f"Uncertainty flags: enabled (z-score threshold={zscore_threshold}, "
+              f"silhouette threshold={silhouette_uncertainty_threshold})")
     print(f"Input: {len(data_df)} files, {len(gamma_cols)} gamma columns")
 
     # Step 1: Collect all gammas with their metadata
@@ -260,10 +273,10 @@ def cluster_all_gammas(data_df, gamma_cols, q_squared_col=None,
                     z_scores = np.zeros(len(vals))
                 gammas_df_reliable = gammas_df_reliable.copy()
                 gammas_df_reliable['z_score']  = z_scores
-                gammas_df_reliable['uncertain'] = z_scores > uncertainty_threshold
+                gammas_df_reliable['uncertain'] = z_scores > zscore_threshold
                 val_label = "log(D)" if normalize_by_q2 else "log(Γ)"
                 print(f"Mean {val_label}: {mean_val:.3f}  Std: {std_val:.3f}")
-                print(f"Flagging points with |z| > {uncertainty_threshold} as uncertain")
+                print(f"Flagging points with |z| > {zscore_threshold} as uncertain")
                 n_uncertain = gammas_df_reliable['uncertain'].sum()
                 print(f"→ {n_uncertain}/{len(gammas_df_reliable)} uncertain point(s) in single population")
                 if n_uncertain > 0:
@@ -316,7 +329,7 @@ def cluster_all_gammas(data_df, gamma_cols, q_squared_col=None,
             if uncertainty_flags:
                 print("UNCERTAINTY FLAGGING")
                 gammas_df_reliable['uncertain'] = (
-                    gammas_df_reliable['silhouette'] < uncertainty_threshold
+                    gammas_df_reliable['silhouette'] < silhouette_uncertainty_threshold
                 )
                 n_uncertain = gammas_df_reliable['uncertain'].sum()
                 pct_uncertain = n_uncertain / len(gammas_df_reliable) * 100
@@ -421,6 +434,17 @@ def cluster_all_gammas(data_df, gamma_cols, q_squared_col=None,
     # Remap reliable cluster_ids to sequential 1, 2, 3, ... population numbers
     cluster_id_to_pop = {cid: i + 1 for i, cid in enumerate(reliable_cluster_ids)}
     clustered_df = data_df.copy()
+
+    # D-06 (decided 2026-11-03): a population whose final abundance is below min_abundance
+    # (refinement / point removal moved points away) is kept, but flagged.
+    populations_below_min_abundance = []
+    if not stats_df_reliable.empty:
+        for row_ in stats_df_reliable.itertuples():
+            if row_.cluster_id in cluster_id_to_pop and row_.abundance < min_abundance:
+                populations_below_min_abundance.append(cluster_id_to_pop[row_.cluster_id])
+        if populations_below_min_abundance:
+            print(f"WARNING: population(s) {populations_below_min_abundance} fell below "
+                  f"min_abundance={min_abundance} after refinement; kept and flagged.")
 
     for pop_num in cluster_id_to_pop.values():
         clustered_df[f'gamma_pop{pop_num}'] = np.nan
@@ -537,11 +561,16 @@ def cluster_all_gammas(data_df, gamma_cols, q_squared_col=None,
         'n_reassigned'            : n_reassigned_total,
         'silhouette_before_refinement': silhouette_before_refinement,
         'silhouette_after_refinement' : silhouette_after_refinement,
+        'populations_below_min_abundance': populations_below_min_abundance,
     }
 
-    if normalize_by_q2 and not stats_df_reliable.empty and 'mean_D' in stats_df_reliable.columns:
-        cluster_info['population_D_means'] = stats_df_reliable['mean_D'].tolist()
-        cluster_info['population_D_stds']  = stats_df_reliable['std_D'].tolist()
+    if normalize_by_q2:
+        if not stats_df_reliable.empty and 'mean_D' in stats_df_reliable.columns:
+            cluster_info['population_D_means'] = stats_df_reliable['mean_D'].tolist()
+            cluster_info['population_D_stds']  = stats_df_reliable['std_D'].tolist()
+        else:  # F-17: keep the keys, empty without populations
+            cluster_info['population_D_means'] = []
+            cluster_info['population_D_stds']  = []
 
     print("\n" + "="*70)
     print("In SUMMARY:")
@@ -952,7 +981,7 @@ def aggregate_peak_stats(cluster_info, data_df, stat_prefixes=('skewness', 'kurt
                 if stat_col in data_df.columns:
                     vals = data_df[stat_col].dropna()
                     pop_means[i + 1] = vals.mean() if len(vals) > 0 else np.nan
-                    pop_stds[i + 1]  = vals.std()  if len(vals) > 1 else np.nan
+                    pop_stds[i + 1]  = np.std(vals) if len(vals) > 1 else np.nan  # ddof=0 (D-03)
             cluster_info[f'population_{prefix}_mean'] = pop_means
             cluster_info[f'population_{prefix}_std']  = pop_stds
 
@@ -1065,7 +1094,9 @@ def clustering_parameter_sweep(
     summary_df : pd.DataFrame
         One row per (distance_threshold, min_abundance) with columns:
         distance_threshold, min_abundance, n_populations, silhouette,
-        pop1_D_mean … pop4_D_mean, pop1_abund … pop4_abund.
+        pop1_D_mean … pop4_D_mean, pop1_abund … pop4_abund, error.
+        ``error`` is None for successful combinations; for a failed combination it holds
+        "<ExceptionType>: <message>" and the numeric columns are NaN.
     scatter_df : pd.DataFrame
         One row per data point per combination with columns:
         distance_threshold, min_abundance, population, q^2, D_t, excluded.
@@ -1076,6 +1107,14 @@ def clustering_parameter_sweep(
 
     summary_rows = []
     scatter_rows = []
+
+    was_interactive = plt.isinteractive()
+    figs_before = set(plt.get_fignums())
+
+    def _restore_pyplot():
+        for num in set(plt.get_fignums()) - figs_before:
+            plt.close(num)
+        plt.interactive(was_interactive)
 
     for dt in distance_thresholds:
         for ma in min_abundances:
@@ -1096,12 +1135,19 @@ def clustering_parameter_sweep(
                     plot=False,
                     interactive=False,
                 )
-            except Exception:
-                plt.close('all')
-                plt.ion()
+            except Exception as exc:
+                _restore_pyplot()
+                # D-08 (decided): collect the failure instead of dropping the combination silently
+                err_row = {'distance_threshold': dt, 'min_abundance': ma,
+                           'n_populations': np.nan, 'silhouette': np.nan}
+                for i in range(1, 5):
+                    err_row[f'pop{i}_D_mean'] = np.nan
+                    err_row[f'pop{i}_D_std']  = np.nan
+                    err_row[f'pop{i}_abund']  = np.nan
+                err_row['error'] = f"{type(exc).__name__}: {exc}"
+                summary_rows.append(err_row)
                 continue
-            plt.close('all')
-            plt.ion()
+            _restore_pyplot()
 
             n_pop         = info.get('n_populations', 0)
             silhouette    = info.get('silhouette_score', np.nan)
@@ -1121,6 +1167,7 @@ def clustering_parameter_sweep(
                 row[f'pop{i}_D_mean'] = D_means[idx]    if idx < len(D_means)    else np.nan
                 row[f'pop{i}_D_std']  = D_stds[idx]     if idx < len(D_stds)     else np.nan
                 row[f'pop{i}_abund']  = abundances[idx] if idx < len(abundances) else np.nan
+            row['error'] = None
             summary_rows.append(row)
 
             # ── scatter: per data point ──────────────────────────────────
