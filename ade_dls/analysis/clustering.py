@@ -166,6 +166,8 @@ def cluster_all_gammas(data_df, gamma_cols, q_squared_col=None,
     else:
         raise ValueError(f"Unknown method: {method}. Use 'hierarchical' or 'simple'")
 
+    # Number populations by ascending mean log value (pop1 = smallest D)
+    cluster_labels = _relabel_by_value(cluster_labels, gammas_df['log_clustering_val'].values)
     gammas_df['cluster'] = cluster_labels
     n_populations = len(np.unique(cluster_labels))
 
@@ -232,6 +234,13 @@ def cluster_all_gammas(data_df, gamma_cols, q_squared_col=None,
     else:
         stats_df_reliable = stats_df[stats_df['reliable']].reset_index(drop=True)
 
+    # Statistics before any refinement / point removal (kept for provenance and JADE parity)
+    stats_df_pre_refinement = stats_df_reliable.copy()
+    n_reassigned_total = 0
+    silhouette_before_refinement = None
+    silhouette_after_refinement = None
+    stats_need_refresh = False
+
     # Step 3.5: Silhouette / z-score analysis on reliable populations only
     silhouette_scores = None
     need_silhouette = (clustering_strategy == 'silhouette_refined' or uncertainty_flags)
@@ -267,6 +276,7 @@ def cluster_all_gammas(data_df, gamma_cols, q_squared_col=None,
                         if answer == 'y':
                             gammas_df_reliable = gammas_df_reliable[
                                 ~gammas_df_reliable['uncertain']].copy()
+                            stats_need_refresh = True
                             print(f"→ Removed {n_uncertain} outlier points.")
                         else:
                             print("\n→ Keeping all data (outliers flagged but not removed)")
@@ -286,17 +296,21 @@ def cluster_all_gammas(data_df, gamma_cols, q_squared_col=None,
             # Step 3.6: Silhouette-based refinement
             if clustering_strategy == 'silhouette_refined':
                 print("SILHOUETTE-BASED REFINEMENT")
+                silhouette_before_refinement = float(np.mean(silhouette_scores))
                 n_reassigned = _refine_clusters_with_silhouette(
                     gammas_df_reliable, silhouette_threshold, normalize_by_q2
                 )
+                n_reassigned_total = int(n_reassigned)
                 if n_reassigned > 0:
                     print(f"→ Reassigned {n_reassigned} points")
                     rel_labels = gammas_df_reliable['cluster'].values
                     silhouette_scores = _calculate_silhouette_scores(gammas_df_reliable, rel_labels)
                     gammas_df_reliable['silhouette'] = silhouette_scores
                     print(f"Silhouette after refinement: {np.mean(silhouette_scores):.3f}")
+                    stats_need_refresh = True
                 else:
                     print("→ No reassignments needed")
+                silhouette_after_refinement = float(np.mean(silhouette_scores))
 
             # Step 3.7: Uncertainty flagging on reliable points
             if uncertainty_flags:
@@ -349,6 +363,8 @@ def cluster_all_gammas(data_df, gamma_cols, q_squared_col=None,
                         new_labels = _simple_threshold_clustering(
                             gammas_df_clean, distance_threshold=distance_threshold
                         )
+                    new_labels = _relabel_by_value(
+                        new_labels, gammas_df_clean['log_clustering_val'].values)
                     gammas_df_clean['cluster'] = new_labels
 
                     # Recalculate stats
@@ -374,6 +390,7 @@ def cluster_all_gammas(data_df, gamma_cols, q_squared_col=None,
 
                     gammas_df_reliable = gammas_df_clean
                     stats_df_reliable  = pd.DataFrame(population_stats_clean)
+                    stats_need_refresh = False  # stats were just recalculated above
                     n_reliable_populations = len(stats_df_reliable)
                     reliable_cluster_ids = sorted(
                         stats_df_reliable['cluster_id'].tolist()
@@ -390,6 +407,16 @@ def cluster_all_gammas(data_df, gamma_cols, q_squared_col=None,
                 else:
                     print("\n→ Keeping all data (uncertain points flagged but not removed)")
 
+    # Step 3.95: Points were reassigned/removed -> recompute statistics from the final
+    # assignment. Which populations are reliable stays as decided before refinement
+    # (abundance is reported, not re-checked); only emptied populations drop out.
+    if stats_need_refresh and n_reliable_populations > 0:
+        stats_df_reliable = _compute_population_stats(
+            gammas_df_reliable, reliable_cluster_ids, len(data_df), normalize_by_q2
+        )
+        reliable_cluster_ids = stats_df_reliable['cluster_id'].tolist()
+        n_reliable_populations = len(reliable_cluster_ids)
+
     # Step 4: Reassign reliable gammas to population columns
     # Remap reliable cluster_ids to sequential 1, 2, 3, ... population numbers
     cluster_id_to_pop = {cid: i + 1 for i, cid in enumerate(reliable_cluster_ids)}
@@ -401,7 +428,8 @@ def cluster_all_gammas(data_df, gamma_cols, q_squared_col=None,
             clustered_df[f'uncertain_pop{pop_num}'] = np.nan
         clustered_df[f'outlier_pop{pop_num}'] = pd.array([pd.NA] * len(clustered_df), dtype='boolean')
 
-    #fill reliable points
+    #fill reliable points (first come: a file keeps only its first peak per population)
+    n_dropped_per_pop = {pop_num: 0 for pop_num in cluster_id_to_pop.values()}
     for _, row in gammas_df_reliable.iterrows():
         file_idx   = row['file_idx']
         cluster_id = row['cluster']
@@ -412,8 +440,18 @@ def cluster_all_gammas(data_df, gamma_cols, q_squared_col=None,
         if pd.isna(clustered_df.loc[file_idx, pop_col]):
             clustered_df.loc[file_idx, pop_col] = row['gamma']
             if uncertainty_flags and 'uncertain' in row:
-                clustered_df.loc[file_idx, f'uncertain_pop{pop_num}'] = row['uncertain']
+                # float column (NaN = no value): pandas >= 3 rejects bool here
+                clustered_df.loc[file_idx, f'uncertain_pop{pop_num}'] = float(row['uncertain'])
             clustered_df.loc[file_idx, f'outlier_pop{pop_num}'] = False
+        else:
+            n_dropped_per_pop[pop_num] += 1
+
+    population_n_dropped = [n_dropped_per_pop[p] for p in sorted(n_dropped_per_pop)]
+    n_dropped_points = int(sum(population_n_dropped))
+    if n_dropped_points > 0:
+        print(f"WARNING: {n_dropped_points} point(s) dropped from the gamma_pop columns "
+              f"(a file has more than one peak in the same population; only the first "
+              f"is kept, statistics use all points): {population_n_dropped}")
 
     #mark outlier points in output
     for _, row in gammas_df[gammas_df['outlier']].iterrows():
@@ -493,6 +531,12 @@ def cluster_all_gammas(data_df, gamma_cols, q_squared_col=None,
         'gammas_df'               : gammas_df_reliable,
         'cluster_id_to_pop'       : cluster_id_to_pop,
         'clustering_plot'         : clustering_fig,
+        'n_dropped_points'        : n_dropped_points,
+        'population_n_dropped'    : population_n_dropped,
+        'population_stats_pre_refinement': stats_df_pre_refinement,
+        'n_reassigned'            : n_reassigned_total,
+        'silhouette_before_refinement': silhouette_before_refinement,
+        'silhouette_after_refinement' : silhouette_after_refinement,
     }
 
     if normalize_by_q2 and not stats_df_reliable.empty and 'mean_D' in stats_df_reliable.columns:
@@ -511,11 +555,49 @@ def cluster_all_gammas(data_df, gamma_cols, q_squared_col=None,
 
     return clustered_df, cluster_info
 
+#renumber cluster labels 0..k-1 by ascending mean of values (deterministic, pop1 = smallest)
+def _relabel_by_value(labels, values):
+    labels = np.asarray(labels)
+    values = np.asarray(values, dtype=float)
+    ids = np.unique(labels)
+    order = np.argsort([values[labels == cid].mean() for cid in ids], kind='stable')
+    mapping = {ids[i]: new for new, i in enumerate(order)}
+    return np.array([mapping[label] for label in labels], dtype=int)
+
+#population statistics of the given clusters from the current point assignment
+def _compute_population_stats(points_df, cluster_ids, n_files_total, normalize_by_q2):
+    rows = []
+    for cluster_id in cluster_ids:
+        pts = points_df[points_df['cluster'] == cluster_id]
+        if pts.empty:
+            continue
+        files = pts['filename'].unique()
+        row = {
+            'cluster_id' : cluster_id,
+            'n_gammas'   : len(pts),
+            'n_files'    : len(files),
+            'abundance'  : len(files) / n_files_total,
+            'mean_gamma' : np.exp(np.mean(np.log(pts['gamma']))),
+            'std_gamma'  : np.std(pts['gamma']),
+            'reliable'   : True,
+            'status'     : "RELIABLE",
+        }
+        if normalize_by_q2:
+            row['mean_D'] = np.exp(np.mean(np.log(pts['D'])))
+            row['std_D']  = np.std(pts['D'])
+        rows.append(row)
+    return pd.DataFrame(rows)
+
 #perform hierarchical clustering on gamma values
 def _hierarchical_clustering(gammas_df, n_clusters='auto',
                              distance_threshold=0.3, normalize_by_q2=False, plot=True):
     #prepare data for clustering (use log_clustering_val which is either log(Γ) or log(D))
     X = gammas_df['log_clustering_val'].values.reshape(-1, 1)
+
+    #a single point is one population (scipy linkage needs >= 2 observations)
+    if len(X) < 2:
+        print("\nOnly one data point: single population, no linkage computed")
+        return np.zeros(len(X), dtype=int), None
 
     #perform hierarchical clustering
     linkage_matrix = linkage(X, method='ward')

@@ -111,3 +111,6 @@ minversion = "7.0"
 addopts = "-ra -q --strict-markers"
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+    "slow: tests that take more than a few seconds (e.g. NNLS/Regularized fits); deselect with -m \"not slow\"",
+]

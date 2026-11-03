@@ -185,11 +185,16 @@ def _extract_analysis_section(export_type: str, analyzer, method_tag: str = None
         section['method'] = 'Cumulants Method D (multi-exponential decomposition)'
         section['parameters'] = _safe_json(getattr(analyzer, 'method_d_params', None))
         ci = getattr(analyzer, 'method_d_cluster_info', None) or {}
-        section['summary'] = _safe_json({
+        summary = {
             k: v for k, v in ci.items()
-            if k not in ('population_stats', 'gammas_df', 'clustering_plot',
-                         'cluster_id_to_pop')
-        })
+            if k not in ('population_stats', 'population_stats_pre_refinement',
+                         'gammas_df', 'clustering_plot', 'cluster_id_to_pop')
+        }
+        pre_stats = ci.get('population_stats_pre_refinement')
+        if hasattr(pre_stats, 'to_dict'):
+            # statistics before silhouette refinement (JADE-parity reference)
+            summary['population_stats_pre_refinement'] = pre_stats.to_dict('records')
+        section['summary'] = _safe_json(summary)
 
     return section
 
