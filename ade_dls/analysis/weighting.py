@@ -61,7 +61,7 @@ Typical usage in ADE-DLS (ported from the JADE-DLS notebook, where this
 ran as a cell right after noise correction, before any fitting cells)
 ------------------------------------------------------------------------
 Weights are computed ONCE per loaded/filtered dataset, in
-`ade_dls.gui.core.correlation_preprocessing.preprocess_correlations()`,
+`ade_dls.engine.correlation_preprocessing.preprocess_correlations()`,
 right after `process_correlation_data()` and any noise correction:
 
     weights_dict = compute_weights_for_all(processed_correlations, df_basedata)

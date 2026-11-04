@@ -235,7 +235,7 @@ class RegularizedResultsDialog(QDialog):
                 intercept_text += f" (±{_fmt(intercept_se_val, '.1e')})"
             intercept_item = QTableWidgetItem(intercept_text)
             intercept_item.setTextAlignment(Qt.AlignCenter)
-            from ade_dls.gui.core.quality_assessment import intercept_assessment
+            from ade_dls.engine.quality_assessment import intercept_assessment
             status, color = intercept_assessment(intercept_val, intercept_se_val)
             intercept_item.setToolTip(status)
             if color:

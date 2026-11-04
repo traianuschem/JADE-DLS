@@ -1376,10 +1376,10 @@ class AnalysisView(QWidget):
     def _on_export_current_plot_csv(self):
         """Export every data series of the currently displayed plot as separate CSV files."""
         from PyQt5.QtWidgets import QFileDialog, QMessageBox
-        from ade_dls.gui.export.plot_series_export import (
+        from ade_dls.engine.export.plot_series_export import (
             extract_plot_series, series_to_tables, describe_series,
         )
-        from ade_dls.gui.export.csv_export import (
+        from ade_dls.engine.export.csv_export import (
             write_tables, build_export_metadata, write_metadata,
             register_outputs_in_provenance, _safe_filename,
         )

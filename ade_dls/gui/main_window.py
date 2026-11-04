@@ -60,7 +60,7 @@ class JADEDLSMainWindow(QMainWindow):
         self.loaded_data = None
 
         # Noise-correction parameters set by CorrelationFilterDialog, applied
-        # once in _preprocess_and_store() (see gui/core/correlation_preprocessing.py)
+        # once in _preprocess_and_store() (see engine/correlation_preprocessing.py)
         self._pending_noise_params = None
 
         # Setup UI
@@ -405,21 +405,13 @@ class JADEDLSMainWindow(QMainWindow):
         so a re-filter never carries a stale processed-correlations cache
         forward.
         """
-        from ade_dls.gui.core.correlation_preprocessing import preprocess_correlations
+        from ade_dls.engine.series import preprocess_series
         from ade_dls.gui.core.pipeline import AnalysisStep
 
-        correlations = data.get('correlations')
-        if not correlations:
+        outcome = preprocess_series(data, self._pending_noise_params)
+        if outcome is None:
             return
-
-        processed, weights, reason = preprocess_correlations(
-            correlations, data.get('basedata'), self._pending_noise_params)
-
-        data['processed_correlations'] = processed
-        data['weights'] = weights
-        data['weighting_available'] = weights is not None
-        data['weighting_unavailable_reason'] = reason
-        data['noise_params'] = self._pending_noise_params
+        processed, weights, reason = outcome
 
         weighting_step_code = """
 # Noise weighting (Biganzoli & Ferri, Opt. Express 26, 29375, 2018):
@@ -487,7 +479,7 @@ weights_dict = compute_weights_for_all(processed_correlations, df_basedata)
             )
             return None
 
-        from .analysis.cumulant_analyzer import CumulantAnalyzer
+        from ade_dls.engine.cumulant_analyzer import CumulantAnalyzer
         analyzer = CumulantAnalyzer(working_data, working_data['data_folder'])
 
         # NOTE: noise correction is no longer applied here -- it already
@@ -1246,32 +1238,8 @@ print(f"Extracted correlations from {len(correlations_data)} files")
         Args:
             data_dict: Dictionary containing 'df_basedata' key
         """
-        from scipy.constants import k  # Boltzmann constant
-
-        df_basedata = data_dict['df_basedata']
-
-        # Calculate mean and error for temperature and viscosity
-        mean_temperature = df_basedata['temperature [K]'].mean()
-        std_temperature = df_basedata['temperature [K]'].std()
-
-        mean_viscosity = df_basedata['viscosity [cp]'].mean()
-        std_viscosity = df_basedata['viscosity [cp]'].std()
-
-        # Calculate c [ c = kb*T/(6*pi*eta) ]
-        c = (k * mean_temperature) / (6 * np.pi * mean_viscosity * 1e-3)
-
-        # Calculate error in c
-        fractional_error_c = np.sqrt(
-            (std_temperature / mean_temperature)**2 +
-            (std_viscosity / mean_viscosity)**2
-        )
-        delta_c = fractional_error_c * c
-
-        # Store in data_dict as Series to maintain compatibility
-        data_dict['c'] = pd.Series([c])
-        data_dict['delta_c'] = pd.Series([delta_c])
-
-        print(f"[C calculation] c = {c:.4e} +/- {delta_c:.4e} (rel. error: {(delta_c/c):.4%})")
+        from ade_dls.engine.series import calculate_c_and_delta_c
+        calculate_c_and_delta_c(data_dict)
 
     def _add_basedata_calculation_to_pipeline(self):
         """
@@ -1814,7 +1782,7 @@ print(method_d_results)
             processed_corr = working_data.get('processed_correlations')
             raw_corr = working_data.get('correlations', None) if processed_corr is None else None
 
-            from .analysis.laplace_analyzer import LaplaceAnalyzer
+            from ade_dls.engine.laplace_analyzer import LaplaceAnalyzer
             self.laplace_analyzer = LaplaceAnalyzer(
                 processed_correlations=processed_corr,
                 df_basedata=working_data['df_basedata'],
@@ -2029,7 +1997,7 @@ print(method_d_results)
             processed_corr = working_data.get('processed_correlations')
             raw_corr = working_data.get('correlations', None) if processed_corr is None else None
 
-            from .analysis.laplace_analyzer import LaplaceAnalyzer
+            from ade_dls.engine.laplace_analyzer import LaplaceAnalyzer
             self.laplace_analyzer = LaplaceAnalyzer(
                 processed_correlations=processed_corr,
                 df_basedata=working_data['df_basedata'],

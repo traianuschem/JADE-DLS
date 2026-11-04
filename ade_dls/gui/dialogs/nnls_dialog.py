@@ -813,7 +813,7 @@ class NNLSDialog(QDialog):
         distance_threshold × min_abundance parameter sweep heatmap.
         """
         from ade_dls.analysis.clustering import clustering_parameter_sweep
-        from ade_dls.gui.analysis.cumulant_plotting import plot_clustering_heatmap
+        from ade_dls.engine.cumulant_plotting import plot_clustering_heatmap
         from ade_dls.analysis.regularized_optimized import calculate_decay_rates
         from PyQt5.QtWidgets import QDialog, QVBoxLayout, QApplication
         from matplotlib.backends.backend_qt5agg import (FigureCanvasQTAgg,

@@ -17,7 +17,7 @@ from PyQt5.QtWidgets import (
     QMessageBox, QPushButton, QTextEdit, QToolButton, QVBoxLayout, QWidget,
 )
 
-from ..core.provenance import ProvenanceRecord
+from ade_dls.engine.provenance import ProvenanceRecord
 
 
 # ---------------------------------------------------------------------------

@@ -165,7 +165,7 @@ class CumulantResultsDialog(QDialog):
                 intercept_se = _get(row, 'intercept_se')
                 seg.append(f"Intercept = {intercept:.3g}"
                            + (f" ± {intercept_se:.2g}" if intercept_se is not None else ""))
-                from ade_dls.gui.core.quality_assessment import intercept_assessment
+                from ade_dls.engine.quality_assessment import intercept_assessment
                 status, _color = intercept_assessment(intercept, intercept_se)
                 seg.append(status)
 

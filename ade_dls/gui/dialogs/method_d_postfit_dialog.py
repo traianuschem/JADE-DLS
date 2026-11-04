@@ -279,7 +279,7 @@ class MethodDPostFitDialog(QDialog):
     def _show_parameter_sweep_heatmap(self):
         """Run a distance_threshold × min_abundance sweep and display heatmaps."""
         from ade_dls.analysis.clustering import clustering_parameter_sweep
-        from ade_dls.gui.analysis.cumulant_plotting import plot_clustering_heatmap
+        from ade_dls.engine.cumulant_plotting import plot_clustering_heatmap
         from PyQt5.QtWidgets import QDialog, QVBoxLayout, QApplication
         from matplotlib.backends.backend_qt5agg import (FigureCanvasQTAgg,
                                                          NavigationToolbar2QT)
