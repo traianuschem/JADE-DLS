@@ -17,7 +17,7 @@ from typing import Any, Callable, Dict, Optional, Tuple
 
 import numpy as np
 
-from ade_dls.engine import filtering, laplace_runs, refinement
+from ade_dls.engine import filtering, laplace_runs, refinement, sls_run
 from ade_dls.engine.loading import DataLoadError, SeriesLoader  # noqa: F401  (DataLoadError re-exported)
 from ade_dls.engine.series import preprocess_series
 
@@ -25,7 +25,7 @@ __all__ = [
     "DataLoadError", "load_series", "exclude_files", "preprocess_series", "cumulant_analyzer", "laplace_analyzer",
     "run_cumulant_a", "run_cumulant_b", "run_cumulant_c", "run_cumulant_d",
     "refine_cumulant_b", "refine_cumulant_c", "refine_cumulant_d", "run_nnls",
-    "run_regularized", "nnls_defaults", "regularized_defaults", "method_d_defaults",
+    "run_regularized", "run_sls", "nnls_defaults", "regularized_defaults", "method_d_defaults",
 ]
 
 
@@ -212,3 +212,14 @@ def run_regularized(data, params: Optional[Dict[str, Any]] = None, use_multiproc
     p = _merged(regularized_defaults(), params)
     laplace_runs.execute_regularized(analyzer, p, use_multiprocessing)
     return analyzer, p
+
+
+def run_sls(analyzer, n_populations: int = 1, q2_range=None, exponent: int = 6,
+            folder: Optional[str] = None):
+    """Population-resolved SLS analysis (Guinier extrapolation) on the Regularized results of
+    ``analyzer`` from ``run_regularized``. Intensity data are read from the files named in the
+    analyzer's basedata (or from the ``.asc`` files in ``folder``). Returns the summary DataFrame."""
+    if not sls_run.load_intensity(analyzer, folder):
+        raise ValueError("No intensity data available: basedata names no readable files and "
+                         "no valid folder with .asc files was given")
+    return analyzer.run_sls_analysis(n_populations=n_populations, q2_range=q2_range, exponent=exponent)

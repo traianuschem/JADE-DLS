@@ -12,6 +12,8 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont, QColor
 import pandas as pd
 import numpy as np
+from ade_dls.engine.sls_run import (asc_files_in_folder, format_sls_cell,
+                                    is_qrg_warning, run_sls)
 
 
 class RegularizedResultsDialog(QDialog):
@@ -554,8 +556,6 @@ class RegularizedResultsDialog(QDialog):
 
     def _sls_load_intensity(self):
         """Slot: open folder dialog, load intensity data from ALV files."""
-        import os
-
         folder = QFileDialog.getExistingDirectory(
             self, "Select folder with ALV .ASC files", "",
             QFileDialog.ShowDirsOnly
@@ -563,12 +563,7 @@ class RegularizedResultsDialog(QDialog):
         if not folder:
             return
 
-        # Collect .ASC files
-        file_paths = [
-            os.path.join(folder, f)
-            for f in os.listdir(folder)
-            if f.lower().endswith('.asc')
-        ]
+        file_paths = asc_files_in_folder(folder)
 
         if not file_paths:
             QMessageBox.warning(self, "No Files Found",
@@ -596,17 +591,8 @@ class RegularizedResultsDialog(QDialog):
         q2_max = self.sls_q2_max.value()
         exponent = self.sls_exponent_spin.value()
 
-        q2_range = None
-        if q2_min > 0 or q2_max > 0:
-            q2_range = (q2_min if q2_min > 0 else 0.0,
-                        q2_max if q2_max > 0 else float('inf'))
-
         try:
-            summary_df = self.laplace_analyzer.run_sls_analysis(
-                n_populations=n_pop,
-                q2_range=q2_range,
-                exponent=exponent,
-            )
+            summary_df = run_sls(self.laplace_analyzer, n_pop, q2_min, q2_max, exponent)
             self._sls_update_plot()
             self._sls_populate_table(summary_df)
             self.sls_status_label.setText("✅ SLS analysis complete.")
@@ -645,28 +631,13 @@ class RegularizedResultsDialog(QDialog):
         self.sls_summary_table.setColumnCount(len(df.columns))
         self.sls_summary_table.setHorizontalHeaderLabels(list(df.columns))
 
-        def _fmt(val):
-            if pd.isna(val):
-                return '—'
-            try:
-                f = float(val)
-                if abs(f) < 0.01 or abs(f) > 1e4:
-                    return f'{f:.4e}'
-                return f'{f:.4f}'
-            except (TypeError, ValueError):
-                return str(val)
-
         for r, (_, row) in enumerate(df.iterrows()):
             for c, col in enumerate(df.columns):
-                item = QTableWidgetItem(_fmt(row[col]))
+                item = QTableWidgetItem(format_sls_cell(row[col]))
                 item.setTextAlignment(Qt.AlignCenter)
                 # Colour qRg_max > 1.3 warning
-                if col == 'qRg_max':
-                    try:
-                        if float(row[col]) > 1.3:
-                            item.setBackground(QColor('#FFB6C1'))
-                    except (TypeError, ValueError):
-                        pass
+                if is_qrg_warning(col, row[col]):
+                    item.setBackground(QColor('#FFB6C1'))
                 self.sls_summary_table.setItem(r, c, item)
 
     def _sls_export_csv(self):

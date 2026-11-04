@@ -20,6 +20,8 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.patches import Rectangle
 import numpy as np
+from ade_dls.engine.sls_run import (asc_files_in_folder, format_sls_cell, intensity_file_paths,
+                                    is_qrg_warning, run_sls)
 import pandas as pd
 
 
@@ -1262,8 +1264,6 @@ class LaplacePostFitRefinementDialog(QDialog):
           2. df_basedata has a 'folder' column (added by data_loader >= this version)
           3. df_basedata has no 'folder' → fall back to a QFileDialog
         """
-        import os
-
         # 1. Already loaded from a previous run
         if self.analyzer.df_intensity is not None:
             n = len(self.analyzer.df_intensity)
@@ -1278,15 +1278,7 @@ class LaplacePostFitRefinementDialog(QDialog):
             return
 
         # 2. Build file paths from df_basedata['folder'] + df_basedata['filename']
-        file_paths = []
-        if 'folder' in df_base.columns:
-            for _, row in df_base.drop_duplicates(subset=['filename']).iterrows():
-                folder = str(row.get('folder', '') or '')
-                fname  = str(row.get('filename', '') or '')
-                if folder and fname:
-                    fp = os.path.join(folder, fname)
-                    if os.path.isfile(fp):
-                        file_paths.append(fp)
+        file_paths = intensity_file_paths(df_base)
 
         # 3. Fallback: ask the user for the folder
         if not file_paths:
@@ -1301,11 +1293,7 @@ class LaplacePostFitRefinementDialog(QDialog):
             )
             if not folder:
                 return
-            file_paths = [
-                os.path.join(folder, f)
-                for f in os.listdir(folder)
-                if f.lower().endswith('.asc')
-            ]
+            file_paths = asc_files_in_folder(folder)
             if not file_paths:
                 self._sls_status_label.setText("⚠ No .ASC files found in selected folder.")
                 return
@@ -1332,17 +1320,8 @@ class LaplacePostFitRefinementDialog(QDialog):
         q2_max = self._sls_q2_max.value()
         exponent = self._sls_exponent_spin.value()
 
-        q2_range = None
-        if q2_min > 0 or q2_max > 0:
-            q2_range = (q2_min if q2_min > 0 else 0.0,
-                        q2_max if q2_max > 0 else float('inf'))
-
         try:
-            summary_df = self.analyzer.run_sls_analysis(
-                n_populations=n_pop,
-                q2_range=q2_range,
-                exponent=exponent,
-            )
+            summary_df = run_sls(self.analyzer, n_pop, q2_min, q2_max, exponent)
             self._sls_update_plot()
             self._sls_populate_table(summary_df)
             self._sls_status_label.setText("✅ SLS analysis complete.")
@@ -1380,27 +1359,12 @@ class LaplacePostFitRefinementDialog(QDialog):
         self._sls_summary_table.setColumnCount(len(df.columns))
         self._sls_summary_table.setHorizontalHeaderLabels(list(df.columns))
 
-        def _fmt(val):
-            if pd.isna(val):
-                return '—'
-            try:
-                f = float(val)
-                if abs(f) < 0.01 or abs(f) > 1e4:
-                    return f'{f:.4e}'
-                return f'{f:.4f}'
-            except (TypeError, ValueError):
-                return str(val)
-
         for r, (_, row) in enumerate(df.iterrows()):
             for c, col in enumerate(df.columns):
-                item = QTableWidgetItem(_fmt(row[col]))
+                item = QTableWidgetItem(format_sls_cell(row[col]))
                 item.setTextAlignment(Qt.AlignCenter)
-                if col == 'qRg_max':
-                    try:
-                        if float(row[col]) > 1.3:
-                            item.setBackground(QColor('#FFB6C1'))
-                    except (TypeError, ValueError):
-                        pass
+                if is_qrg_warning(col, row[col]):
+                    item.setBackground(QColor('#FFB6C1'))
                 self._sls_summary_table.setItem(r, c, item)
 
     def _sls_export_csv(self):
