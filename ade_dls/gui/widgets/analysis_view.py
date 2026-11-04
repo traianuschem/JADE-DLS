@@ -2177,12 +2177,10 @@ class AnalysisView(QWidget):
                 excluded_files_d = ref_params.get('excluded_files', [])
 
                 # Apply fit exclusion: remove excluded files from method_d_data before re-clustering
-                if excluded_files_d and hasattr(self.cumulant_analyzer, 'method_d_data') \
-                        and self.cumulant_analyzer.method_d_data is not None:
+                if excluded_files_d and getattr(self.cumulant_analyzer, 'method_d_data', None) is not None:
                     print(f"  Excluding {len(excluded_files_d)} file(s) from Method D data")
-                    self.cumulant_analyzer.method_d_data = self.cumulant_analyzer.method_d_data[
-                        ~self.cumulant_analyzer.method_d_data['filename'].isin(excluded_files_d)
-                    ].reset_index(drop=True)
+                    from ade_dls.engine.refinement import exclude_files_from_method_d
+                    exclude_files_from_method_d(self.cumulant_analyzer, excluded_files_d)
 
                 result_d = self.cumulant_analyzer.refine_method_d(
                     clustering_params=ref_params.get('clustering'),
@@ -2603,70 +2601,6 @@ class AnalysisView(QWidget):
         Returns:
             Tuple (result_df, refinement_stats) or None on error.
         """
-        import numpy as np
-
-        analyzer = self.cumulant_analyzer
-        if not hasattr(analyzer, 'method_c_fit') or analyzer.method_c_fit is None:
-            print("[ERROR] No Method C data available")
-            return None
-
-        # Build included_files (complement of excluded)
-        all_files = analyzer.method_c_fit['filename'].unique().tolist()
-        included_files = [f for f in all_files if f not in (excluded_fits or [])]
-
-        if len(included_files) < 2:
-            print("[ERROR] Too few files remaining after exclusion")
-            return None
-
-        try:
-            result = analyzer.recompute_method_c_diffusion(included_files, q_range)
-        except Exception as e:
-            print(f"[ERROR] recompute_method_c_diffusion failed: {e}")
-            return None
-
-        # Read actual data points and contributing files (set by recompute_method_c_diffusion)
-        n_data_points     = getattr(analyzer, 'method_c_recompute_n_points', None)
-        n_files_in_range  = getattr(analyzer, 'method_c_recompute_n_files_in_range', None)
-
-        # --- Add refinement metadata columns ---
-        n_total    = len(all_files)
-        n_included = len(included_files)
-        n_excluded = n_total - n_included
-        result['N files (total)']    = [n_total]
-        result['N files (included)'] = [n_included]
-        result['N files (excluded)'] = [n_excluded]
-        q_str = (f"{q_range[0]:.3e} – {q_range[1]:.3e} nm⁻²"
-                 if q_range is not None else "Full range")
-        result['q-range applied'] = [q_str]
-
-        # --- Add original results for comparison ---
-        orig = getattr(analyzer, 'method_c_results', None)
-        if orig is not None and not orig.empty:
-            result['Original Rh [nm]']  = [orig['Rh [nm]'].iloc[0]
-                                            if 'Rh [nm]' in orig.columns else np.nan]
-            result['Original D [m²/s]'] = [orig['D [m²/s]'].iloc[0]
-                                            if 'D [m²/s]' in orig.columns else np.nan]
-            result['Original R²']       = [orig['R_squared'].iloc[0]
-                                            if 'R_squared' in orig.columns else np.nan]
-
-        # --- Build regression_stats dict for HTML detail ---
-        refinement_stats = dict(getattr(analyzer, 'method_c_regression_stats', {}) or {})
-        refinement_stats['refinement_info'] = {
-            'n_total':        n_total,
-            'n_included':     n_included,
-            'n_excluded':     n_excluded,
-            'n_data_points':    n_data_points,     # actual (q², Γ) pairs in OLS regression
-            'n_files_in_range': n_files_in_range,  # unique files with data within q-range
-            'excluded_files': excluded_fits or [],
-            'q_range':        q_range,
-            'q_range_str':    q_str,
-            'original_rh':    float(orig['Rh [nm]'].iloc[0])
-                              if orig is not None and 'Rh [nm]' in orig.columns else None,
-            'original_d':     float(orig['D [m²/s]'].iloc[0])
-                              if orig is not None and 'D [m²/s]' in orig.columns else None,
-            'original_r2':    float(orig['R_squared'].iloc[0])
-                              if orig is not None and 'R_squared' in orig.columns else None,
-        }
-
-        return result, refinement_stats
+        from ade_dls.engine.refinement import refine_method_c
+        return refine_method_c(self.cumulant_analyzer, q_range, excluded_fits)
 

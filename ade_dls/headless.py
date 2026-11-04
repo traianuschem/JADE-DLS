@@ -17,13 +17,14 @@ from typing import Any, Callable, Dict, Optional, Tuple
 
 import numpy as np
 
-from ade_dls.engine import filtering
+from ade_dls.engine import filtering, refinement
 from ade_dls.engine.loading import DataLoadError, SeriesLoader  # noqa: F401  (DataLoadError re-exported)
 from ade_dls.engine.series import calculate_c_and_delta_c, preprocess_series
 
 __all__ = [
     "DataLoadError", "load_series", "exclude_files", "preprocess_series", "cumulant_analyzer", "laplace_analyzer",
-    "run_cumulant_a", "run_cumulant_b", "run_cumulant_c", "run_cumulant_d", "run_nnls",
+    "run_cumulant_a", "run_cumulant_b", "run_cumulant_c", "run_cumulant_d",
+    "refine_cumulant_b", "refine_cumulant_c", "refine_cumulant_d", "run_nnls",
     "run_regularized", "nnls_defaults", "regularized_defaults", "method_d_defaults",
 ]
 
@@ -164,6 +165,29 @@ def run_cumulant_d(data, params: Optional[Dict[str, Any]] = None, q_range=None,
     analyzer = cumulant_analyzer(data)
     analyzer.use_weighting = use_weighting
     return analyzer, analyzer.run_method_d(_merged(method_d_defaults(), params), q_range=q_range)
+
+
+# ----------------------------------------------------------------------------- post-fit refinement
+def refine_cumulant_b(analyzer, q_range=None, excluded_files=None):
+    """Re-fit the Method B diffusion regression for a q^2 range / without ``excluded_files``
+    (as the GUI post-fit refinement). Needs ``analyzer`` from run_cumulant_b."""
+    return analyzer.refine_method_b(q_range=q_range, excluded_files=excluded_files or None)
+
+
+def refine_cumulant_c(analyzer, q_range=None, excluded_fits=None):
+    """Method C post-fit refinement: ``(result_df, refinement_stats)`` or ``None`` (see
+    ade_dls.engine.refinement.refine_method_c). Needs ``analyzer`` from run_cumulant_c."""
+    return refinement.refine_method_c(analyzer, q_range, excluded_fits)
+
+
+def refine_cumulant_d(analyzer, clustering_params=None, mode_params=None, combined_q_range=None,
+                      excluded_files=None):
+    """Method D post-fit refinement: files in ``excluded_files`` are removed before re-clustering.
+    Needs ``analyzer`` from run_cumulant_d. Returns the updated results DataFrame."""
+    refinement.exclude_files_from_method_d(analyzer, excluded_files)
+    return analyzer.refine_method_d(clustering_params=clustering_params,
+                                    mode_params=mode_params or None,
+                                    combined_q_range=combined_q_range)
 
 
 # ----------------------------------------------------------------------------- Laplace
