@@ -17,11 +17,12 @@ from typing import Any, Callable, Dict, Optional, Tuple
 
 import numpy as np
 
+from ade_dls.engine import filtering
 from ade_dls.engine.loading import DataLoadError, SeriesLoader  # noqa: F401  (DataLoadError re-exported)
 from ade_dls.engine.series import calculate_c_and_delta_c, preprocess_series
 
 __all__ = [
-    "DataLoadError", "load_series", "preprocess_series", "cumulant_analyzer", "laplace_analyzer",
+    "DataLoadError", "load_series", "exclude_files", "preprocess_series", "cumulant_analyzer", "laplace_analyzer",
     "run_cumulant_a", "run_cumulant_b", "run_cumulant_c", "run_cumulant_d", "run_nnls",
     "run_regularized", "nnls_defaults", "regularized_defaults", "method_d_defaults",
 ]
@@ -104,6 +105,19 @@ def load_series(folder: str, parser=None, *, noise_params: Optional[dict] = None
     if preprocess and data and data.get('correlations'):
         preprocess_series(data, noise_params)
     return data
+
+
+def exclude_files(data: Dict[str, Any], files, noise_params: Optional[dict] = None) -> list:
+    """Remove measurements (labels as in ``data['basedata']['filename']``) from ``data`` in place
+    -- count rates, correlations, basedata -- and recompute the processed correlations and noise
+    weights, like the GUI filter dialogs. Derived tables (df_basedata, c, delta_c) are dropped so
+    that the next analysis rebuilds them. ``noise_params`` defaults to those used at load time.
+    Returns the labels that were present and removed."""
+    removed = filtering.exclude_files(data, files)
+    for key in ('df_basedata', 'c', 'delta_c'):
+        data.pop(key, None)
+    preprocess_series(data, noise_params if noise_params is not None else data.get('noise_params'))
+    return removed
 
 
 # ----------------------------------------------------------------------------- cumulants

@@ -9,6 +9,8 @@ import os
 import numpy as np
 import pandas as pd
 
+from ade_dls.engine import filtering
+
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QSplitter, QMenuBar, QAction, QStatusBar,
                              QMessageBox, QFileDialog, QTabWidget, QProgressBar)
@@ -942,8 +944,7 @@ print(f"Extracted correlations from {len(correlations_data)} files")
                 excluded_count = len(data['countrates']) - len(filtered_countrates)
 
                 # Track which files were excluded for reproducibility
-                excluded_files = [f for f in data['countrates'].keys()
-                                 if f not in filtered_countrates]
+                excluded_files = filtering.excluded_files(data['countrates'], filtered_countrates)
 
                 # Add filter step to pipeline
                 self.pipeline.add_filter_step(
@@ -968,8 +969,7 @@ print(f"Extracted correlations from {len(correlations_data)} files")
             self.status_manager.start_operation("Filtering correlations")
 
             # Only show correlations that weren't excluded in countrate step
-            correlations_to_filter = {k: v for k, v in data['correlations'].items()
-                                     if k in filtered_data.get('countrates', data['correlations']).keys()}
+            correlations_to_filter = filtering.correlations_to_filter(data, filtered_data)
 
             correlation_dialog = CorrelationFilterDialog(correlations_to_filter, self)
             result = correlation_dialog.exec_()
@@ -984,8 +984,7 @@ print(f"Extracted correlations from {len(correlations_data)} files")
                 self._pending_noise_params = noise_params if noise_active else None
 
                 # Track which files were excluded for reproducibility
-                excluded_files = [f for f in correlations_to_filter.keys()
-                                 if f not in filtered_correlations]
+                excluded_files = filtering.excluded_files(correlations_to_filter, filtered_correlations)
 
                 # Add filter step to pipeline (include noise params if active)
                 self.pipeline.add_filter_step(
@@ -1009,16 +1008,8 @@ print(f"Extracted correlations from {len(correlations_data)} files")
                 self._pending_noise_params = None
 
         # Step 3: Update base data to match filtered correlations
-        if 'basedata' in filtered_data and 'correlations' in filtered_data:
-            import pandas as pd
-            basedata = filtered_data['basedata']
-
-            # Keep only base data for files that have correlations
-            remaining_files = list(filtered_data['correlations'].keys())
-            filtered_basedata = basedata[basedata['filename'].isin(remaining_files)]
-
-            filtered_data['basedata'] = filtered_basedata
-            filtered_data['num_files'] = len(remaining_files)
+        # (keep only base data for files that have correlations)
+        filtering.sync_basedata_to_correlations(filtered_data)
 
         # Compute processed correlations + noise correction + noise weights
         # ONCE for this (possibly filtered) dataset (JADE-DLS v3.0)
@@ -1035,31 +1026,8 @@ print(f"Extracted correlations from {len(correlations_data)} files")
         self.workflow_panel.mark_step_complete('preprocess')
 
         # Show summary
-        final_count = filtered_data.get('num_files', 0)
-        excluded_total = original_count - final_count
-
-        summary_msg = f"Filtering complete!\n\n"
-        summary_msg += f"Original files: {original_count}\n"
-        summary_msg += f"Excluded: {excluded_total}\n"
-        summary_msg += f"Final dataset: {final_count} files\n\n"
-        summary_msg += f"Base data: {len(filtered_data.get('basedata', []))} entries\n"
-        summary_msg += f"Correlations: {len(filtered_data.get('correlations', {}))} datasets\n"
-        summary_msg += f"Count rates: {len(filtered_data.get('countrates', {}))} datasets\n\n"
-
-        # Noise correction status
-        if self._pending_noise_params:
-            p = self._pending_noise_params
-            noise_lines = []
-            if p.get('baseline_correction'):
-                noise_lines.append(f"  • Baseline correction: last {p.get('baseline_pct', 5)} %")
-            if p.get('intercept_correction'):
-                noise_lines.append(f"  • Intercept correction: first {p.get('intercept_pct', 2)} %")
-            if noise_lines:
-                summary_msg += "Noise correction active:\n" + "\n".join(noise_lines)
-            else:
-                summary_msg += "Noise correction: active (no corrections selected)"
-        else:
-            summary_msg += "Noise correction: not applied"
+        summary_msg = filtering.filtering_summary(
+            original_count, filtered_data, self._pending_noise_params)
 
         self.status_manager.ready()
 
@@ -1090,26 +1058,9 @@ print(f"Extracted correlations from {len(correlations_data)} files")
             original_count = len(data['countrates'])
             excluded_count = original_count - len(filtered_countrates)
 
-            # Track excluded files for reproducibility
-            excluded_files = [f for f in data['countrates'].keys()
-                             if f not in filtered_countrates]
-
-            # Update data
-            self.pipeline.data['countrates'] = filtered_countrates
-
-            # Also filter correlations and basedata to match
-            if 'correlations' in self.pipeline.data:
-                filtered_correlations = {k: v for k, v in self.pipeline.data['correlations'].items()
-                                        if k in filtered_countrates}
-                self.pipeline.data['correlations'] = filtered_correlations
-
-            if 'basedata' in self.pipeline.data:
-                import pandas as pd
-                remaining_files = list(filtered_countrates.keys())
-                filtered_basedata = self.pipeline.data['basedata']
-                filtered_basedata = filtered_basedata[filtered_basedata['filename'].isin(remaining_files)]
-                self.pipeline.data['basedata'] = filtered_basedata
-                self.pipeline.data['num_files'] = len(remaining_files)
+            # Update data (count rates, correlations and basedata) and track excluded
+            # files for reproducibility
+            excluded_files = filtering.apply_countrate_filter(self.pipeline.data, filtered_countrates)
 
             # Add to pipeline for code export
             self.pipeline.add_filter_step(
@@ -1163,21 +1114,8 @@ print(f"Extracted correlations from {len(correlations_data)} files")
             noise_active, noise_params = correlation_dialog.get_noise_params()
             self._pending_noise_params = noise_params if noise_active else None
 
-            # Track excluded files for reproducibility
-            excluded_files = [f for f in data['correlations'].keys()
-                             if f not in filtered_correlations]
-
-            # Update data
-            self.pipeline.data['correlations'] = filtered_correlations
-
-            # Also filter basedata to match
-            if 'basedata' in self.pipeline.data:
-                import pandas as pd
-                remaining_files = list(filtered_correlations.keys())
-                filtered_basedata = self.pipeline.data['basedata']
-                filtered_basedata = filtered_basedata[filtered_basedata['filename'].isin(remaining_files)]
-                self.pipeline.data['basedata'] = filtered_basedata
-                self.pipeline.data['num_files'] = len(remaining_files)
+            # Update data (correlations and basedata) and track excluded files for reproducibility
+            excluded_files = filtering.apply_correlation_filter(self.pipeline.data, filtered_correlations)
 
             # Add to pipeline for code export (include noise params if active)
             self.pipeline.add_filter_step(
