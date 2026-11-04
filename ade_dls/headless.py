@@ -17,9 +17,9 @@ from typing import Any, Callable, Dict, Optional, Tuple
 
 import numpy as np
 
-from ade_dls.engine import filtering, refinement
+from ade_dls.engine import filtering, laplace_runs, refinement
 from ade_dls.engine.loading import DataLoadError, SeriesLoader  # noqa: F401  (DataLoadError re-exported)
-from ade_dls.engine.series import calculate_c_and_delta_c, preprocess_series
+from ade_dls.engine.series import preprocess_series
 
 __all__ = [
     "DataLoadError", "load_series", "exclude_files", "preprocess_series", "cumulant_analyzer", "laplace_analyzer",
@@ -194,24 +194,7 @@ def refine_cumulant_d(analyzer, clustering_params=None, mode_params=None, combin
 def laplace_analyzer(data: Dict[str, Any]):
     """LaplaceAnalyzer for ``data`` (completes df_basedata, c, delta_c and processed correlations
     exactly like the GUI does before opening the NNLS/Regularized dialogs)."""
-    from ade_dls.engine.laplace_analyzer import LaplaceAnalyzer
-    if not data or 'correlations' not in data or 'basedata' not in data:
-        raise ValueError("data needs 'correlations' and 'basedata'; call load_series first")
-    if 'df_basedata' not in data:
-        data['df_basedata'] = data['basedata'].copy()
-    if 'c' not in data or 'delta_c' not in data:
-        calculate_c_and_delta_c(data)
-    if data.get('processed_correlations') is None:
-        preprocess_series(data, data.get('noise_params'))
-    processed = data.get('processed_correlations')
-    return LaplaceAnalyzer(
-        processed_correlations=processed,
-        df_basedata=data['df_basedata'],
-        c=data['c'],
-        delta_c=data['delta_c'],
-        raw_correlations=data.get('correlations') if processed is None else None,
-        weights=data.get('weights'),
-    )
+    return laplace_runs.build_laplace_analyzer(data)
 
 
 def run_nnls(data, params: Optional[Dict[str, Any]] = None, use_multiprocessing: bool = False):
@@ -219,9 +202,7 @@ def run_nnls(data, params: Optional[Dict[str, Any]] = None, use_multiprocessing:
     Returns ``(laplace_analyzer, params)``; results live on the analyzer (``nnls_data`` etc.)."""
     analyzer = laplace_analyzer(data)
     p = _merged(nnls_defaults(), params)
-    analyzer.set_weighting(p.get('use_weighting', False))
-    analyzer.run_nnls(p, use_multiprocessing=use_multiprocessing, show_plots=False)
-    analyzer.calculate_nnls_diffusion_coefficients()
+    laplace_runs.execute_nnls(analyzer, p, use_multiprocessing)
     return analyzer, p
 
 
@@ -229,11 +210,5 @@ def run_regularized(data, params: Optional[Dict[str, Any]] = None, use_multiproc
     """Regularized NNLS with gold defaults overridden by ``params``. Returns ``(analyzer, params)``."""
     analyzer = laplace_analyzer(data)
     p = _merged(regularized_defaults(), params)
-    analyzer.set_weighting(p.get('use_weighting', False))
-    analyzer.run_regularized(p, use_multiprocessing=use_multiprocessing, show_plots=False)
-    analyzer.calculate_regularized_diffusion_coefficients(
-        use_clustering=p.get('use_clustering', True),
-        distance_threshold=p.get('distance_threshold', 2.0),
-        clustering_strategy=p.get('clustering_strategy', 'silhouette_refined'),
-    )
+    laplace_runs.execute_regularized(analyzer, p, use_multiprocessing)
     return analyzer, p

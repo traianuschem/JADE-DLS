@@ -5,6 +5,8 @@ Real data: tests/data/alv_mono (6 measurement units: angles 30/60/90 deg, 2 repe
 import os
 from pathlib import Path
 
+import matplotlib
+matplotlib.use("Agg")      # without it matplotlib may bind PySide6 (installed here) when a later test builds Qt canvases
 import numpy as np
 import pytest
 
@@ -168,6 +170,7 @@ def test_headless_defaults_equal_gui_dialog_defaults(series, kind):
     """Single source of truth until N-01 centralises the defaults: every key both sides define
     must carry the same value."""
     lap = headless.laplace_analyzer(series)
+    pytest.importorskip("PyQt5.QtWidgets")
     if kind == "nnls":
         from ade_dls.gui.dialogs.nnls_dialog import NNLSDialog as Dlg
         mine = headless.nnls_defaults()

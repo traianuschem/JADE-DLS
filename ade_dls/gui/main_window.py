@@ -1700,35 +1700,16 @@ print(method_d_results)
             )
             return
 
-        # Prepare df_basedata and calculate c/delta_c if not already done
-        if 'df_basedata' not in working_data:
-            # Create df_basedata from basedata if needed
-            working_data['df_basedata'] = working_data['basedata'].copy()
-
-        if 'c' not in working_data or 'delta_c' not in working_data:
-            self.status_manager.update("Calculating c and delta_c constants...")
-            self._calculate_c_and_delta_c_for_data(working_data)
-
         try:
             # Always recreate laplace analyzer to ensure we use current (possibly filtered) data.
             # processed_correlations / weights are normally already computed once by
             # _preprocess_and_store() (called from perform_filtering()); compute them
             # now as a fallback for callers that never went through filtering
             # (data_source == "original").
-            if working_data.get('processed_correlations') is None:
-                self._preprocess_and_store(working_data)
-            processed_corr = working_data.get('processed_correlations')
-            raw_corr = working_data.get('correlations', None) if processed_corr is None else None
-
-            from ade_dls.engine.laplace_analyzer import LaplaceAnalyzer
-            self.laplace_analyzer = LaplaceAnalyzer(
-                processed_correlations=processed_corr,
-                df_basedata=working_data['df_basedata'],
-                c=working_data['c'],
-                delta_c=working_data['delta_c'],
-                raw_correlations=raw_corr,
-                weights=working_data.get('weights'),
-            )
+            # df_basedata, c/delta_c and processed correlations are completed by the engine
+            from ade_dls.engine.laplace_runs import build_laplace_analyzer
+            self.laplace_analyzer = build_laplace_analyzer(
+                working_data, preprocess=self._preprocess_and_store)
             self.laplace_analyzer_nnls = self.laplace_analyzer
 
             # NOTE: noise correction is no longer applied here -- it already
@@ -1749,26 +1730,19 @@ print(method_d_results)
 
             # Show NNLS dialog
             from .dialogs.nnls_dialog import NNLSDialog
+            from ade_dls.engine.laplace_runs import execute_nnls
             dialog = NNLSDialog(self.laplace_analyzer, self)
             if dialog.exec_() == dialog.Accepted:
                 params = dialog.get_parameters()
-                self.laplace_analyzer.set_weighting(params.get('use_weighting', False))
 
                 # Start analysis
                 self.status_manager.start_operation("Running NNLS analysis...")
 
                 try:
-                    # Run NNLS (show_plots=False to avoid extra windows, plots shown in GUI)
-                    self.status_manager.update("Performing NNLS fits...")
-                    self.laplace_analyzer.run_nnls(
-                        params,
-                        use_multiprocessing=params.get('use_multiprocessing', False),
-                        show_plots=False  # Plots are displayed in Analysis View, not as separate windows
-                    )
-
-                    # Calculate diffusion coefficients
-                    self.status_manager.update("Calculating diffusion coefficients...")
-                    self.laplace_analyzer.calculate_nnls_diffusion_coefficients()
+                    # Weighting, NNLS fits, diffusion coefficients (plots are shown in the
+                    # Analysis View, not as separate windows)
+                    execute_nnls(self.laplace_analyzer, params,
+                                 on_status=self.status_manager.update)
 
                     # Add to pipeline
                     self._add_nnls_step_to_pipeline(params)
@@ -1916,34 +1890,16 @@ print(method_d_results)
             )
             return
 
-        # Prepare df_basedata and calculate c/delta_c if needed
-        if 'df_basedata' not in working_data:
-            working_data['df_basedata'] = working_data['basedata'].copy()
-
-        if 'c' not in working_data or 'delta_c' not in working_data:
-            self.status_manager.update("Calculating c and delta_c constants...")
-            self._calculate_c_and_delta_c_for_data(working_data)
-
         try:
             # Always recreate laplace analyzer to use current data.
             # processed_correlations / weights are normally already computed
             # once by _preprocess_and_store() (called from perform_filtering());
             # compute them now as a fallback for callers that never went
             # through filtering (data_source == "original").
-            if working_data.get('processed_correlations') is None:
-                self._preprocess_and_store(working_data)
-            processed_corr = working_data.get('processed_correlations')
-            raw_corr = working_data.get('correlations', None) if processed_corr is None else None
-
-            from ade_dls.engine.laplace_analyzer import LaplaceAnalyzer
-            self.laplace_analyzer = LaplaceAnalyzer(
-                processed_correlations=processed_corr,
-                df_basedata=working_data['df_basedata'],
-                c=working_data['c'],
-                delta_c=working_data['delta_c'],
-                raw_correlations=raw_corr,
-                weights=working_data.get('weights'),
-            )
+            # df_basedata, c/delta_c and processed correlations are completed by the engine
+            from ade_dls.engine.laplace_runs import build_laplace_analyzer
+            self.laplace_analyzer = build_laplace_analyzer(
+                working_data, preprocess=self._preprocess_and_store)
             self.laplace_analyzer_regularized = self.laplace_analyzer
 
             # NOTE: noise correction is no longer applied here -- it already
@@ -1964,30 +1920,19 @@ print(method_d_results)
 
             # Show Regularized dialog
             from .dialogs.regularized_dialog import RegularizedDialog
+            from ade_dls.engine.laplace_runs import execute_regularized
             dialog = RegularizedDialog(self.laplace_analyzer, self)
             if dialog.exec_() == dialog.Accepted:
                 params = dialog.get_parameters()
-                self.laplace_analyzer.set_weighting(params.get('use_weighting', False))
 
                 # Start analysis
                 self.status_manager.start_operation("Running Regularized NNLS analysis...")
 
                 try:
-                    # Run Regularized fit (show_plots=False to avoid extra windows, plots shown in GUI)
-                    self.status_manager.update("Performing regularized fits...")
-                    self.laplace_analyzer.run_regularized(
-                        params,
-                        use_multiprocessing=params.get('use_multiprocessing', False),
-                        show_plots=False  # Plots are displayed in Analysis View, not as separate windows
-                    )
-
-                    # Calculate diffusion coefficients
-                    self.status_manager.update("Calculating diffusion coefficients...")
-                    self.laplace_analyzer.calculate_regularized_diffusion_coefficients(
-                        use_clustering=params.get('use_clustering', True),
-                        distance_threshold=params.get('distance_threshold', 2.0),
-                        clustering_strategy=params.get('clustering_strategy', 'silhouette_refined'),
-                    )
+                    # Weighting, Regularized fits, diffusion coefficients (plots are shown in
+                    # the Analysis View, not as separate windows)
+                    execute_regularized(self.laplace_analyzer, params,
+                                        on_status=self.status_manager.update)
 
                     # Add to pipeline
                     self._add_regularized_step_to_pipeline(params)
