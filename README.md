@@ -2,52 +2,47 @@
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![Version](https://img.shields.io/badge/version-3.5.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-4.0.0-blue.svg)](CHANGELOG.md)
 
-ADE-DLS is a Python package for analyzing Dynamic Light Scattering (DLS) — and optionally Static Light Scattering (SLS) — data from multi-angle instruments. It determines hydrodynamic radii, diffusion coefficients, and particle size distributions via a full-featured PyQt5 GUI or a Python API.
+ADE-DLS analyses Dynamic Light Scattering (DLS) data — and, optionally, Static Light Scattering (SLS) data — from multi-angle instruments. From a series of measurements at different scattering angles it determines diffusion coefficients, hydrodynamic radii and particle size distributions. It is used through a PyQt5 GUI or a Qt-free Python API; both run the same computation code.
+
+ADE-DLS is the successor of the Jupyter-based JADE-DLS. Defaults and formulas follow the JADE-DLS reference implementation, and results are checked against it.
 
 ## Features
 
-### Analysis Methods
+### Analysis methods
 
-- **Cumulant Analysis** (4 methods)
-  - Method A: Instrument-software cumulant fits (reads Γ / Rh directly from ALV and LS Instruments files)
-  - Method B: Linear fit of ln[g₁(τ)] vs. τ
-  - Method C: Iterative non-linear least squares (2nd / 3rd / 4th order)
-  - Method D: Multi-exponential decomposition with cross-angle population clustering
-
-- **Inverse Laplace Transform**
-  - NNLS (Non-Negative Least Squares) with peak detection
-  - Regularized NNLS (Tikhonov-Phillips) with L-curve and GCV α selection
-  - Optional constraints: normalization, sparsity, unimodality
-  - Ward hierarchical clustering of diffusion coefficients across angles
-
-- **Static Light Scattering (SLS)**
+- **Cumulant analysis** (four methods)
+  - **Method A** — cumulant fits of the instrument software (Γ read from the ALV / LS Instruments files)
+  - **Method B** — linear fit of ln[g₁(τ)] vs. τ
+  - **Method C** — iterative non-linear least squares (1st to 4th order)
+  - **Method D** — multi-exponential decomposition with cross-angle population clustering
+- **Inverse Laplace transform**
+  - **NNLS** with peak detection
+  - **Regularized NNLS** (Tikhonov–Phillips, fixed regularization parameter α) with optional normalization, sparsity and unimodality constraints
+  - Ward hierarchical clustering of the diffusion coefficients across angles to identify populations
+- **Static Light Scattering**
   - Population-resolved intensity decomposition from Regularized NNLS results
-  - Monitor-corrected, geometry-corrected count rates
-  - Guinier analysis per population (I₀, Rg, qRg_max, R²) and for total intensity
-  - Number-weighting correction applied to the extrapolated I0 (configurable Rh exponent)
+  - Guinier analysis per population and for the total intensity
+  - Optional number-weighting correction of the extrapolated I₀ (configurable Rh exponent)
 
-- **Data Processing**
-  - Multi-instrument file loading (ALV .ASC, LS Instruments directory format)
-  - Interactive count-rate and correlation filtering dialogs
-  - Baseline and intercept noise correction
-  - Heteroscedastic noise weighting (Biganzoli & Ferri, Opt. Express 26, 29375, 2018), opt-in per analysis
-  - Diffusion coefficient calculation (D = Γ / q²) and hydrodynamic radius via Stokes-Einstein
+### Data processing
 
-### GUI Application
+- Multi-instrument loading (ALV `.ASC`, LS Instruments directories)
+- Count-rate and correlation filtering
+- Baseline and intercept noise correction
+- Optional heteroscedastic noise weighting (Biganzoli & Ferri, *Opt. Express* **26**, 29375, 2018)
+- D = Γ / q² and hydrodynamic radius via the Stokes–Einstein relation
 
-- **Interactive PyQt5 interface** with three-panel layout (Workflow · Analysis View · Inspector)
-- **FAIR provenance tracking** — full W3C PROV-compliant session record; export as JSON or PROV-JSON
-- **Transparent analysis pipeline** — auto-generates reproducible Jupyter notebooks and Python scripts
-- **Comprehensive visualization** — per-dataset diagnostic plots (correlation fit, residuals, Q-Q, τ distribution); D vs. q² scatter; log₁₀(D) histogram
-- **Post-fit refinement dialogs** — adjust fit ranges, regularization, clustering parameters without reloading; clustering parameter sweep heatmap (distance threshold × min abundance) for guided parameter selection
-- **Report panel** — compose custom reports from result blocks and plots; export as TXT, Markdown, or PDF
-- **Export** — CSV (one file per data series of the currently displayed plot, with provenance descriptions), Excel, Jupyter notebooks, Python scripts, PROV-JSON
+### GUI
+
+- Three-panel layout: Workflow · Analysis View · Inspector
+- Post-fit refinement dialogs (fit ranges, regularization, clustering parameters) without reloading the data, including a clustering-parameter sweep heatmap
+- Report panel: compose reports from result blocks and plots, export as TXT, Markdown or PDF
+- Provenance tracking (W3C PROV, exportable as JSON / PROV-JSON) and automatic generation of reproducible Jupyter notebooks and Python scripts
+- Export of results and plot data as CSV and Excel
 
 ## Installation
-
-### From Source
 
 ```bash
 git clone https://github.com/traianuschem/JADE-DLS.git
@@ -55,15 +50,11 @@ cd JADE-DLS
 pip install -e .[gui]
 ```
 
-For the full installation including Excel/CSV export:
+`pip install -e .[all]` additionally installs the Excel export dependencies. The Python API alone needs only the base installation (`pip install -e .`), without PyQt5.
 
-```bash
-pip install -e .[all]
-```
+See [docs/installation.md](docs/installation.md) for platform notes and troubleshooting.
 
-See [docs/installation.md](docs/installation.md) for platform-specific notes and troubleshooting.
-
-## Quick Start
+## Quick start
 
 ### GUI
 
@@ -71,54 +62,67 @@ See [docs/installation.md](docs/installation.md) for platform-specific notes and
 ade-dls
 ```
 
-Or:
+A step-by-step walkthrough is in [docs/quickstart.md](docs/quickstart.md).
 
-```bash
-python -m ade_dls.gui.main_window
-```
-
-See [docs/quickstart.md](docs/quickstart.md) for a step-by-step walkthrough.
-
-### Python API
+### Python API (no GUI required)
 
 ```python
-from ade_dls.core import preprocessing
-from ade_dls.analysis import cumulants
+from ade_dls import headless
 
-# Load .ASC files
-data = preprocessing.load_and_preprocess_data(
-    folder_path="path/to/data",
-    file_extension=".ASC"
-)
+# Load a measurement series; the instrument format is detected automatically
+data = headless.load_series("path/to/data")
 
-# Cumulant Method C
-params = {
-    'method': 'C',
-    'wavelength': 632.8,      # nm
-    'temperature': 298.15,    # K
-    'viscosity': 0.89,        # cP
-    'refractive_index': 1.33
-}
-results = cumulants.cumulant_method_c_all(data, params)
-print(results)
+# Cumulant methods return (analyzer, results DataFrame)
+analyzer, result_a = headless.run_cumulant_a(data)
+analyzer, result_d = headless.run_cumulant_d(data, {"gap_threshold": 2.0})
+
+# Inverse Laplace methods: defaults can be overridden per call;
+# results are stored on the analyzer
+laplace, params = headless.run_nnls(data)
+print(laplace.nnls_final_results)
+
+laplace, params = headless.run_regularized(data, {"alpha": 0.5})
+print(laplace.regularized_final_results)
 ```
 
-## Supported Instruments
+`headless.nnls_defaults()`, `headless.regularized_defaults()` and `headless.method_d_defaults()` return the default parameters. Post-fit refinement (`refine_*`) and the SLS analysis (`run_sls`) are available as well. See the docstrings in [`ade_dls/headless.py`](ade_dls/headless.py).
+
+## Package layout
+
+| Package | Content | Qt required |
+|---------|---------|:-----------:|
+| `ade_dls.analysis`, `ade_dls.core`, `ade_dls.utils` | Numerical kernels, parsers, preprocessing | no |
+| `ade_dls.engine` | Analysis workflows shared by GUI and API | no |
+| `ade_dls.headless` | Public Python API | no |
+| `ade_dls.gui` | PyQt5 application (presentation and orchestration) | yes |
+
+The dependency direction is kernels → engine → GUI. It is enforced by `tests/test_architecture.py`.
+
+## Supported instruments
 
 | Instrument | Format | Extension |
 |------------|--------|-----------|
 | ALV correlators (ALV-5000, ALV-7004, …) | ASCII header + data blocks | `.ASC` |
 | LS Instruments (NanoLab, …) | Directory per measurement | directory |
 
-See [docs/data_formats.md](docs/data_formats.md) for format details and instructions on adding a new instrument parser.
+Format details and how to add a parser: [docs/data_formats.md](docs/data_formats.md).
 
 ## Requirements
 
 - Python 3.8+
-- NumPy ≥ 1.22, SciPy ≥ 1.8, Pandas ≥ 1.5, Matplotlib ≥ 3.5
+- NumPy ≥ 1.22, SciPy ≥ 1.8, pandas ≥ 1.5, Matplotlib ≥ 3.5
 - scikit-learn ≥ 1.0, statsmodels ≥ 0.13, joblib ≥ 1.2
+- GUI: PyQt5 ≥ 5.15
 
-**For GUI:** PyQt5 ≥ 5.15
+## Development
+
+```bash
+pip install -e .[dev]
+python -m pytest -q                 # full test suite
+python -m pytest -q -m "not slow"   # without the slow optimizer tests
+```
+
+Contribution guidelines: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Documentation
 
@@ -149,7 +153,3 @@ If you use ADE-DLS in your research, please cite:
 ## License
 
 GNU General Public License v3.0 or later — see [LICENSE](LICENSE).
-
-## Acknowledgments
-
-Originally developed as JADE-DLS (Jupyter-based Angular Dependent Evaluator for DLS); evolved into a full-featured PyQt5 GUI application with a modular Python analysis library.
