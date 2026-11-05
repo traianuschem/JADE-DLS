@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.0] - 2026-11-05
+
+Major release: the computation code is separated from the PyQt5 GUI and can be used headless. Several numerical corrections found during the verification for the paper revision change results compared with 3.x (see **Changed**).
+
+### Added
+
+- **Qt-free computation layer `ade_dls.engine`** (analyzers, plotting, preprocessing, filtering, provenance, quality assessment, exports, series loader, pipeline, refinement, run sequences for cumulants, NNLS/Regularized, previews and SLS). GUI and Python API run the same code; the GUI keeps only presentation and orchestration. The old `ade_dls.gui.*` import paths remain as aliases to the moved modules.
+- **Headless Python API `ade_dls.headless`** (no PyQt5 needed): `load_series`, `exclude_files`, `run_cumulant_a/b/c/d`, `run_nnls`, `run_regularized`, `run_sls`, `refine_cumulant_a/b/c/d`, `refine_nnls`, `refine_regularized`, and `nnls_defaults`/`regularized_defaults`/`method_d_defaults`.
+- **Automated tests and CI**: test suite for the numerical kernels (cumulants A–D, clustering, regularized/NNLS), loader, pipeline, refinement, headless API and an architecture test that enforces the layering (kernels → engine → GUI). GitHub Actions workflow (`.github/workflows/ci.yml`).
+- Byte-exact ALV test fixtures with a sha256 manifest.
+- Clustering: `cluster_info` now also holds the pre-refinement statistics (`population_stats_pre_refinement`, `n_reassigned`, `silhouette_before/after_refinement`) and `n_dropped_points`/`population_n_dropped`; the Method D summary exports them.
+
+### Changed
+
+- **Population numbering follows ascending diffusion coefficient** (pop1 = smallest mean log₁₀ D) in the cross-angle clustering. Population labels in results of earlier versions may differ.
+- **Cumulant Method A `Skewness_3rd`** is now μ₃ / μ₂^1.5 (third-order block; previously μ₂(3rd) / μ₂(2nd)^1.5).
+- **R² of the through-origin regression** is the uncentered R², as in the GUI.
+- Clustering: pass-through standard deviation uses ddof=0; separate z-score and silhouette uncertainty thresholds (falling back to `uncertainty_threshold`); populations below `min_abundance` after refinement are kept and flagged in `cluster_info`; statistics are recomputed after the silhouette refinement; a single valid point with `method='hierarchical'` yields one population; the parameter sweep collects exceptions in an `error` column and restores the pyplot state; `population_D_*` keys are always present.
+- Packaging: `packages.find` now includes all `ade_dls*` subpackages.
+
+### Fixed
+
+- `uncertainty_flags=True` in the clustering no longer crashes with pandas ≥ 3.
+
+---
+
 ## [3.5.0] - 2026-09-10
 
 ### Changed
