@@ -4,6 +4,8 @@ analyzer isolates the assembling logic, plus one run on tests/data/alv_mono for 
 from pathlib import Path
 from types import SimpleNamespace
 
+import matplotlib
+matplotlib.use("Agg")
 import numpy as np
 import pandas as pd
 import pytest
@@ -152,3 +154,131 @@ def test_headless_refine_cumulant_b_excluding_a_fit_changes_the_regression():
     refined = headless.refine_cumulant_b(an, excluded_files=labels[:2])
     assert refined is not None and np.isfinite(refined.iloc[0][D_COL])
     assert refined.iloc[0][D_COL] != pytest.approx(full.iloc[0][D_COL], rel=1e-9, abs=0)
+
+
+# ----------------------------------------------------------------------------- Laplace (NNLS / Regularized)
+class _LaplaceStub:
+    """Records the calls refine_laplace makes; tables are plain DataFrames."""
+
+    def __init__(self, with_snapshot=True):
+        table = pd.DataFrame({"filename": ["a", "b", "c", "d"], "q^2": [1.0, 2.0, 3.0, 4.0]})
+        table.index = table.index + 1
+        self.nnls_data = table.copy()
+        self.regularized_data = table.copy()
+        self._nnls_data_snapshot = table.copy() if with_snapshot else None
+        self._regularized_data_snapshot = table.copy() if with_snapshot else None
+        self.nnls_final_results = "nnls-final"
+        self.regularized_final_results = "reg-final"
+        self.calls = []
+
+    def calculate_nnls_diffusion_coefficients(self, **kw):
+        self.calls.append(("nnls_diff", kw, list(self.nnls_data["filename"])))
+
+    def _calculate_nnls_final_results(self, **kw):
+        self.calls.append(("nnls_final", kw))
+
+    def calculate_regularized_diffusion_coefficients(self, **kw):
+        self.calls.append(("reg_diff", kw, list(self.regularized_data["filename"])))
+
+    def _calculate_regularized_final_results(self, **kw):
+        self.calls.append(("reg_final", kw))
+
+
+@pytest.mark.parametrize("args,expected", [
+    ({}, False),
+    ({"q_range": None, "excluded_files": [], "clustering_params": {}, "per_pop_ranges": {}}, False),
+    ({"q_range": (1e-4, 2e-4)}, True),
+    ({"excluded_files": ["a"]}, True),
+    ({"clustering_params": {"use_clustering": False}}, True),
+    ({"per_pop_ranges": {1: (1.0, 2.0)}}, True),
+])
+def test_laplace_refinement_has_changes(args, expected):
+    assert refinement.laplace_refinement_has_changes(**args) is expected
+
+
+def test_refine_laplace_nnls_excludes_files_and_recomputes_with_filtered_clustering_keys():
+    an = _LaplaceStub()
+    out = refinement.refine_laplace(
+        an, "NNLS", (1.0, 3.0), ["b", "d"],
+        {"use_clustering": False, "clustering_strategy": "simple", "distance_threshold": 1.5,
+         "min_abundance": 0.4}, {1: (1.0, 2.0)}, fit_through_origin=True)
+    assert out == "nnls-final"
+    assert list(an.nnls_data["filename"]) == ["a", "c"] and list(an.nnls_data.index) == [1, 2]
+    assert an.calls == [
+        ("nnls_diff", {"x_range": (1.0, 3.0), "per_pop_ranges": {1: (1.0, 2.0)}, "use_clustering": False,
+                       "clustering_strategy": "simple", "distance_threshold": 1.5}, ["a", "c"]),
+        ("nnls_final", {"append_mode": True, "label_suffix": " (Post-Refined)"}),
+    ]                                                   # NNLS gets neither min_abundance nor fit_through_origin
+    assert list(an.regularized_data["filename"]) == ["a", "b", "c", "d"]    # other method untouched
+
+
+def test_refine_laplace_regularized_passes_min_abundance_and_fit_through_origin():
+    an = _LaplaceStub()
+    out = refinement.refine_laplace(an, "Regularized", None, None,
+                                    {"min_abundance": 0.4, "use_clustering": True, "ignored": 1},
+                                    {}, fit_through_origin=True)
+    assert out == "reg-final"
+    assert an.calls[0] == ("reg_diff", {"x_range": None, "per_pop_ranges": None,
+                                        "fit_through_origin": True, "min_abundance": 0.4,
+                                        "use_clustering": True}, ["a", "b", "c", "d"])
+    assert an.calls[1] == ("reg_final", {"append_mode": True, "label_suffix": " (Post-Refined)"})
+
+
+def test_refine_laplace_restores_the_snapshot_so_refinements_do_not_accumulate():
+    an = _LaplaceStub()
+    refinement.refine_laplace(an, "Regularized", excluded_files=["a", "b"])
+    assert list(an.regularized_data["filename"]) == ["c", "d"]
+    refinement.refine_laplace(an, "Regularized", excluded_files=["d"])
+    assert list(an.regularized_data["filename"]) == ["a", "b", "c"]
+    refinement.refine_laplace(an, "Regularized", q_range=(1.0, 2.0))
+    assert list(an.regularized_data["filename"]) == ["a", "b", "c", "d"]
+    assert an._regularized_data_snapshot is not an.regularized_data      # snapshot itself stays pristine
+
+
+def test_refine_laplace_without_snapshot_works_on_the_current_table():
+    an = _LaplaceStub(with_snapshot=False)
+    refinement.refine_laplace(an, "NNLS", excluded_files=["a"])
+    assert list(an.nnls_data["filename"]) == ["b", "c", "d"]
+
+
+def test_refine_laplace_rejects_unknown_method():
+    with pytest.raises(ValueError, match="Unknown Laplace method"):
+        refinement.refine_laplace(_LaplaceStub(), "Method X")
+
+
+def test_analysis_view_delegates_laplace_refinement_to_the_engine():
+    """Structure check (no Qt needed): the view must not re-implement snapshot / exclusion logic."""
+    src = (Path(__file__).resolve().parents[1] / "ade_dls" / "gui" / "widgets" / "analysis_view.py"
+           ).read_text(encoding="utf-8")
+    assert "refine_laplace(the_analyzer, method_name" in src
+    assert "laplace_refinement_has_changes(" in src
+    assert "_nnls_data_snapshot" not in src and "_regularized_data_snapshot" not in src
+    assert "calculate_nnls_diffusion_coefficients(" not in src
+    assert "calculate_regularized_diffusion_coefficients(" not in src
+
+
+@pytest.mark.skipif(not ALV.exists(), reason="tests/data/alv_mono missing")
+def test_headless_refine_regularized_excludes_distributions_and_restores_on_next_call():
+    from ade_dls import headless
+    data = headless.load_series(str(ALV))
+    an, _ = headless.run_regularized(data, {"decay_times": np.logspace(-8, 1, 26)})
+    names = list(an.regularized_data["filename"])
+    assert len(names) == 6
+    headless.refine_regularized(an, excluded_files=names[:2])
+    assert list(an.regularized_data["filename"]) == names[2:]
+    final = headless.refine_regularized(an, q_range=None, per_pop_ranges=None,
+                                        clustering_params={"use_clustering": True})
+    assert list(an.regularized_data["filename"]) == names          # restored from the snapshot
+    assert final is an.regularized_final_results
+    assert any("(Post-Refined)" in str(x) for x in final["Fit"])
+
+
+@pytest.mark.skipif(not ALV.exists(), reason="tests/data/alv_mono missing")
+def test_headless_refine_nnls_marks_results_as_post_refined():
+    from ade_dls import headless
+    data = headless.load_series(str(ALV))
+    an, _ = headless.run_nnls(data, {"decay_times": np.logspace(-8, 1, 26)})
+    names = list(an.nnls_data["filename"])
+    final = headless.refine_nnls(an, excluded_files=names[:1])
+    assert len(an.nnls_data) == 5 and final is an.nnls_final_results
+    assert any("(Post-Refined)" in str(x) for x in final["Fit"])

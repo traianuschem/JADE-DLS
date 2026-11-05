@@ -24,7 +24,7 @@ from ade_dls.engine.series import preprocess_series
 __all__ = [
     "DataLoadError", "load_series", "exclude_files", "preprocess_series", "cumulant_analyzer", "laplace_analyzer",
     "run_cumulant_a", "run_cumulant_b", "run_cumulant_c", "run_cumulant_d",
-    "refine_cumulant_b", "refine_cumulant_c", "refine_cumulant_d", "run_nnls",
+    "refine_cumulant_b", "refine_cumulant_c", "refine_cumulant_d", "refine_nnls", "refine_regularized", "run_nnls",
     "run_regularized", "run_sls", "nnls_defaults", "regularized_defaults", "method_d_defaults",
 ]
 
@@ -188,6 +188,23 @@ def refine_cumulant_d(analyzer, clustering_params=None, mode_params=None, combin
     return analyzer.refine_method_d(clustering_params=clustering_params,
                                     mode_params=mode_params or None,
                                     combined_q_range=combined_q_range)
+
+
+def refine_nnls(analyzer, q_range=None, excluded_files=None, clustering_params=None,
+                per_pop_ranges=None):
+    """NNLS post-fit refinement (q^2 range, excluded distributions, clustering settings,
+    per-population ranges); results are appended with the suffix " (Post-Refined)". Needs the
+    analyzer from ``run_nnls``. Returns ``analyzer.nnls_final_results``."""
+    return refinement.refine_laplace(analyzer, 'NNLS', q_range, excluded_files, clustering_params,
+                                     per_pop_ranges)
+
+
+def refine_regularized(analyzer, q_range=None, excluded_files=None, clustering_params=None,
+                       per_pop_ranges=None, fit_through_origin=False):
+    """Regularized post-fit refinement (see ``refine_nnls``; ``fit_through_origin`` additionally).
+    Needs the analyzer from ``run_regularized``. Returns ``analyzer.regularized_final_results``."""
+    return refinement.refine_laplace(analyzer, 'Regularized', q_range, excluded_files,
+                                     clustering_params, per_pop_ranges, fit_through_origin)
 
 
 # ----------------------------------------------------------------------------- Laplace

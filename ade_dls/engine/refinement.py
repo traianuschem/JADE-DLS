@@ -94,3 +94,64 @@ def exclude_files_from_method_d(analyzer, excluded_files: Optional[Sequence[str]
     kept = data[~data['filename'].isin(excluded_files)].reset_index(drop=True)
     analyzer.method_d_data = kept
     return len(data) - len(kept)
+
+
+# ----------------------------------------------------------------------------- Laplace (NNLS / Regularized)
+_CLUSTERING_KEYS = {
+    'NNLS': ('use_clustering', 'clustering_strategy', 'distance_threshold'),
+    'Regularized': ('use_clustering', 'clustering_strategy', 'distance_threshold', 'min_abundance'),
+}
+POST_REFINED_SUFFIX = " (Post-Refined)"
+
+
+def laplace_refinement_has_changes(q_range=None, excluded_files=None, clustering_params=None,
+                                   per_pop_ranges=None) -> bool:
+    """False if a refinement request changes nothing (no q-range, exclusion, clustering or
+    per-population range): the GUI then skips the recomputation."""
+    return bool(q_range is not None or excluded_files or clustering_params or per_pop_ranges)
+
+
+def refine_laplace(analyzer, method: str, q_range: Optional[Tuple[float, float]] = None,
+                   excluded_files: Optional[Sequence[str]] = None,
+                   clustering_params: Optional[Dict[str, Any]] = None,
+                   per_pop_ranges: Optional[Dict[int, Tuple[float, float]]] = None,
+                   fit_through_origin: bool = False) -> Optional[pd.DataFrame]:
+    """Post-fit refinement of an NNLS / Regularized result (no Qt): restores the distribution table
+    from the snapshot of the first fit (so repeated refinements always start from the original
+    data), drops the distributions of ``excluded_files``, recomputes the diffusion coefficients with
+    ``q_range`` / ``per_pop_ranges`` / the clustering settings and appends the final results with
+    the label suffix " (Post-Refined)".
+
+    ``method`` is ``'NNLS'`` or ``'Regularized'``; ``fit_through_origin`` applies to Regularized only
+    (as in the GUI). Returns the analyzer's final-results table.
+    """
+    if method not in _CLUSTERING_KEYS:
+        raise ValueError(f"Unknown Laplace method {method!r}; use 'NNLS' or 'Regularized'")
+    is_nnls = method == 'NNLS'
+    data_attr = 'nnls_data' if is_nnls else 'regularized_data'
+    snapshot = getattr(analyzer, '_nnls_data_snapshot' if is_nnls else '_regularized_data_snapshot', None)
+    clustering_params = clustering_params or {}
+    excluded_files = list(excluded_files or [])
+
+    # idempotent: always start from the original (unfiltered) distributions
+    if snapshot is not None:
+        setattr(analyzer, data_attr, snapshot.copy())
+
+    if excluded_files and hasattr(analyzer, data_attr):
+        data = getattr(analyzer, data_attr)
+        kept = data[~data['filename'].isin(excluded_files)].reset_index(drop=True)
+        kept.index = kept.index + 1
+        setattr(analyzer, data_attr, kept)
+        print(f"  Removed {len(excluded_files)} datasets, {len(kept)} remaining")
+
+    kwargs = {k: v for k, v in clustering_params.items() if k in _CLUSTERING_KEYS[method]}
+    if is_nnls:
+        analyzer.calculate_nnls_diffusion_coefficients(
+            x_range=q_range, per_pop_ranges=per_pop_ranges or None, **kwargs)
+        analyzer._calculate_nnls_final_results(append_mode=True, label_suffix=POST_REFINED_SUFFIX)
+        return getattr(analyzer, 'nnls_final_results', None)
+    analyzer.calculate_regularized_diffusion_coefficients(
+        x_range=q_range, per_pop_ranges=per_pop_ranges or None,
+        fit_through_origin=fit_through_origin, **kwargs)
+    analyzer._calculate_regularized_final_results(append_mode=True, label_suffix=POST_REFINED_SUFFIX)
+    return getattr(analyzer, 'regularized_final_results', None)

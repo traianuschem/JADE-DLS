@@ -2245,6 +2245,7 @@ class AnalysisView(QWidget):
         """
         from PyQt5.QtWidgets import QMessageBox
         from gui.dialogs.laplace_postfit_dialog import LaplacePostFitRefinementDialog
+        from ade_dls.engine.refinement import laplace_refinement_has_changes, refine_laplace
 
         # Select method-specific analyzer to avoid cross-contamination when both methods have been run
         is_nnls = (method_name == "NNLS")
@@ -2273,7 +2274,8 @@ class AnalysisView(QWidget):
         fit_through_origin = params.get('fit_through_origin', False)
 
         # Check if any changes were made
-        if q_range is None and not excluded_files and not clustering_params and not per_pop_ranges:
+        if not laplace_refinement_has_changes(q_range, excluded_files, clustering_params,
+                                              per_pop_ranges):
             QMessageBox.information(
                 self,
                 "No Changes",
@@ -2297,51 +2299,21 @@ class AnalysisView(QWidget):
             print(f"  Clustering: {clustering_params}")
 
         try:
-            # Restore from snapshot before applying exclusions (idempotent: always start from original data)
-            if is_nnls and the_analyzer._nnls_data_snapshot is not None:
-                the_analyzer.nnls_data = the_analyzer._nnls_data_snapshot.copy()
-            elif not is_nnls and the_analyzer._regularized_data_snapshot is not None:
-                the_analyzer.regularized_data = the_analyzer._regularized_data_snapshot.copy()
+            # Snapshot restore, exclusion, recomputation, "(Post-Refined)" results: engine
+            refine_laplace(the_analyzer, method_name, q_range=q_range,
+                           excluded_files=excluded_files, clustering_params=clustering_params,
+                           per_pop_ranges=per_pop_ranges, fit_through_origin=fit_through_origin)
 
-            # Filter data by excluded files if specified
-            if excluded_files:
-                if is_nnls and hasattr(the_analyzer, 'nnls_data'):
-                    # Remove rows where filename is in excluded_files
-                    the_analyzer.nnls_data = the_analyzer.nnls_data[
-                        ~the_analyzer.nnls_data['filename'].isin(excluded_files)
-                    ].reset_index(drop=True)
-                    the_analyzer.nnls_data.index = the_analyzer.nnls_data.index + 1
-                    print(f"  Removed {len(excluded_files)} datasets, {len(the_analyzer.nnls_data)} remaining")
+            # Update display with replace_existing=False to append plots
+            _parent = self.parent()
+            while _parent is not None:
+                if hasattr(_parent, 'pipeline') and hasattr(_parent, 'inspector_panel'):
+                    break
+                _parent = _parent.parent()
 
-                elif not is_nnls and hasattr(the_analyzer, 'regularized_data'):
-                    the_analyzer.regularized_data = the_analyzer.regularized_data[
-                        ~the_analyzer.regularized_data['filename'].isin(excluded_files)
-                    ].reset_index(drop=True)
-                    the_analyzer.regularized_data.index = the_analyzer.regularized_data.index + 1
-                    print(f"  Removed {len(excluded_files)} datasets, {len(the_analyzer.regularized_data)} remaining")
-
-            # Recalculate diffusion coefficients, forwarding clustering + per-pop params
-            if is_nnls:
-                the_analyzer.calculate_nnls_diffusion_coefficients(
-                    x_range=q_range,
-                    per_pop_ranges=per_pop_ranges or None,
-                    **{k: v for k, v in clustering_params.items()
-                       if k in ('use_clustering', 'clustering_strategy', 'distance_threshold')}
-                )
-                the_analyzer._calculate_nnls_final_results(
-                    append_mode=True,
-                    label_suffix=" (Post-Refined)"
-                )
-
-                # Update display with replace_existing=False to append plots
-                _parent = self.parent()
-                while _parent is not None:
-                    if hasattr(_parent, 'pipeline') and hasattr(_parent, 'inspector_panel'):
-                        break
-                    _parent = _parent.parent()
-
-                if _parent is not None:
-                    _parent.laplace_analyzer = the_analyzer
+            if _parent is not None:
+                _parent.laplace_analyzer = the_analyzer
+                if is_nnls:
                     _parent._display_nnls_results(replace_existing=False)
                     # Add post-refinement step to pipeline
                     _parent.pipeline.add_post_refinement_step(
@@ -2350,31 +2322,8 @@ class AnalysisView(QWidget):
                         excluded_files=excluded_files,
                         is_laplace=True
                     )
-
-            else:  # Regularized
-                the_analyzer.calculate_regularized_diffusion_coefficients(
-                    x_range=q_range,
-                    per_pop_ranges=per_pop_ranges or None,
-                    fit_through_origin=fit_through_origin,
-                    **{k: v for k, v in clustering_params.items()
-                       if k in ('use_clustering', 'clustering_strategy', 'distance_threshold', 'min_abundance')}
-                )
-                the_analyzer._calculate_regularized_final_results(
-                    append_mode=True,
-                    label_suffix=" (Post-Refined)"
-                )
-
-                # Update display with replace_existing=False to append plots
-                _parent = self.parent()
-                while _parent is not None:
-                    if hasattr(_parent, 'pipeline') and hasattr(_parent, 'inspector_panel'):
-                        break
-                    _parent = _parent.parent()
-
-                if _parent is not None:
-                    _parent.laplace_analyzer = the_analyzer
+                else:  # Regularized
                     _parent._display_regularized_results(replace_existing=False)
-                    # Add post-refinement step to pipeline
                     _parent.pipeline.add_post_refinement_step(
                         method_name="Regularized",
                         q_range=q_range,
