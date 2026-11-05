@@ -10,6 +10,8 @@ import numpy as np
 import pandas as pd
 
 from ade_dls.engine import filtering
+from ade_dls.engine.cumulant_runs import (execute_method_a, execute_method_b,
+                                          execute_method_c, execute_method_d)
 
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QSplitter, QMenuBar, QAction, QStatusBar,
@@ -481,19 +483,13 @@ weights_dict = compute_weights_for_all(processed_correlations, df_basedata)
             )
             return None
 
-        from ade_dls.engine.cumulant_analyzer import CumulantAnalyzer
-        analyzer = CumulantAnalyzer(working_data, working_data['data_folder'])
-
         # NOTE: noise correction is no longer applied here -- it already
         # happened once in _preprocess_and_store() when the data was
         # (re-)filtered, and CumulantAnalyzer.prepare_processed_correlations()
         # reads that cached `working_data['processed_correlations']` directly.
         # Setting analyzer.noise_params here would apply it a second time.
-
-        self.status_manager.update("Preparing basedata...")
-        analyzer.prepare_basedata()
-
-        return analyzer
+        from ade_dls.engine.cumulant_runs import build_cumulant_analyzer
+        return build_cumulant_analyzer(working_data, on_status=self.status_manager.update)
 
     # ------------------------------------------------------------------
     # Method A
@@ -514,8 +510,8 @@ weights_dict = compute_weights_for_all(processed_correlations, df_basedata)
                 self.status_manager.error("Cumulant Method A: no data available")
                 return
 
-            result = analyzer.run_method_a(q_range=config['q_range'],
-                                           fit_through_origin=config.get('fit_through_origin', False))
+            result = execute_method_a(analyzer, q_range=config['q_range'],
+                                      fit_through_origin=config.get('fit_through_origin', False))
 
             self.status_manager.complete_operation("Cumulant Method A completed")
             self._display_cumulant_results([('Method A', result)], analyzer)
@@ -551,10 +547,10 @@ weights_dict = compute_weights_for_all(processed_correlations, df_basedata)
                 self.status_manager.error("Cumulant Method B: no data available")
                 return
 
-            analyzer.use_weighting = config.get('use_weighting', False)
-            result = analyzer.run_method_b(config['fit_limits'],
-                                           q_range=config['q_range'],
-                                           fit_through_origin=config.get('fit_through_origin', False))
+            result = execute_method_b(analyzer, config['fit_limits'],
+                                      q_range=config['q_range'],
+                                      fit_through_origin=config.get('fit_through_origin', False),
+                                      use_weighting=config.get('use_weighting', False))
 
             self.status_manager.complete_operation("Cumulant Method B completed")
             self._display_cumulant_results([('Method B', result)], analyzer)
@@ -591,9 +587,9 @@ weights_dict = compute_weights_for_all(processed_correlations, df_basedata)
                 self.status_manager.error("Cumulant Method C: no data available")
                 return
 
-            analyzer.use_weighting = config.get('use_weighting', False)
-            result = analyzer.run_method_c(config['method_c_params'],
-                                           q_range=config['q_range'])
+            result = execute_method_c(analyzer, config['method_c_params'],
+                                      q_range=config['q_range'],
+                                      use_weighting=config.get('use_weighting', False))
 
             self.status_manager.complete_operation("Cumulant Method C completed")
             self._display_cumulant_results([('Method C', result)], analyzer)
@@ -629,9 +625,9 @@ weights_dict = compute_weights_for_all(processed_correlations, df_basedata)
                 self.status_manager.error("Cumulant Method D: no data available")
                 return
 
-            analyzer.use_weighting = config.get('use_weighting', False)
-            result = analyzer.run_method_d(config['params'],
-                                           q_range=config['q_range'])
+            result = execute_method_d(analyzer, config['params'],
+                                      q_range=config['q_range'],
+                                      use_weighting=config.get('use_weighting', False))
 
             self.status_manager.complete_operation("Cumulant Method D completed")
             self._display_cumulant_results([('Method D', result)], analyzer)

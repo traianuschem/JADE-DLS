@@ -1932,6 +1932,7 @@ class AnalysisView(QWidget):
         """
         from PyQt5.QtWidgets import QMessageBox
         from gui.dialogs import PostFitRefinementDialog
+        from ade_dls.engine.refinement import refine_method_a, refine_method_b
 
         if method_type in ['cumulant_a', 'cumulant_b', 'cumulant_c']:
             # Cumulant refinement
@@ -1957,20 +1958,11 @@ class AnalysisView(QWidget):
                 # Method A
                 if 'A' in available_methods and params['q_ranges']['A'] is not None:
                     print(f"\nRe-computing Method A with q² range: {params['q_ranges']['A']}")
-                    result_a = self.cumulant_analyzer.run_method_a(q_range=params['q_ranges']['A'])
-                    if result_a is not None:
-                        results_updated.append(('Method A', result_a))
+                    refined_a = refine_method_a(self.cumulant_analyzer, params['q_ranges']['A'])
+                    if refined_a is not None:
+                        result_a, refinement_stats_a = refined_a
                         q_range_a = params['q_ranges']['A']
-                        q_str_a = (f"{q_range_a[0]:.3e} \u2013 {q_range_a[1]:.3e} nm\u207b\u00b2"
-                                   if q_range_a is not None else "Full range")
-                        refinement_stats_a = {
-                            'refinement_info': {
-                                'q_range_str': q_str_a,
-                                'q_range': q_range_a,
-                                'excluded_files': [],
-                                'n_total': None, 'n_included': None, 'n_excluded': 0,
-                            }
-                        }
+                        results_updated.append(('Method A', result_a))
                         self._update_results_table('Method A', result_a,
                                                    regression_stats=refinement_stats_a)
                         # Register post-refinement in pipeline/provenance
@@ -2000,27 +1992,10 @@ class AnalysisView(QWidget):
                     if excluded_fits_b:
                         print(f'  Excluded fits: {len(excluded_fits_b)}')
                     try:
-                        result_b = self.cumulant_analyzer.refine_method_b(
-                            q_range=q_range_b,
-                            excluded_files=excluded_fits_b if excluded_fits_b else None,
-                        )
-                        if result_b is not None:
+                        refined_b = refine_method_b(self.cumulant_analyzer, q_range_b, excluded_fits_b)
+                        if refined_b is not None:
+                            result_b, refinement_stats_b = refined_b
                             results_updated.append(('Method B', result_b))
-                            ref_info_b = getattr(
-                                self.cumulant_analyzer, '_method_b_refinement_info', {}
-                            )
-                            q_str_b = (f'{q_range_b[0]:.3e} - {q_range_b[1]:.3e} nm-2'
-                                       if q_range_b is not None else 'Full range')
-                            refinement_stats_b = {
-                                'refinement_info': {
-                                    'q_range_str': q_str_b,
-                                    'q_range': q_range_b,
-                                    'excluded_files': excluded_fits_b,
-                                    'n_total': ref_info_b.get('n_total'),
-                                    'n_included': ref_info_b.get('n_included'),
-                                    'n_excluded': ref_info_b.get('n_excluded', 0),
-                                }
-                            }
                             self._update_results_table('Method B', result_b,
                                                        regression_stats=refinement_stats_b)
                             # Register post-refinement in pipeline/provenance

@@ -282,3 +282,58 @@ def test_headless_refine_nnls_marks_results_as_post_refined():
     final = headless.refine_nnls(an, excluded_files=names[:1])
     assert len(an.nnls_data) == 5 and final is an.nnls_final_results
     assert any("(Post-Refined)" in str(x) for x in final["Fit"])
+
+
+# ----------------------------------------------------------------------------- Method A / B bookkeeping
+def test_refine_method_a_returns_result_and_refinement_info():
+    calls = []
+    an = SimpleNamespace(run_method_a=lambda q_range=None: calls.append(q_range) or "df-a")
+    result, stats = refinement.refine_method_a(an, (1e-4, 2e-4))
+    assert result == "df-a" and calls == [(1e-4, 2e-4)]
+    assert stats == {"refinement_info": {
+        "q_range_str": "1.000e-04 – 2.000e-04 nm⁻²", "q_range": (1e-4, 2e-4),
+        "excluded_files": [], "n_total": None, "n_included": None, "n_excluded": 0}}
+    assert refinement.refine_method_a(an, None)[1]["refinement_info"]["q_range_str"] == "Full range"
+
+
+def test_refine_method_a_returns_none_when_the_analyzer_returns_none():
+    assert refinement.refine_method_a(SimpleNamespace(run_method_a=lambda q_range=None: None), (1, 2)) is None
+
+
+def test_refine_method_b_takes_counts_from_the_analyzer_and_uses_ascii_q_range_text():
+    seen = {}
+
+    def refine(q_range=None, excluded_files=None):
+        seen.update(q=q_range, ex=excluded_files)
+        return "df-b"
+
+    an = SimpleNamespace(refine_method_b=refine,
+                         _method_b_refinement_info={"n_total": 6, "n_included": 4, "n_excluded": 2})
+    result, stats = refinement.refine_method_b(an, (1e-4, 2e-4), ["a", "b"])
+    assert result == "df-b" and seen == {"q": (1e-4, 2e-4), "ex": ["a", "b"]}
+    assert stats["refinement_info"] == {
+        "q_range_str": "1.000e-04 - 2.000e-04 nm-2", "q_range": (1e-4, 2e-4), "excluded_files": ["a", "b"],
+        "n_total": 6, "n_included": 4, "n_excluded": 2}
+
+
+def test_refine_method_b_without_exclusions_passes_none_and_tolerates_missing_info():
+    seen = {}
+    an = SimpleNamespace(refine_method_b=lambda q_range=None, excluded_files=None: seen.update(ex=excluded_files) or "df")
+    _, stats = refinement.refine_method_b(an, None, [])
+    assert seen["ex"] is None
+    assert stats["refinement_info"] == {"q_range_str": "Full range", "q_range": None, "excluded_files": [],
+                                        "n_total": None, "n_included": None, "n_excluded": 0}
+    assert refinement.refine_method_b(SimpleNamespace(refine_method_b=lambda **kw: None)) is None
+
+
+def test_headless_refine_cumulant_a_equals_engine_function():
+    from ade_dls import headless
+    an = SimpleNamespace(run_method_a=lambda q_range=None: "df-a")
+    assert headless.refine_cumulant_a(an, (1.0, 2.0)) == refinement.refine_method_a(an, (1.0, 2.0))
+
+
+def test_analysis_view_delegates_method_a_b_bookkeeping_to_the_engine():
+    src = (Path(__file__).resolve().parents[1] / "ade_dls" / "gui" / "widgets" / "analysis_view.py"
+           ).read_text(encoding="utf-8")
+    assert "refine_method_a(self.cumulant_analyzer" in src and "refine_method_b(self.cumulant_analyzer" in src
+    assert "_method_b_refinement_info" not in src and "cumulant_analyzer.run_method_a" not in src

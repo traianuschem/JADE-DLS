@@ -84,6 +84,46 @@ def refine_method_c(analyzer, q_range: Optional[Tuple[float, float]] = None,
     return result, refinement_stats
 
 
+def refine_method_a(analyzer, q_range: Optional[Tuple[float, float]] = None
+                    ) -> Optional[Tuple[pd.DataFrame, Dict[str, Any]]]:
+    """Re-run Method A (instrument cumulants) for a q^2 range. Returns ``(result_df, stats)`` with
+    the ``refinement_info`` the result table shows, or ``None`` if the analyzer returns nothing."""
+    result = analyzer.run_method_a(q_range=q_range)
+    if result is None:
+        return None
+    q_str = (f"{q_range[0]:.3e} \u2013 {q_range[1]:.3e} nm\u207b\u00b2"
+             if q_range is not None else "Full range")
+    stats = {
+        'refinement_info': {
+            'q_range_str': q_str, 'q_range': q_range, 'excluded_files': [],
+            'n_total': None, 'n_included': None, 'n_excluded': 0,
+        }
+    }
+    return result, stats
+
+
+def refine_method_b(analyzer, q_range: Optional[Tuple[float, float]] = None,
+                    excluded_files: Optional[Sequence[str]] = None
+                    ) -> Optional[Tuple[pd.DataFrame, Dict[str, Any]]]:
+    """Method B post-fit refinement (stored per-file fits, no re-fitting of the correlations) for a
+    q^2 range and/or excluded fits. Returns ``(result_df, stats)`` or ``None``; the counts in
+    ``refinement_info`` come from the analyzer. Errors of the analyzer propagate."""
+    excluded_files = list(excluded_files or [])
+    result = analyzer.refine_method_b(q_range=q_range, excluded_files=excluded_files or None)
+    if result is None:
+        return None
+    info = getattr(analyzer, '_method_b_refinement_info', {}) or {}
+    q_str = (f'{q_range[0]:.3e} - {q_range[1]:.3e} nm-2' if q_range is not None else 'Full range')
+    stats = {
+        'refinement_info': {
+            'q_range_str': q_str, 'q_range': q_range, 'excluded_files': excluded_files,
+            'n_total': info.get('n_total'), 'n_included': info.get('n_included'),
+            'n_excluded': info.get('n_excluded', 0),
+        }
+    }
+    return result, stats
+
+
 def exclude_files_from_method_d(analyzer, excluded_files: Optional[Sequence[str]]) -> int:
     """Drop the rows of the excluded files from ``analyzer.method_d_data`` (before re-clustering).
 

@@ -17,14 +17,14 @@ from typing import Any, Callable, Dict, Optional, Tuple
 
 import numpy as np
 
-from ade_dls.engine import filtering, laplace_runs, refinement, sls_run
+from ade_dls.engine import cumulant_runs, filtering, laplace_runs, refinement, sls_run
 from ade_dls.engine.loading import DataLoadError, SeriesLoader  # noqa: F401  (DataLoadError re-exported)
 from ade_dls.engine.series import preprocess_series
 
 __all__ = [
     "DataLoadError", "load_series", "exclude_files", "preprocess_series", "cumulant_analyzer", "laplace_analyzer",
     "run_cumulant_a", "run_cumulant_b", "run_cumulant_c", "run_cumulant_d",
-    "refine_cumulant_b", "refine_cumulant_c", "refine_cumulant_d", "refine_nnls", "refine_regularized", "run_nnls",
+    "refine_cumulant_a", "refine_cumulant_b", "refine_cumulant_c", "refine_cumulant_d", "refine_nnls", "refine_regularized", "run_nnls",
     "run_regularized", "run_sls", "nnls_defaults", "regularized_defaults", "method_d_defaults",
 ]
 
@@ -124,38 +124,29 @@ def exclude_files(data: Dict[str, Any], files, noise_params: Optional[dict] = No
 # ----------------------------------------------------------------------------- cumulants
 def cumulant_analyzer(data: Dict[str, Any]):
     """CumulantAnalyzer for ``data`` with prepared basedata (as ``MainWindow._prepare_cumulant_analyzer``)."""
-    from ade_dls.engine.cumulant_analyzer import CumulantAnalyzer
-    if not data or 'correlations' not in data:
-        raise ValueError("data has no correlations; call load_series first")
-    if 'data_folder' not in data:
-        raise ValueError("data has no data_folder")
-    analyzer = CumulantAnalyzer(data, data['data_folder'])
-    analyzer.prepare_basedata()
-    return analyzer
+    return cumulant_runs.build_cumulant_analyzer(data)
 
 
 def run_cumulant_a(data, q_range: Optional[Tuple[float, float]] = None,
                    fit_through_origin: bool = False):
     """Method A (instrument cumulants). Returns ``(analyzer, results_dataframe)``."""
     analyzer = cumulant_analyzer(data)
-    return analyzer, analyzer.run_method_a(q_range=q_range, fit_through_origin=fit_through_origin)
+    return analyzer, cumulant_runs.execute_method_a(analyzer, q_range, fit_through_origin)
 
 
 def run_cumulant_b(data, fit_limits: Tuple[float, float], q_range=None,
                    fit_through_origin: bool = False, use_weighting: bool = False):
     """Method B (linearised g2 fit in ``fit_limits`` [s])."""
     analyzer = cumulant_analyzer(data)
-    analyzer.use_weighting = use_weighting
-    return analyzer, analyzer.run_method_b(fit_limits, q_range=q_range,
-                                           fit_through_origin=fit_through_origin)
+    return analyzer, cumulant_runs.execute_method_b(analyzer, fit_limits, q_range,
+                                                    fit_through_origin, use_weighting)
 
 
 def run_cumulant_c(data, params: Dict[str, Any], q_range=None, use_weighting: bool = False):
     """Method C (iterative non-linear fit); ``params`` as built by the GUI dialog (fit_function,
     adaptive_initial_guesses, initial_parameters, fit_limits, optimizer, ...)."""
     analyzer = cumulant_analyzer(data)
-    analyzer.use_weighting = use_weighting
-    return analyzer, analyzer.run_method_c(params, q_range=q_range)
+    return analyzer, cumulant_runs.execute_method_c(analyzer, params, q_range, use_weighting)
 
 
 def run_cumulant_d(data, params: Optional[Dict[str, Any]] = None, q_range=None,
@@ -163,15 +154,22 @@ def run_cumulant_d(data, params: Optional[Dict[str, Any]] = None, q_range=None,
     """Method D (multi-exponential decomposition + cross-file clustering); gold defaults
     (see method_d_defaults) overridden by ``params``."""
     analyzer = cumulant_analyzer(data)
-    analyzer.use_weighting = use_weighting
-    return analyzer, analyzer.run_method_d(_merged(method_d_defaults(), params), q_range=q_range)
+    return analyzer, cumulant_runs.execute_method_d(analyzer, _merged(method_d_defaults(), params),
+                                                    q_range, use_weighting)
 
 
 # ----------------------------------------------------------------------------- post-fit refinement
+def refine_cumulant_a(analyzer, q_range=None):
+    """Re-run Method A for a q^2 range: ``(result_df, refinement_stats)`` or ``None`` (see
+    ade_dls.engine.refinement.refine_method_a). Needs ``analyzer`` from run_cumulant_a."""
+    return refinement.refine_method_a(analyzer, q_range)
+
+
 def refine_cumulant_b(analyzer, q_range=None, excluded_files=None):
     """Re-fit the Method B diffusion regression for a q^2 range / without ``excluded_files``
     (as the GUI post-fit refinement). Needs ``analyzer`` from run_cumulant_b."""
-    return analyzer.refine_method_b(q_range=q_range, excluded_files=excluded_files or None)
+    out = refinement.refine_method_b(analyzer, q_range, excluded_files)
+    return None if out is None else out[0]
 
 
 def refine_cumulant_c(analyzer, q_range=None, excluded_fits=None):
