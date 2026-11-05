@@ -745,6 +745,9 @@ class AnalysisView(QWidget):
                                     f"<td>{orig_val}</td><td>{ref_val}</td></tr>")
                 new_section += "</table>"
 
+        from ade_dls.engine.quality_assessment import (
+            assess_f_statistic, assess_order_r2, assess_p_value, assess_r2, overall_fit_quality)
+
         # Add detailed fit statistics for Gamma vs q² linear regression
         if regression_stats and 'regression_results' in regression_stats:
             # Method A: Multiple regressions (1st, 2nd, 3rd order)
@@ -775,15 +778,7 @@ class AnalysisView(QWidget):
                 new_section += f"<td>{std_err:.6f}</td>"
                 new_section += f"<td>{r2:.6f}</td>"
 
-                if r2 > 0.99:
-                    quality = "✓ Excellent"
-                    color = "green"
-                elif r2 > 0.95:
-                    quality = "○ Good"
-                    color = "orange"
-                else:
-                    quality = "✗ Check"
-                    color = "red"
+                quality, color = assess_order_r2(r2)
                 new_section += f"<td style='color: {color}; font-weight: bold;'>{quality}</td>"
                 new_section += "</tr>"
 
@@ -836,48 +831,23 @@ class AnalysisView(QWidget):
             new_section += f"<tr style='background-color: {model_header_bg}; font-weight: bold;'>"
             new_section += "<th>Metric</th><th>Value</th><th>Optimal Range</th><th>Assessment</th></tr>"
 
-            # Helper function to assess fit quality
-            def assess_metric(value, good_min=None, good_max=None, acceptable_min=None, acceptable_max=None):
-                """Assess a metric value against optimal ranges"""
-                if good_min is not None and good_max is not None:
-                    if good_min <= value <= good_max:
-                        return ("✓ Excellent", "green")
-                elif good_min is not None:
-                    if value >= good_min:
-                        return ("✓ Excellent", "green")
-                elif good_max is not None:
-                    if value <= good_max:
-                        return ("✓ Excellent", "green")
-
-                if acceptable_min is not None and acceptable_max is not None:
-                    if acceptable_min <= value <= acceptable_max:
-                        return ("○ Acceptable", "orange")
-                elif acceptable_min is not None:
-                    if value >= acceptable_min:
-                        return ("○ Acceptable", "orange")
-                elif acceptable_max is not None:
-                    if value <= acceptable_max:
-                        return ("○ Acceptable", "orange")
-
-                return ("✗ Poor", "red")
-
             # R²
             r2 = regression_stats['rsquared']
-            r2_assessment, r2_color = assess_metric(r2, good_min=0.95, acceptable_min=0.90)
+            r2_assessment, r2_color = assess_r2(r2)
             new_section += f"<tr><td><b>R²</b></td><td>{r2:.4f}</td>"
             new_section += f"<td>> 0.95 (Excellent)<br>0.90-0.95 (Acceptable)<br>< 0.90 (Poor)</td>"
             new_section += f"<td style='color: {r2_color}; font-weight: bold;'>{r2_assessment}</td></tr>"
 
             # Adjusted R²
             r2_adj = regression_stats['rsquared_adj']
-            r2_adj_assessment, r2_adj_color = assess_metric(r2_adj, good_min=0.95, acceptable_min=0.90)
+            r2_adj_assessment, r2_adj_color = assess_r2(r2_adj)
             new_section += f"<tr><td><b>Adjusted R²</b></td><td>{r2_adj:.4f}</td>"
             new_section += f"<td>> 0.95 (Excellent)<br>0.90-0.95 (Acceptable)<br>< 0.90 (Poor)</td>"
             new_section += f"<td style='color: {r2_adj_color}; font-weight: bold;'>{r2_adj_assessment}</td></tr>"
 
             # F-statistic
             fvalue = regression_stats['fvalue']
-            f_assessment, f_color = assess_metric(fvalue, good_min=100, acceptable_min=10)
+            f_assessment, f_color = assess_f_statistic(fvalue)
             new_section += f"<tr><td><b>F-statistic</b></td><td>{fvalue:.2f}</td>"
             new_section += f"<td>> 100 (Excellent)<br>10-100 (Acceptable)<br>< 10 (Poor)</td>"
             new_section += f"<td style='color: {f_color}; font-weight: bold;'>{f_assessment}</td></tr>"
@@ -885,12 +855,7 @@ class AnalysisView(QWidget):
             # p-value (F-test)
             f_pvalue = regression_stats['f_pvalue']
             # For p-value, lower is better
-            if f_pvalue < 0.001:
-                p_assessment, p_color = ("✓ Excellent", "green")
-            elif f_pvalue < 0.05:
-                p_assessment, p_color = ("○ Acceptable", "orange")
-            else:
-                p_assessment, p_color = ("✗ Poor", "red")
+            p_assessment, p_color = assess_p_value(f_pvalue)
             new_section += f"<tr><td><b>p-value (F-test)</b></td><td>{f_pvalue:.3e}</td>"
             new_section += f"<td>< 0.001 (Excellent)<br>0.001-0.05 (Acceptable)<br>> 0.05 (Poor)</td>"
             new_section += f"<td style='color: {p_color}; font-weight: bold;'>{p_assessment}</td></tr>"
@@ -899,16 +864,11 @@ class AnalysisView(QWidget):
             new_section += "</table>"
 
             # Overall quality message
-            overall_good = sum([
-                r2 > 0.95,
-                r2_adj > 0.95,
-                fvalue > 100,
-                f_pvalue < 0.001
-            ])
+            overall_level, _n_good = overall_fit_quality(r2, r2_adj, fvalue, f_pvalue)
 
-            if overall_good >= 3:
+            if overall_level == 'EXCELLENT':
                 quality_msg = "<p style='color: green; font-weight: bold; font-size: 14pt;'>✓ Overall Fit Quality: EXCELLENT</p>"
-            elif overall_good >= 2:
+            elif overall_level == 'ACCEPTABLE':
                 quality_msg = "<p style='color: orange; font-weight: bold; font-size: 14pt;'>○ Overall Fit Quality: ACCEPTABLE</p>"
             else:
                 quality_msg = "<p style='color: red; font-weight: bold; font-size: 14pt;'>⚠ Overall Fit Quality: POOR - Consider adjusting fit parameters</p>"
