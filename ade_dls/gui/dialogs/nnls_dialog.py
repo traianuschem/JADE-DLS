@@ -10,6 +10,8 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox,
                              QRadioButton, QButtonGroup, QComboBox)
 from PyQt5.QtCore import Qt, pyqtSignal
 import numpy as np
+from ade_dls.engine.laplace_preview import (gamma_q2_series, mode_count_color, peak_count_summary,
+                                             peak_count_text, preview_gamma_table, with_decay_rates)
 import pandas as pd
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
@@ -761,45 +763,19 @@ class NNLSDialog(QDialog):
         No clustering: that belongs to the full analysis run, not the preview.
         """
         try:
-            if not preview_results:
+            summary = peak_count_summary(preview_results)
+            if summary is None:
                 self.detected_modes_label.setText("Detected modes: N/A")
                 self.detected_modes_label.setStyleSheet(
                     "font-weight: bold; color: orange; padding: 5px;")
                 return
 
-            peak_counts = []
-            for result in preview_results:
-                n_peaks = sum(
-                    1 for k, v in result.items()
-                    if k.startswith('tau_') and v is not None
-                    and not (isinstance(v, float) and np.isnan(v))
-                )
-                peak_counts.append(n_peaks)
-
-            n_modes = int(round(np.median(peak_counts)))
-            min_p, max_p = int(min(peak_counts)), int(max(peak_counts))
-
-            if min_p == max_p:
-                mode_text = f"Detected modes: {n_modes}"
-            else:
-                mode_text = f"Detected modes: {n_modes} (range {min_p}–{max_p})"
-
-            self.detected_modes_label.setText(mode_text)
-
-            # Color coding by median peak count
-            if n_modes == 0:
-                color = "#f44336"   # Red — no peaks found
-            elif n_modes == 1:
-                color = "#4CAF50"   # Green — monodisperse
-            elif n_modes <= 3:
-                color = "#2196F3"   # Blue — few modes
-            else:
-                color = "#FF9800"   # Orange — many modes
-
+            n_modes, min_p, max_p = summary
+            self.detected_modes_label.setText(peak_count_text(summary))
             self.detected_modes_label.setStyleSheet(
-                f"font-weight: bold; color: {color}; padding: 5px;")
+                f"font-weight: bold; color: {mode_count_color(n_modes)}; padding: 5px;")
             print(f"[Preview] Peak count: median={n_modes}, range={min_p}–{max_p} "
-                  f"across {len(peak_counts)} datasets")
+                  f"across {len(preview_results)} datasets")
 
         except Exception as e:
             print(f"[Preview] Error counting modes: {e}")
@@ -814,7 +790,6 @@ class NNLSDialog(QDialog):
         """
         from ade_dls.analysis.clustering import clustering_parameter_sweep
         from ade_dls.engine.cumulant_plotting import plot_clustering_heatmap
-        from ade_dls.analysis.regularized_optimized import calculate_decay_rates
         from PyQt5.QtWidgets import QDialog, QVBoxLayout, QApplication
         from matplotlib.backends.backend_qt5agg import (FigureCanvasQTAgg,
                                                          NavigationToolbar2QT)
@@ -823,29 +798,19 @@ class NNLSDialog(QDialog):
             return
 
         try:
-            preview_df = pd.DataFrame(self.preview_results)
-
-            # Attach q² values from basedata
-            basedata = self.laplace_analyzer.df_basedata
-            q2_vals = []
-            for fname in self.preview_datasets:
-                rows = basedata[basedata['filename'] == fname]
-                q2_vals.append(rows.iloc[0]['q^2'] if len(rows) > 0 else None)
-            preview_df['q^2'] = q2_vals
-            preview_df = preview_df.dropna(subset=['q^2'])
+            preview_df = preview_gamma_table(self.preview_results, self.preview_datasets,
+                                             self.laplace_analyzer.df_basedata)
 
             if len(preview_df) < 2:
                 self.preview_info_label.setText('Too few preview datasets for sweep.')
                 return
 
-            tau_cols   = [c for c in preview_df.columns if c.startswith('tau_')]
+            preview_df, tau_cols, gamma_cols = with_decay_rates(preview_df)
             if not tau_cols:
                 self.preview_info_label.setText('No tau columns found in preview data.')
                 return
 
-            preview_df = calculate_decay_rates(preview_df, tau_cols)
-            gamma_cols = [c.replace('tau', 'gamma') for c in tau_cols
-                          if c.replace('tau', 'gamma') in preview_df.columns]
+            gamma_cols = [c for c in gamma_cols if c in preview_df.columns]
             if not gamma_cols:
                 self.preview_info_label.setText('No gamma columns computed from preview.')
                 return
@@ -905,101 +870,46 @@ class NNLSDialog(QDialog):
 
         This helps visualize the clustering behavior and identify if modes
         are being correctly grouped across different scattering angles.
+        The data and the log-log fits come from ade_dls.engine.laplace_preview.
 
         Args:
-            preview_results: List of result dicts from NNLS preview
+            preview_results: List of result dicts from the preview
             selected_datasets: List of dataset names used in preview
 
         Returns:
             matplotlib Figure or None if error
         """
         try:
-            # Create a DataFrame from preview results
-            preview_df = pd.DataFrame(preview_results)
-
-            # Get q² values from basedata
-            basedata = self.laplace_analyzer.df_basedata
-
-            q_squared_values = []
-            for filename in selected_datasets:
-                matching_rows = basedata[basedata['filename'] == filename]
-                if len(matching_rows) > 0:
-                    q_squared_values.append(matching_rows.iloc[0]['q^2'])
-                else:
-                    q_squared_values.append(None)
-
-            preview_df['q^2'] = q_squared_values
-            preview_df = preview_df.dropna(subset=['q^2'])
-
-            if len(preview_df) < 1:
+            data = gamma_q2_series(preview_results, selected_datasets,
+                                   self.laplace_analyzer.df_basedata)
+            if data is None:
                 return None
-
-            # Find all tau columns
-            tau_cols = [col for col in preview_df.columns if col.startswith('tau_')]
-            if len(tau_cols) == 0:
-                return None
-
-            # Calculate Γ values from tau values
-            # Γ = 1/τ
-            from ade_dls.analysis.regularized_optimized import calculate_decay_rates
-            preview_df = calculate_decay_rates(preview_df, tau_cols)
-
-            # Get gamma columns
-            gamma_cols = [col.replace('tau', 'gamma') for col in tau_cols]
+            series, n_columns = data
 
             # Create figure
             fig = Figure(figsize=(10, 6))
             ax = fig.add_subplot(111)
 
             # Plot each peak as a separate series
-            colors = plt.cm.tab10(np.linspace(0, 1, len(gamma_cols)))
+            colors = plt.cm.tab10(np.linspace(0, 1, n_columns))
 
-            for i, (gamma_col, tau_col) in enumerate(zip(gamma_cols, tau_cols)):
-                if gamma_col not in preview_df.columns:
-                    continue
-
-                # Extract valid data points
-                valid_mask = preview_df[gamma_col].notna()
-                q2_values = preview_df.loc[valid_mask, 'q^2'].values
-                gamma_values = preview_df.loc[valid_mask, gamma_col].values
-
-                if len(q2_values) == 0:
-                    continue
-
+            for s in series:
                 # Plot in log-log scale
-                ax.loglog(q2_values, gamma_values, 'o', color=colors[i],
-                         markersize=8, alpha=0.7, label=f'Peak {i+1}',
+                ax.loglog(s.q2, s.gamma, 'o', color=colors[s.index],
+                         markersize=8, alpha=0.7, label=f'Peak {s.index + 1}',
                          markeredgecolor='black', markeredgewidth=0.5)
 
-                # Try to fit a line if we have enough points
-                if len(q2_values) >= 2:
-                    # Linear fit in log-space: log(Γ) = log(D) + log(q²)
-                    # So Γ = D × q²
-                    log_q2 = np.log10(q2_values)
-                    log_gamma = np.log10(gamma_values)
-
-                    # Simple linear fit
-                    coeffs = np.polyfit(log_q2, log_gamma, 1)
-                    slope = coeffs[0]
-                    intercept = coeffs[1]
-
-                    # Plot fit line
-                    q2_fit = np.logspace(np.log10(q2_values.min()), np.log10(q2_values.max()), 50)
-                    gamma_fit = 10**(slope * np.log10(q2_fit) + intercept)
-
-                    ax.loglog(q2_fit, gamma_fit, '--', color=colors[i],
+                if s.q2_fit is not None:
+                    ax.loglog(s.q2_fit, s.gamma_fit, '--', color=colors[s.index],
                              alpha=0.5, linewidth=1.5)
 
-                    # Calculate D from slope
                     # If slope ≈ 1, then D ≈ 10^intercept
-                    D_estimate = 10**intercept if abs(slope - 1.0) < 0.2 else None
-
-                    if D_estimate is not None:
+                    if s.d_estimate is not None:
                         # Add label with D estimate
-                        mid_idx = len(q2_fit) // 2
-                        ax.text(q2_fit[mid_idx], gamma_fit[mid_idx],
-                               f'D≈{D_estimate:.2e}',
-                               fontsize=8, color=colors[i],
+                        mid_idx = len(s.q2_fit) // 2
+                        ax.text(s.q2_fit[mid_idx], s.gamma_fit[mid_idx],
+                               f'D≈{s.d_estimate:.2e}',
+                               fontsize=8, color=colors[s.index],
                                bbox=dict(boxstyle='round,pad=0.3',
                                        facecolor='white', alpha=0.7))
 

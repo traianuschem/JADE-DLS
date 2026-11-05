@@ -10,6 +10,8 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox,
                              QButtonGroup, QRadioButton)
 from PyQt5.QtCore import Qt, pyqtSignal
 import numpy as np
+from ade_dls.engine.laplace_preview import (estimate_modes_by_clustering, gamma_q2_series,
+                                             mode_count_color, regularized_preview_params)
 import pandas as pd
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
@@ -668,16 +670,7 @@ class RegularizedDialog(QDialog):
             self.preview_datasets = selected_keys
 
             # Create parameters for regularized fit
-            reg_params = {
-                'decay_times': self.params['decay_times'],
-                'prominence': self.params['prominence'],
-                'distance': self.params['distance'],
-                'alpha': self.params['alpha'],
-                'normalize': self.params['normalize'],
-                'sparsity_penalty': self.params['sparsity_penalty'],
-                'enforce_unimodality': self.params['enforce_unimodality'],
-                'fit_beta': self.params.get('fit_beta', False)
-            }
+            reg_params = regularized_preview_params(self.params)
 
             # Generate preview using regularized fit
             self._create_regularized_preview(selected_keys, reg_params)
@@ -793,91 +786,37 @@ class RegularizedDialog(QDialog):
     def _estimate_mode_count_from_preview(self, preview_results, selected_datasets):
         """
         Estimate the number of modes from preview results using clustering
+        (ade_dls.engine.laplace_preview.estimate_modes_by_clustering)
 
         Args:
             preview_results: List of result dicts from Regularized preview
             selected_datasets: List of dataset names used in preview
         """
         try:
-            # Check if clustering is enabled
-            if not self.params.get('use_clustering', True):
+            distance_threshold = self.params.get('distance_threshold', 2.0)
+            estimate = estimate_modes_by_clustering(
+                preview_results, selected_datasets, self.laplace_analyzer.df_basedata,
+                use_clustering=self.params.get('use_clustering', True),
+                distance_threshold=distance_threshold,
+                clustering_strategy=self.params.get('clustering_strategy', 'silhouette_refined'))
+
+            if estimate.status == 'disabled':
                 self.detected_modes_label.setText("Detected modes: N/A (clustering disabled)")
                 self.detected_modes_label.setStyleSheet("font-weight: bold; color: gray; padding: 5px;")
                 return
-
-            # Create a DataFrame from preview results
-            preview_df = pd.DataFrame(preview_results)
-
-            # Get q² values from basedata for the selected datasets
-            basedata = self.laplace_analyzer.df_basedata
-
-            # Match filenames to get q² values
-            q_squared_values = []
-            for filename in selected_datasets:
-                # Find matching row in basedata
-                matching_rows = basedata[basedata['filename'] == filename]
-                if len(matching_rows) > 0:
-                    q_squared_values.append(matching_rows.iloc[0]['q^2'])
-                else:
-                    print(f"[Preview Clustering] Warning: {filename} not found in basedata")
-                    q_squared_values.append(None)
-
-            # Add q² column to preview_df
-            preview_df['q^2'] = q_squared_values
-
-            # Remove rows with missing q² values
-            preview_df = preview_df.dropna(subset=['q^2'])
-
-            if len(preview_df) < 2:
+            if estimate.status == 'insufficient':
                 self.detected_modes_label.setText("Detected modes: N/A (insufficient data)")
                 self.detected_modes_label.setStyleSheet("font-weight: bold; color: orange; padding: 5px;")
                 return
-
-            # Perform preview clustering — hierarchical Ward (same method as full analysis)
-            from ade_dls.analysis.regularized_optimized import calculate_decay_rates
-            from ade_dls.analysis.clustering import cluster_all_gammas
-
-            distance_threshold = self.params.get('distance_threshold', 2.0)
-            clustering_strategy = self.params.get('clustering_strategy', 'silhouette_refined')
-
-            tau_cols = [c for c in preview_df.columns if c.startswith('tau_')]
-            if not tau_cols:
+            if estimate.status == 'no_tau':
                 self.detected_modes_label.setText("Detected modes: N/A (no tau columns)")
                 return
 
-            preview_df = calculate_decay_rates(preview_df, tau_cols)
-            gamma_cols = [c.replace('tau', 'gamma') for c in tau_cols]
-
-            _, cluster_info = cluster_all_gammas(
-                preview_df,
-                gamma_cols=gamma_cols,
-                q_squared_col='q^2',
-                enable_clustering=True,
-                normalize_by_q2=True,
-                distance_threshold=distance_threshold,
-                clustering_strategy=clustering_strategy,
-                interactive=False,
-                plot=False,
-            )
-
-            # Count reliable modes
-            n_modes = cluster_info.get('n_populations', 0)
-
-            # Update label
-            mode_text = f"Detected modes: {n_modes} mode{'s' if n_modes != 1 else ''}"
-            self.detected_modes_label.setText(mode_text)
-
-            # Color based on mode count
-            if n_modes == 0:
-                color = "#f44336"  # Red - no modes
-            elif n_modes == 1:
-                color = "#4CAF50"  # Green - monodisperse
-            elif n_modes <= 3:
-                color = "#2196F3"  # Blue - few modes
-            else:
-                color = "#FF9800"  # Orange - many modes
-
-            self.detected_modes_label.setStyleSheet(f"font-weight: bold; color: {color}; padding: 5px;")
+            n_modes = estimate.n_modes
+            self.detected_modes_label.setText(
+                f"Detected modes: {n_modes} mode{'s' if n_modes != 1 else ''}")
+            self.detected_modes_label.setStyleSheet(
+                f"font-weight: bold; color: {mode_count_color(n_modes)}; padding: 5px;")
 
             print(f"[Preview Clustering] Estimated {n_modes} modes with distance_threshold={distance_threshold:.1f}")
 
@@ -894,101 +833,46 @@ class RegularizedDialog(QDialog):
 
         This helps visualize the clustering behavior and identify if modes
         are being correctly grouped across different scattering angles.
+        The data and the log-log fits come from ade_dls.engine.laplace_preview.
 
         Args:
-            preview_results: List of result dicts from Regularized preview
+            preview_results: List of result dicts from the preview
             selected_datasets: List of dataset names used in preview
 
         Returns:
             matplotlib Figure or None if error
         """
         try:
-            # Create a DataFrame from preview results
-            preview_df = pd.DataFrame(preview_results)
-
-            # Get q² values from basedata
-            basedata = self.laplace_analyzer.df_basedata
-
-            q_squared_values = []
-            for filename in selected_datasets:
-                matching_rows = basedata[basedata['filename'] == filename]
-                if len(matching_rows) > 0:
-                    q_squared_values.append(matching_rows.iloc[0]['q^2'])
-                else:
-                    q_squared_values.append(None)
-
-            preview_df['q^2'] = q_squared_values
-            preview_df = preview_df.dropna(subset=['q^2'])
-
-            if len(preview_df) < 1:
+            data = gamma_q2_series(preview_results, selected_datasets,
+                                   self.laplace_analyzer.df_basedata)
+            if data is None:
                 return None
-
-            # Find all tau columns
-            tau_cols = [col for col in preview_df.columns if col.startswith('tau_')]
-            if len(tau_cols) == 0:
-                return None
-
-            # Calculate Γ values from tau values
-            # Γ = 1/τ
-            from ade_dls.analysis.regularized_optimized import calculate_decay_rates
-            preview_df = calculate_decay_rates(preview_df, tau_cols)
-
-            # Get gamma columns
-            gamma_cols = [col.replace('tau', 'gamma') for col in tau_cols]
+            series, n_columns = data
 
             # Create figure
             fig = Figure(figsize=(10, 6))
             ax = fig.add_subplot(111)
 
             # Plot each peak as a separate series
-            colors = plt.cm.tab10(np.linspace(0, 1, len(gamma_cols)))
+            colors = plt.cm.tab10(np.linspace(0, 1, n_columns))
 
-            for i, (gamma_col, tau_col) in enumerate(zip(gamma_cols, tau_cols)):
-                if gamma_col not in preview_df.columns:
-                    continue
-
-                # Extract valid data points
-                valid_mask = preview_df[gamma_col].notna()
-                q2_values = preview_df.loc[valid_mask, 'q^2'].values
-                gamma_values = preview_df.loc[valid_mask, gamma_col].values
-
-                if len(q2_values) == 0:
-                    continue
-
+            for s in series:
                 # Plot in log-log scale
-                ax.loglog(q2_values, gamma_values, 'o', color=colors[i],
-                         markersize=8, alpha=0.7, label=f'Peak {i+1}',
+                ax.loglog(s.q2, s.gamma, 'o', color=colors[s.index],
+                         markersize=8, alpha=0.7, label=f'Peak {s.index + 1}',
                          markeredgecolor='black', markeredgewidth=0.5)
 
-                # Try to fit a line if we have enough points
-                if len(q2_values) >= 2:
-                    # Linear fit in log-space: log(Γ) = log(D) + log(q²)
-                    # So Γ = D × q²
-                    log_q2 = np.log10(q2_values)
-                    log_gamma = np.log10(gamma_values)
-
-                    # Simple linear fit
-                    coeffs = np.polyfit(log_q2, log_gamma, 1)
-                    slope = coeffs[0]
-                    intercept = coeffs[1]
-
-                    # Plot fit line
-                    q2_fit = np.logspace(np.log10(q2_values.min()), np.log10(q2_values.max()), 50)
-                    gamma_fit = 10**(slope * np.log10(q2_fit) + intercept)
-
-                    ax.loglog(q2_fit, gamma_fit, '--', color=colors[i],
+                if s.q2_fit is not None:
+                    ax.loglog(s.q2_fit, s.gamma_fit, '--', color=colors[s.index],
                              alpha=0.5, linewidth=1.5)
 
-                    # Calculate D from slope
                     # If slope ≈ 1, then D ≈ 10^intercept
-                    D_estimate = 10**intercept if abs(slope - 1.0) < 0.2 else None
-
-                    if D_estimate is not None:
+                    if s.d_estimate is not None:
                         # Add label with D estimate
-                        mid_idx = len(q2_fit) // 2
-                        ax.text(q2_fit[mid_idx], gamma_fit[mid_idx],
-                               f'D≈{D_estimate:.2e}',
-                               fontsize=8, color=colors[i],
+                        mid_idx = len(s.q2_fit) // 2
+                        ax.text(s.q2_fit[mid_idx], s.gamma_fit[mid_idx],
+                               f'D≈{s.d_estimate:.2e}',
+                               fontsize=8, color=colors[s.index],
                                bbox=dict(boxstyle='round,pad=0.3',
                                        facecolor='white', alpha=0.7))
 
