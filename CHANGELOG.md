@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **LS Instruments parser: measurement duration and mean count rates were discarded.** `LSInstrumentsParser.extract_basedata` set `duration [s]`, `meancr0 [kHz]` and `meancr1 [kHz]` to NaN although `Summary.csv` provides them (`Duration [s]`, `Average count rate A/B [kHz]`). As a consequence the noise weighting was reported as unavailable for all LS Instruments data. The values are now read from `Summary.csv` (NaN only if a column is missing); `monitordiode [cps]` stays NaN (not provided by the instrument). Regression tests in `tests/test_parser_contract.py`.
+
 ## [4.0.0] - 2026-11-05
 
 Major release: the computation code is separated from the PyQt5 GUI and can be used headless. Several numerical corrections found during the verification for the paper revision change results compared with 3.x (see **Changed**).
@@ -53,7 +59,7 @@ Major release: the computation code is separated from the PyQt5 GUI and can be u
 ### Added
 
 - **Heteroscedastic noise weighting (Biganzoli & Ferri 2018), ported from JADE-DLS v3.0** (`ade_dls/analysis/weighting.py`, new module — verbatim port of JADE's `weighting.py`, verified bit-identical against the original on real ALV data): corrects the classical Schätzel (1990) DLS noise formula for "triangular averaging", the finite-sampling-time effect of multi-tau correlators. Weights are computed **once** per filtered dataset (`ade_dls/gui/core/correlation_preprocessing.py`, new module) from `Duration`/`MeanCR0`/`MeanCR1` (see below), stored on the pipeline data dict, and opted into **per analysis** via a "Use noise weighting" checkbox (default off, matching the JADE-DLS default) in the Cumulant B/C/D, NNLS and Regularized dialogs. `LaplaceAnalyzer.set_weighting()` / `CumulantAnalyzer.use_weighting` toggle between the weighted and unweighted correlation dict without recomputing or re-noise-correcting it. Every fitting function auto-detects a `'weight'` column exactly like JADE: `regularized_optimized.nnls_optimized`/`regularized_nnls_optimized`, Method B (`cumulant_plotting.plot_processed_correlations_no_show`, `analysis/cumulants.plot_processed_correlations`), Method C (`analysis/cumulants_C.plot_processed_correlations_iterative`), Method D (`analysis/cumulants_D.fit_cumulant_D`). New `weighted` / `weighted_R_squared` result columns. Unweighted results are numerically unchanged (verified via the `_dev/comparison` harness: 0 of 22 compared metrics changed after the port).
-- **`preprocessing.extract_data()` now also extracts `Duration [s]`, `MeanCR0 [kHz]`, `MeanCR1 [kHz]`, `Monitor Diode [cps]`** from the ALV header (JADE-DLS v3.0 parity), needed for noise weighting and SLS intensity normalization. Optional fields (NaN when absent, e.g. LS Instruments data) — does not affect the existing required-field validation. The file-read line cap was removed (`Monitor Diode` is a trailer field written after the full count-rate trace, far beyond the previous 200-line window).
+- **`preprocessing.extract_data()` now also extracts `Duration [s]`, `MeanCR0 [kHz]`, `MeanCR1 [kHz]`, `Monitor Diode [cps]`** from the ALV header (JADE-DLS v3.0 parity), needed for noise weighting and SLS intensity normalization. Optional fields (NaN when absent) — does not affect the existing required-field validation. The file-read line cap was removed (`Monitor Diode` is a trailer field written after the full count-rate trace, far beyond the previous 200-line window).
 - `regularized_nnls_optimized`: `peak_method='centroid'` is now actually wired up (previously silently ignored despite a GUI option for it).
 - **Provenance output entries now carry an absolute `path`** (previously only a hash and a label), and an optional structured `description` dict (plot/method/panel/series/kind/columns/...) — both are also emitted in the PROV-JSON export as `jade:path`/`jade:description` (`ade_dls/gui/core/provenance.py`).
 

@@ -62,6 +62,16 @@ class LSInstrumentsParser(InstrumentParser):
         meas = os.path.basename(os.path.dirname(measurement_id))     # "Measurement 1"
         return f"{meas} - {rep}"
 
+    @staticmethod
+    def _optional_float(row: pd.Series, column: str) -> float:
+        """Float value of ``column`` or NaN if the column is absent/unparsable."""
+        if column not in row.index:
+            return np.nan
+        try:
+            return float(row[column])
+        except (ValueError, TypeError):
+            return np.nan
+
     def extract_basedata(self, measurement_id: str) -> Optional[pd.DataFrame]:
         path = os.path.join(measurement_id, "Summary.csv")
         if not os.path.exists(path):
@@ -79,14 +89,16 @@ class LSInstrumentsParser(InstrumentParser):
             'wavelength [nm]':  [wavelength_nm],
             'refractive_index': [n],
             'viscosity [cp]':   [float(s['Solvent viscosity [mPas]'])],  # mPas = cP
-            # Not available from LS Instruments' Summary.csv -- noise
-            # weighting (analysis.weighting) and SLS monitor-diode
-            # normalization are therefore unavailable for this instrument;
-            # these columns exist purely for schema parity with the ALV
-            # parser so downstream code can rely on their presence.
-            'duration [s]':       [np.nan],
-            'meancr0 [kHz]':      [np.nan],
-            'meancr1 [kHz]':      [np.nan],
+            # Measurement duration and mean count rates (channels A/B) are
+            # stored in Summary.csv and feed the noise weighting
+            # (analysis.weighting). If a column is missing (other LSLab
+            # version) the value is NaN -> weighting reports "unavailable";
+            # no other column is guessed as a substitute.
+            'duration [s]':       [self._optional_float(s, 'Duration [s]')],
+            'meancr0 [kHz]':      [self._optional_float(s, 'Average count rate A [kHz]')],
+            'meancr1 [kHz]':      [self._optional_float(s, 'Average count rate B [kHz]')],
+            # LS Instruments provides no monitor diode signal; only the SLS
+            # monitor-diode normalization is unavailable for this instrument.
             'monitordiode [cps]': [np.nan],
             'filename':         [self.get_label(measurement_id)],
             'folder':           [measurement_id],

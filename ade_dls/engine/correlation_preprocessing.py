@@ -52,9 +52,9 @@ def preprocess_correlations(
         correlations: raw per-file correlation DataFrames (as stored in
             ``pipeline.data['correlations']`` after filtering).
         df_basedata: the matching (filtered) base-data DataFrame. May be
-            ``None`` or lack the optional weighting columns (e.g. LS
-            Instruments data) -- weighting is then unavailable, not an
-            error.
+            ``None`` or lack the optional weighting columns (e.g. a
+            parser that does not provide them) -- weighting is then
+            unavailable, not an error.
         noise_params: optional dict forwarded to
             ``ade_dls.analysis.noise.apply_noise_corrections`` (baseline /
             intercept correction), or ``None``/falsy to skip it.
@@ -83,7 +83,7 @@ def preprocess_correlations(
 
     if df_basedata is None or not all(c in df_basedata.columns for c in REQUIRED_WEIGHT_COLS):
         reason = ("basedata carries no Duration/MeanCR0/MeanCR1 columns "
-                   "(e.g. non-ALV instrument) -- noise weighting unavailable.")
+                   "(e.g. a parser that does not provide them) -- noise weighting unavailable.")
     else:
         sub = df_basedata[df_basedata['filename'].isin(list(processed.keys()))]
         bad = sub.loc[sub[REQUIRED_WEIGHT_COLS].isna().any(axis=1), 'filename'].tolist()

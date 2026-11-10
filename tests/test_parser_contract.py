@@ -136,3 +136,74 @@ def test_ls_prepare_basedata():
     assert df is not None and not df.empty
     assert 'q' in df.columns and 'q^2' in df.columns
     assert set(df['filename']) == set(correlations.keys())
+
+
+# ---------------------------------------------------------------------------
+# LS Instruments: duration / mean count rates must come from Summary.csv
+# (regression tests; the parser used to hard-code NaN for these columns).
+# ---------------------------------------------------------------------------
+LS_AU2 = os.path.join(_REPO, "_dev", "LS-ComparisonData_FlorianTrummer",
+                      "TU Freiberg", "Au2")
+_skip_au2 = pytest.mark.skipif(not os.path.isdir(LS_AU2),
+                               reason="LS Au2 comparison dataset not available")
+
+
+def _au2_units():
+    from ade_dls.core.parsers.ls_instruments_parser import LSInstrumentsParser
+    p = LSInstrumentsParser()
+    return p, p.get_file_list(LS_AU2)
+
+
+def _au2_sample(files):
+    """First unit plus a deterministic sample spread over all units."""
+    idx = sorted({0, len(files) - 1, *range(0, len(files), 7)})
+    return [files[i] for i in idx]
+
+
+@_skip_au2
+def test_ls_basedata_duration_and_countrates_from_summary():
+    import numpy as np
+    import pandas as pd
+    p, files = _au2_units()
+    assert files
+    for unit in _au2_sample(files):
+        s = pd.read_csv(os.path.join(unit, "Summary.csv"), encoding="utf-8-sig").iloc[0]
+        bd = p.extract_basedata(unit).iloc[0]
+        dur = float(s['Duration [s]'])
+        a = float(s['Average count rate A [kHz]'])
+        b = float(s['Average count rate B [kHz]'])
+        assert dur == 12
+        assert bd['duration [s]'] == pytest.approx(dur, rel=1e-12), unit
+        assert bd['meancr0 [kHz]'] == pytest.approx(a, rel=1e-12), unit
+        assert bd['meancr1 [kHz]'] == pytest.approx(b, rel=1e-12), unit
+        for col in ('duration [s]', 'meancr0 [kHz]', 'meancr1 [kHz]'):
+            assert np.isfinite(bd[col]) and bd[col] > 0, (unit, col)
+        # LS provides no monitor diode: stays NaN (explicitly intended).
+        assert np.isnan(bd['monitordiode [cps]'])
+
+
+@_skip_au2
+def test_ls_basedata_countrates_consistent_with_count_trace():
+    p, files = _au2_units()
+    for unit in _au2_sample(files):
+        bd = p.extract_basedata(unit).iloc[0]
+        cr = p.extract_countrates(unit)
+        assert bd['meancr0 [kHz]'] == pytest.approx(cr['detectorslot 1'].mean(), rel=1e-9), unit
+        assert bd['meancr1 [kHz]'] == pytest.approx(cr['detectorslot 2'].mean(), rel=1e-9), unit
+
+
+@_skip_au2
+def test_ls_end_to_end_weighting_available():
+    import matplotlib
+    matplotlib.use("Agg")
+    import numpy as np
+    from ade_dls.headless import load_series
+    from ade_dls.engine.series import preprocess_series
+
+    data = load_series(LS_AU2, load_countrates=False, load_cumulants=False, preprocess=False)
+    preprocess_series(data)
+    assert data['weighting_available'] is True, data.get('weighting_unavailable_reason')
+    weights = data['weights']
+    assert set(weights) == set(data['correlations'])
+    for name, w in weights.items():
+        assert np.mean(np.asarray(w, dtype=float)) == pytest.approx(1.0, rel=1e-6), name
