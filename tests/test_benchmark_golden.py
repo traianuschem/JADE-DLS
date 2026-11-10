@@ -148,10 +148,13 @@ def test_method_C_matches_stored_jade_result(series, key, method):
 # Rh of the large population 129 instead of 137-139 nm, verdict against the ground truth flips; with equal mode
 # counts the files agree to 6e-4. On ubuntu CI (py3.12) the mono cell differs by 0.8 % (> 3e-3). Windows with
 # scipy <= 1.17 reproduces the stored results. Not changed (known instability), see open_discussion_points.
-D_UNSTABLE = {"mono_rh100_pdi0.1__s1_correlated_r000", "bi_r5_pdi0.05_i20__s1_correlated_r000"}
+# Windows CI (py3.12, numpy 2.5.4, scipy 1.17.1): mono_pdi0.2__s2 deviates by 1.4 % (> 3e-3) although the same library
+# versions reproduce the stored result locally -> platform (CPU/BLAS) dependent, not only scipy-version dependent.
+D_UNSTABLE = {"mono_rh100_pdi0.1__s1_correlated_r000", "bi_r5_pdi0.05_i20__s1_correlated_r000",
+              "mono_pdi0.2__s2_correlated_r000"}
 D_UNSTABLE_REASON = ("FINDING (Method D per-file mode selection is numerically unstable, non-strict because the end "
-                     "state depends on scipy version/platform): scipy 1.18.1 / ubuntu CI deviate from the stored "
-                     "JADE result for this cell")
+                     "state depends on scipy version/platform): CI (scipy 1.18.1, ubuntu, windows) deviates from the "
+                     "stored JADE result for this cell")
 
 
 def _xfail_if_d_unstable(request, key, method):

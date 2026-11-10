@@ -118,6 +118,7 @@ Format details and how to add a parser: [docs/data_formats.md](docs/data_formats
 ## Known issues
 
 - **Newer SciPy versions (≥ 1.18) are not supported yet.** The per-file selection of the number of modes in Method D is numerically unstable; with SciPy 1.18.1 it changed for individual files of a bimodal test series, which shifted the Rh of the larger population by about 5 %. SciPy is therefore limited to 1.15–1.17 in the installation requirements. A robust mode selection is planned for the next release.
+- Method D can also deviate between platforms with identical library versions: on one CI runner the Rh of a simulated monodisperse series differed by 1.4 % from the stored reference. The test suite records these cases as expected failures.
 - Results of the numerically sensitive fits (Method C, NNLS, Regularized NNLS, Method D) can differ slightly between platforms and library versions; the test suite compares them with tolerances and documents known deviations as expected failures.
 
 ## Development
