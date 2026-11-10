@@ -111,7 +111,7 @@ Format details and how to add a parser: [docs/data_formats.md](docs/data_formats
 ## Requirements
 
 - Python 3.10+
-- NumPy ≥ 2.0, SciPy ≥ 1.15, pandas ≥ 2.2, Matplotlib ≥ 3.9
+- NumPy ≥ 2.0, SciPy 1.15–1.17, pandas ≥ 2.2, Matplotlib ≥ 3.9
 - scikit-learn ≥ 1.5, statsmodels ≥ 0.14.4, joblib ≥ 1.4
 - GUI: PyQt5 ≥ 5.15
 

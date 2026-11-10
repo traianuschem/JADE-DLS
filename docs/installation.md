@@ -3,8 +3,10 @@
 ## Requirements
 
 - Python 3.10 or later
-- Core dependencies (installed automatically): NumPy ≥ 2.0, SciPy ≥ 1.15, Pandas ≥ 2.2, Matplotlib ≥ 3.9, scikit-learn ≥ 1.5, statsmodels ≥ 0.14.4, joblib ≥ 1.4
+- Core dependencies (installed automatically): NumPy ≥ 2.0, SciPy 1.15–1.17, Pandas ≥ 2.2, Matplotlib ≥ 3.9, scikit-learn ≥ 1.5, statsmodels ≥ 0.14.4, joblib ≥ 1.4
 - GUI dependencies (optional): PyQt5 ≥ 5.15, nbformat ≥ 5.1, jupyter, ipywidgets
+
+SciPy 1.18 is excluded: the per-file mode selection of Method D is numerically unstable and gave different results (e.g. a different number of modes for individual files of a bimodal test series) with SciPy 1.18.1 than with SciPy ≤ 1.17.
 
 ## Installing from Source
 
