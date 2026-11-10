@@ -1,12 +1,12 @@
 """
-Tests for ade_dls.gui.core.correlation_preprocessing (JADE-DLS v3.0):
+Tests for ade_dls.engine.correlation_preprocessing (JADE-DLS v3.0):
 the single place processed correlations, noise correction and noise
 weights are computed once per (filtered) dataset.
 """
 import numpy as np
 import pandas as pd
 
-from ade_dls.gui.core.correlation_preprocessing import preprocess_correlations
+from ade_dls.engine.correlation_preprocessing import preprocess_correlations
 
 
 def _raw_correlations(n=50, seed=0):

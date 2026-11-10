@@ -85,7 +85,7 @@ def test_write_tables_raises_on_empty():
 
 def test_provenance_registration_records_hash_path_and_description(tmp_path):
     """register_outputs_in_provenance should add a hashed, path-carrying output entry."""
-    from ade_dls.gui.core.provenance import ProvenanceRecord
+    from ade_dls.engine.provenance import ProvenanceRecord
 
     class _PanelStub:
         def __init__(self):

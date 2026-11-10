@@ -102,6 +102,8 @@ def test_core_layers_import_without_pyqt():
 @pytest.mark.parametrize("old,new", sorted(MOVED.items()))
 def test_old_gui_paths_are_aliases_of_engine_modules(old, new):
     """Backwards compatibility: the old import path yields the very same module object."""
+    if old.startswith("ade_dls.gui.core."):
+        pytest.importorskip("PyQt5")        # importing the package ade_dls.gui.core pulls in the Qt pipeline wrapper
     code = (
         "import importlib\n"
         "a = importlib.import_module(%r)\n"
