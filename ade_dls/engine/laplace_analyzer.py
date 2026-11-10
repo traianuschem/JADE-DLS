@@ -823,6 +823,7 @@ class LaplaceAnalyzer:
                 print("[Regularized] Too few datasets for multiprocessing, using sequential processing")
 
             plot_number = 1
+            failures = []
             for idx, (name, df) in enumerate(self.processed_correlations.items(), 1):
                 print(f"[{idx}/{total}] Fitting {name} (Regularized)...")
 
@@ -862,9 +863,17 @@ class LaplaceAnalyzer:
                     print(f"  Error processing {name}: {e}")
                     import traceback
                     traceback.print_exc()
+                    failures.append((name, e))
                     continue
 
                 plot_number += 1
+
+            if failures and not all_results:
+                # without this the empty result table later fails with a bare KeyError: 'filename'
+                first_name, first_error = failures[0]
+                raise RuntimeError(
+                    f"Regularized fit failed for all {len(failures)} dataset(s); first error ({first_name}): "
+                    f"{type(first_error).__name__}: {first_error}") from first_error
 
         regularized_df = pd.DataFrame(all_results)
         return regularized_df, full_results, plots_dict

@@ -13,6 +13,7 @@ definitions for regularized analysis in DLS-Supreme
 from scipy.optimize import least_squares, minimize
 from scipy.signal import find_peaks
 import numpy as np
+from ade_dls.utils.compat import trapezoid
 import matplotlib.pyplot as plt
 import pandas as pd
 from scipy import sparse
@@ -379,7 +380,7 @@ def nnls_reg(df, name, nnls_reg_params, plot_number):
             peak_x = decay_times[left_base_idx:right_base_idx+1]
             
             #calculate peak area using trapezoidal rule in log-space (correct for log-spaced decay times)
-            peak_area = np.trapezoid(peak_segment, np.log(peak_x))
+            peak_area = trapezoid(peak_segment, np.log(peak_x))
 
             #calculate peak width at half maximum (FWHM) in log-space (dimensionless, unbiased)
             half_max = peak_amplitudes[i] / 2

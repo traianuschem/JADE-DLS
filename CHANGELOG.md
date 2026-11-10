@@ -30,6 +30,8 @@ Major release: the computation code is separated from the PyQt5 GUI and can be u
 ### Fixed
 
 - `uncertainty_flags=True` in the clustering no longer crashes with pandas ≥ 3.
+- **NNLS / Regularized crashed on numpy 1.x** (`module 'numpy' has no attribute 'trapezoid'`): `np.trapezoid` exists only from numpy 2.0, but `pyproject.toml` declares `numpy>=1.22`. The three peak-area integrations now use `ade_dls.utils.compat.trapezoid` (`np.trapezoid`, falling back to `np.trapz`; identical numbers).
+- **Regularized analysis reported only `'filename'`** when the fit failed for every dataset (the per-file errors are caught in the loop and the empty result table broke the merge with a bare `KeyError`). It now raises a `RuntimeError` that names the number of failed datasets and the first error.
 
 ---
 

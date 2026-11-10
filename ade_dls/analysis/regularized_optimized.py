@@ -7,6 +7,7 @@ Uses matrix caching, vectorization, and optional multiprocessing
 from scipy.optimize import least_squares, minimize
 from scipy.signal import find_peaks, peak_widths
 import numpy as np
+from ade_dls.utils.compat import trapezoid
 import matplotlib.pyplot as plt
 import pandas as pd
 from scipy import sparse
@@ -162,7 +163,7 @@ def nnls_optimized(df: pd.DataFrame, name: str, nnls_params: dict,
     for peak_index in peaks:
         left  = max(0, peak_index - 10)
         right = min(len(decay_times), peak_index + 10)
-        area  = np.trapezoid(f_optimized[left:right], np.log(decay_times[left:right]))
+        area  = trapezoid(f_optimized[left:right], np.log(decay_times[left:right]))
         peak_areas.append(max(area, 0.0))
     total_area = sum(peak_areas) if sum(peak_areas) > 0 else 1.0
     normalized_area_pct = [a / total_area * 100 for a in peak_areas]
@@ -373,7 +374,7 @@ def _compute_peak_statistics(peaks, peak_properties, f_optimized, decay_times):
         peak_x = decay_times[left_base_idx:right_base_idx + 1]
 
         #area via trapezoidal rule in log-τ space (grid is log-spaced → integrate over d(ln τ))
-        peak_area = np.trapezoid(peak_segment, np.log(peak_x))
+        peak_area = trapezoid(peak_segment, np.log(peak_x))
 
         #FWHM in log-τ space
         half_max = peak_amplitudes[i] / 2
