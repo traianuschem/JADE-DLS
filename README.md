@@ -131,6 +131,8 @@ python -m pytest -q -m "not slow"   # without the slow optimizer tests
 
 The synthetic benchmark (`ade_dls.benchmark`, simulator under GPL-3.0-or-later; simulated datasets and the golden reference samples in `tests/data/synthetic_golden` under CC BY-SA 4.0) checks ADE-DLS against stored JADE-DLS results and against the simulated ground truth.
 
+Reference datasets of the paper (ALV and LS Instruments DLS raw data of the gold-nanoparticle samples, SAXS data) are in `Test+ReferenceData/` under CC BY-SA 4.0, see `Test+ReferenceData/README.md` and `Test+ReferenceData/LICENSE`.
+
 Contribution guidelines: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Documentation

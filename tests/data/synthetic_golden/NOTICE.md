@@ -16,4 +16,4 @@ methods B, C2, C4, D, NNLS and Regularized, and the per-file tables of D, NNLS a
 Golden data and the simulated datasets of the benchmark: **CC BY-SA 4.0** —
 https://creativecommons.org/licenses/by-sa/4.0/ (attribution, share alike).
 The simulator program (`ade_dls.benchmark`) is part of ADE-DLS under GPL-3.0-or-later.
-Author line for attribution: *to be completed by the project authors before the release*.
+Author line for attribution: Vincent Schildknecht, ORCID https://orcid.org/0009-0007-1856-7784 (simulated datasets and golden data).

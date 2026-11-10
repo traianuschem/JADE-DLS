@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Reference datasets (`Test+ReferenceData/`) replaced by the datasets of the paper**, all under CC BY-SA 4.0 (see `Test+ReferenceData/LICENSE`): `ALV_gold-nanoparticle-reference-data.zip` (ALV raw data of Au1–Au3 and the four mixtures), `LSInstruments_gold-nanoparticle-reference-data.zip` (LS Spectrometer data incl. CORENN results, F. Trummer) and the SAXS data (`SAXSdata/`). The old example archives `example_files_monomodal.zip` and `example_files_bimodal.zip` (empty) were removed; the test fixture `tests/data/alv_mono/` is unchanged.
+
 ### Fixed
 
 - **LS Instruments parser: measurement duration and mean count rates were discarded.** `LSInstrumentsParser.extract_basedata` set `duration [s]`, `meancr0 [kHz]` and `meancr1 [kHz]` to NaN although `Summary.csv` provides them (`Duration [s]`, `Average count rate A/B [kHz]`). As a consequence the noise weighting was reported as unavailable for all LS Instruments data. The values are now read from `Summary.csv` (NaN only if a column is missing); `monitordiode [cps]` stays NaN (not provided by the instrument). Regression tests in `tests/test_parser_contract.py`.

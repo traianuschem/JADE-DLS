@@ -1,0 +1,48 @@
+Reference datasets of (J)ADE-DLS
+================================
+
+Scope: all datasets in this directory ("Test+ReferenceData"), i.e.
+
+  * ALV_gold-nanoparticle-reference-data.zip  (DLS raw data of the gold reference samples)
+  * SAXSdata/                                 (SAXS data and fits of the gold reference samples)
+  * LSInstruments_gold-nanoparticle-reference-data.zip (LS Spectrometer data incl. CORENN results)
+  * the README.md in this directory
+
+License: Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0)
+
+  Deed (summary):  https://creativecommons.org/licenses/by-sa/4.0/
+  Legal code:      https://creativecommons.org/licenses/by-sa/4.0/legalcode
+
+You are free to
+
+  * Share  - copy and redistribute the material in any medium or format, and
+  * Adapt  - remix, transform, and build upon the material for any purpose, even commercially,
+
+under the following terms:
+
+  * Attribution - You must give appropriate credit, provide a link to the license, and indicate if changes were
+    made. You may do so in any reasonable manner, but not in any way that suggests the licensor endorses you or
+    your use.
+  * ShareAlike - If you remix, transform, or build upon the material, you must distribute your contributions
+    under the same license as the original.
+  * No additional restrictions - You may not apply legal terms or technological measures that legally restrict
+    others from doing anything the license permits.
+
+Authors of the data (please credit accordingly):
+
+  * SAXS data (SAXSdata/):                          Richard Neubert (ORCID: https://orcid.org/0009-0006-0594-4379)
+  * DLS gold-nanoparticle data (ALV zip):           Vincent Schildknecht (ORCID: https://orcid.org/0009-0007-1856-7784)
+  * Synthetic data (tests/data/synthetic_golden/):  Vincent Schildknecht (ORCID: https://orcid.org/0009-0007-1856-7784)
+  * LS Instruments cross-validation data (LS zip):  Florian Trummer (ORCID: https://orcid.org/0000-0002-3831-3825)
+
+Suggested attribution:
+
+  "Reference datasets of (J)ADE-DLS" (gold-nanoparticle DLS and SAXS reference data), SAXS: Richard Neubert (ORCID: https://orcid.org/0009-0006-0594-4379);
+  DLS: Vincent Schildknecht (ORCID: https://orcid.org/0009-0007-1856-7784), 2026, licensed under CC BY-SA 4.0
+  (https://creativecommons.org/licenses/by-sa/4.0/), https://github.com/AG-Plamper/JADE-DLS
+
+The data are provided "as is", without warranty of any kind (see section 5 of the legal code).
+
+Not covered by this license: the (J)ADE-DLS program code, which is licensed separately under the
+GPL-3.0-or-later (see the LICENSE file in the repository root). The simulated datasets and golden reference results of
+the synthetic benchmark (tests/data/synthetic_golden/) are likewise CC BY-SA 4.0 (see the NOTICE.md there).

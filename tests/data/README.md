@@ -1,8 +1,9 @@
 # Test fixtures
 
 ## alv_mono/
-Auszug, unveraendert (byte-identisch), aus dem Repo-Zip
-`Test+ReferenceData/example_files_monomodal.zip` (Ordner `example_files_monomodal/`, 52 ASC-Dateien).
+Auszug, unveraendert (byte-identisch), aus dem frueheren Beispiel-Zip `example_files_monomodal.zip`
+(Ordner `example_files_monomodal/`, 52 ASC-Dateien; 2026-11 aus `Test+ReferenceData/` entfernt und durch die Gold-Referenzdaten
+des Papers ersetzt, weiter in der Git-Historie, Commit e2b4578). Die Fixture ist davon unabhaengig und wird nicht veraendert.
 
 Auswahlregel: 3 Winkel (30, 60, 90 Grad; Messungen 0053, 0056, 0059) x je 2 Wiederholungen
 (`_0001`, `_0002`) = 6 Dateien, plus `080622_5_0053_averaged.ASC` (prueft, dass der Parser
