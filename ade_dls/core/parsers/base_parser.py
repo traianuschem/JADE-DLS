@@ -61,8 +61,8 @@ class InstrumentParser(ABC):
         """
         if not cls.FILE_GLOB:
             return 0.0
-        matches = (glob.glob(os.path.join(folder_path, cls.FILE_GLOB.lower())) +
-                   glob.glob(os.path.join(folder_path, cls.FILE_GLOB.upper())))
+        matches = sorted(glob.glob(os.path.join(folder_path, cls.FILE_GLOB.lower())) +
+                         glob.glob(os.path.join(folder_path, cls.FILE_GLOB.upper())))
         if not matches:
             return 0.0
         # Content beats extension: check header signature in the first file.

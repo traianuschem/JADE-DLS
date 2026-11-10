@@ -806,10 +806,12 @@ def test_plot_processed_correlations_BC01_figures_not_closed_documents_current_b
 
 
 def test_plot_processed_correlations_BC02_two_points_zero_error_documents_current_behavior():
-    """documents current behavior, not desired behavior (F-18): false precision for n == 2."""
+    """documents current behavior, not desired behavior (F-18), scipy-version dependent: scipy.stats.linregress
+    reports stderr 0.0 for n == 2 (scipy < 1.18: false precision) and NaN (scipy >= 1.18, observed in CI)."""
     d = pd.DataFrame({"t [s]": [0., 1, 2, 3], "g(2)_mod": [5., 0, -1, 7]})
     r = pc({"x": d}, (1, 2)).iloc[0]
-    assert r["Gamma_error"] == 0.0 and r["Gamma_relative_error"] == 0.0
+    err, rel = r["Gamma_error"], r["Gamma_relative_error"]
+    assert (err == 0.0 and rel == 0.0) or (pd.isna(err) and pd.isna(rel))
 
 
 def test_plot_processed_correlations_BC03_rising_data_negative_gamma_documents_current_behavior():
@@ -835,10 +837,14 @@ def test_plot_processed_correlations_BC04_empty_window_documents_current_behavio
 
 
 def test_plot_processed_correlations_BC05_identical_t_raises_documents_current_behavior():
-    """documents current behavior (F-10)."""
+    """documents current behavior (F-10), scipy-version dependent: linregress raises ValueError for identical
+    x (scipy < 1.18) or returns NaN (scipy >= 1.18, observed in CI)."""
     d = pd.DataFrame({"t [s]": [1., 1, 1], "g(2)_mod": [0., -1, -2]})
-    with pytest.raises(ValueError):
-        pc({"x": d}, (0, 2))
+    try:
+        r = pc({"x": d}, (0, 2))
+    except ValueError:
+        return  # branch A: exception
+    assert pd.isna(r.iloc[0]["Gamma"])  # branch B: NaN row
 
 
 def test_plot_processed_correlations_BC06_weighted_empty_window_documents_current_behavior():

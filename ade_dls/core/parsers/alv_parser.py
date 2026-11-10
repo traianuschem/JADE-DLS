@@ -40,9 +40,10 @@ class ALVParser(InstrumentParser):
             if key not in seen:
                 seen.add(key)
                 unique.append(f)
-        # Filter out averaged files.
-        return [f for f in unique
-                if "averaged" not in os.path.basename(f).lower()]
+        # Filter out averaged files. Sorted: glob returns filesystem order (arbitrary on Linux),
+        # the series order must be reproducible across platforms.
+        return sorted(f for f in unique
+                      if "averaged" not in os.path.basename(f).lower())
 
     def extract_basedata(self, measurement_id: str) -> Optional[pd.DataFrame]:
         df = extract_data(measurement_id)

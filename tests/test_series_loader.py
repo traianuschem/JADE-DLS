@@ -61,6 +61,22 @@ def test_oracle_q_vectors_from_formula(parser):
     assert b["q"].iloc[0] == pytest.approx(6.8461e-3, rel=1e-4)
 
 
+def test_file_order_is_sorted_independent_of_filesystem_order(parser, monkeypatch):
+    """glob.glob returns files in filesystem order (arbitrary on Linux, sorted on NTFS). The series
+    order (rows of basedata, hence all downstream tables) must not depend on it (CI finding, Linux)."""
+    import glob as _glob
+    real = _glob.glob
+
+    def reversed_glob(*args, **kwargs):
+        return list(reversed(real(*args, **kwargs)))
+
+    monkeypatch.setattr("ade_dls.core.parsers.alv_parser.glob.glob", reversed_glob)
+    files = parser.get_file_list(str(ALV))
+    assert files == sorted(files)
+    _, r, _, _ = _load(parser)
+    assert r["basedata"]["angle [°]"].tolist() == ANGLES
+
+
 def test_oracle_labels_line_up_across_tables(parser):
     _, r, _, _ = _load(parser)
     labels = list(r["basedata"]["filename"])
