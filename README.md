@@ -115,6 +115,11 @@ Format details and how to add a parser: [docs/data_formats.md](docs/data_formats
 - scikit-learn ≥ 1.5, statsmodels ≥ 0.14.4, joblib ≥ 1.4
 - GUI: PyQt5 ≥ 5.15
 
+## Known issues
+
+- **Newer SciPy versions (≥ 1.18) are not supported yet.** The per-file selection of the number of modes in Method D is numerically unstable; with SciPy 1.18.1 it changed for individual files of a bimodal test series, which shifted the Rh of the larger population by about 5 %. SciPy is therefore limited to 1.15–1.17 in the installation requirements. A robust mode selection is planned for the next release.
+- Results of the numerically sensitive fits (Method C, NNLS, Regularized NNLS, Method D) can differ slightly between platforms and library versions; the test suite compares them with tolerances and documents known deviations as expected failures.
+
 ## Development
 
 ```bash

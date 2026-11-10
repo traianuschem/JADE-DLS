@@ -34,6 +34,10 @@ Major release: the computation code is separated from the PyQt5 GUI and can be u
 - **NNLS / Regularized crashed on numpy 1.x** (`module 'numpy' has no attribute 'trapezoid'`): `np.trapezoid` exists only from numpy 2.0, but `pyproject.toml` declares `numpy>=1.22`. The three peak-area integrations now use `ade_dls.utils.compat.trapezoid` (`np.trapezoid`, falling back to `np.trapz`; identical numbers).
 - **Regularized analysis reported only `'filename'`** when the fit failed for every dataset (the per-file errors are caught in the loop and the empty result table broke the merge with a bare `KeyError`). It now raises a `RuntimeError` that names the number of failed datasets and the first error.
 
+### Known issues
+
+- SciPy ≥ 1.18 is not supported: Method D's per-file mode selection is numerically unstable and gives different results with SciPy 1.18.1 (capped at < 1.18 until the selection is made robust).
+
 ---
 
 ## [3.5.0] - 2026-09-10
