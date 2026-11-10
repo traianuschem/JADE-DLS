@@ -2,8 +2,8 @@
 
 ## Requirements
 
-- Python 3.8 or later
-- Core dependencies (installed automatically): NumPy ≥ 1.22, SciPy ≥ 1.8, Pandas ≥ 1.5, Matplotlib ≥ 3.5, scikit-learn ≥ 1.0, statsmodels ≥ 0.13, joblib ≥ 1.2
+- Python 3.10 or later
+- Core dependencies (installed automatically): NumPy ≥ 2.0, SciPy ≥ 1.15, Pandas ≥ 2.2, Matplotlib ≥ 3.9, scikit-learn ≥ 1.5, statsmodels ≥ 0.14.4, joblib ≥ 1.4
 - GUI dependencies (optional): PyQt5 ≥ 5.15, nbformat ≥ 5.1, jupyter, ipywidgets
 
 ## Installing from Source

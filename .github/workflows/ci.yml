@@ -31,8 +31,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        # np.trapezoid (used in ade_dls/analysis) needs numpy >= 2.0 -> Python >= 3.9;
-        # 3.8 (declared in pyproject) is therefore not tested. See report for the open decision.
+        # Matches requires-python (>=3.10) in pyproject.toml.
         python-version: ["3.10", "3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
@@ -79,6 +78,29 @@ jobs:
             htmlcov-fast/
           if-no-files-found: ignore
           retention-days: 30
+
+  # Lower bounds of the declared dependencies (pyproject.toml): guards against raising code requirements
+  # (e.g. newer SciPy/NumPy API) without raising the declared minimum versions.
+  test-min-versions:
+    name: fast tests at minimum dependency versions (ubuntu-latest, py3.10)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install minimum versions
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e . pytest
+          python -m pip install "numpy==2.0.2" "scipy==1.15.0" "pandas==2.2.3" "matplotlib==3.9.4"             "scikit-learn==1.5.2" "statsmodels==0.14.4" "joblib==1.4.2"
+          python -m pip list
+
+      - name: Pytest (fast, without slow)
+        run: python -m pytest -q -m "not slow"
 
   # GUI-dependent tests (dialog defaults, previews, widgets, Qt pipeline wrapper): skipped in test-fast because
   # PyQt5 is not installed there. Windows runner: the PyQt5 wheels run offscreen without system packages.

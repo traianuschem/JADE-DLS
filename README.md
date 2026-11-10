@@ -1,7 +1,7 @@
 # ADE-DLS: Angular Dependent Evaluator for Dynamic Light Scattering
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![Version](https://img.shields.io/badge/version-4.0.0-blue.svg)](CHANGELOG.md)
 
 ADE-DLS analyses Dynamic Light Scattering (DLS) data — and, optionally, Static Light Scattering (SLS) data — from multi-angle instruments. From a series of measurements at different scattering angles it determines diffusion coefficients, hydrodynamic radii and particle size distributions. It is used through a PyQt5 GUI or a Qt-free Python API; both run the same computation code.
@@ -110,9 +110,9 @@ Format details and how to add a parser: [docs/data_formats.md](docs/data_formats
 
 ## Requirements
 
-- Python 3.8+
-- NumPy ≥ 1.22, SciPy ≥ 1.8, pandas ≥ 1.5, Matplotlib ≥ 3.5
-- scikit-learn ≥ 1.0, statsmodels ≥ 0.13, joblib ≥ 1.2
+- Python 3.10+
+- NumPy ≥ 2.0, SciPy ≥ 1.15, pandas ≥ 2.2, Matplotlib ≥ 3.9
+- scikit-learn ≥ 1.5, statsmodels ≥ 0.14.4, joblib ≥ 1.4
 - GUI: PyQt5 ≥ 5.15
 
 ## Development

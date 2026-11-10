@@ -26,6 +26,7 @@ Major release: the computation code is separated from the PyQt5 GUI and can be u
 - **R² of the through-origin regression** is the uncentered R², as in the GUI.
 - Clustering: pass-through standard deviation uses ddof=0; separate z-score and silhouette uncertainty thresholds (falling back to `uncertainty_threshold`); populations below `min_abundance` after refinement are kept and flagged in `cluster_info`; statistics are recomputed after the silhouette refinement; a single valid point with `method='hierarchical'` yields one population; the parameter sweep collects exceptions in an `error` column and restores the pyplot state; `population_D_*` keys are always present.
 - Packaging: `packages.find` now includes all `ade_dls*` subpackages.
+- **Minimum versions raised**: Python ≥ 3.10, NumPy ≥ 2.0, SciPy ≥ 1.15, pandas ≥ 2.2, Matplotlib ≥ 3.9, scikit-learn ≥ 1.5, statsmodels ≥ 0.14.4, joblib ≥ 1.4 (the declared older bounds were not tested and showed failures or different behaviour, e.g. SciPy < 1.14 raises in `skewtest` for fewer than 8 samples, SciPy 1.14.x changes Ward linkage and curve-fit results enough to fail three oracle tests). CI tests Python 3.10–3.13 and the minimum versions.
 
 ### Fixed
 
