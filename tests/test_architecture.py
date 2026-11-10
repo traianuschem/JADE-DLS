@@ -19,7 +19,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 PKG = ROOT / "ade_dls"
-CORE_PACKAGES = ["analysis", "core", "utils", "engine"]
+CORE_PACKAGES = ["analysis", "core", "utils", "engine", "benchmark"]
 
 # Modules that moved from ade_dls.gui.* into ade_dls.engine.* (old path stays as an alias).
 MOVED = {

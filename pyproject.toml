@@ -88,7 +88,7 @@ ade-dls = "ade_dls.gui.main_window:main"
 include = ["ade_dls*"]
 
 [tool.setuptools.package-data]
-ade_dls = ["py.typed"]
+ade_dls = ["py.typed", "benchmark/data/*"]
 
 [tool.black]
 line-length = 100

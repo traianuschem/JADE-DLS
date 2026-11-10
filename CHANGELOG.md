@@ -15,10 +15,12 @@ Major release: the computation code is separated from the PyQt5 GUI and can be u
 - **Headless Python API `ade_dls.headless`** (no PyQt5 needed): `load_series`, `exclude_files`, `run_cumulant_a/b/c/d`, `run_nnls`, `run_regularized`, `run_sls`, `refine_cumulant_a/b/c/d`, `refine_nnls`, `refine_regularized`, and `nnls_defaults`/`regularized_defaults`/`method_d_defaults`.
 - **Automated tests and CI**: test suite for the numerical kernels (cumulants A–D, clustering, regularized/NNLS), loader, pipeline, refinement, headless API and an architecture test that enforces the layering (kernels → engine → GUI). GitHub Actions workflow (`.github/workflows/ci.yml`).
 - Byte-exact ALV test fixtures with a sha256 manifest.
+- **Synthetic ground-truth benchmark `ade_dls.benchmark`** (Qt-free): the simulator of the synthetic-data study (`synthetic`: lognormal populations, Biganzoli–Ferri noise, ALV-7004 lag grid, seeded, writes ALV `.ASC`), the evaluation rule of the study (`evaluate`: population count and Rh within ±20 % of the truth) and a runner that applies the headless API with the study's settings (`runner`). The simulator program is GPL-3.0-or-later like ADE-DLS; the simulated datasets and the golden subset of 10 reference samples of the study (`tests/data/synthetic_golden`, reference results computed with the JADE-DLS modules) are licensed CC BY-SA 4.0 is compared with ADE-DLS in `tests/test_benchmark_golden.py`.
 - Clustering: `cluster_info` now also holds the pre-refinement statistics (`population_stats_pre_refinement`, `n_reassigned`, `silhouette_before/after_refinement`) and `n_dropped_points`/`population_n_dropped`; the Method D summary exports them.
 
 ### Changed
 
+- **Method D default `gap_threshold` is now 2.0** (was 3.0 in the headless defaults and the dialog, 1.5 in the fallback of generated scripts), the value of the JADE reference runs and of the synthetic-data study. Results of Method D with default settings can differ from 3.x; set 3.0 explicitly to reproduce them.
 - **Population numbering follows ascending diffusion coefficient** (pop1 = smallest mean log₁₀ D) in the cross-angle clustering. Population labels in results of earlier versions may differ.
 - **Cumulant Method A `Skewness_3rd`** is now μ₃ / μ₂^1.5 (third-order block; previously μ₂(3rd) / μ₂(2nd)^1.5).
 - **R² of the through-origin regression** is the uncentered R², as in the GUI.

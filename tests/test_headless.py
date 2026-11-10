@@ -130,7 +130,7 @@ def test_defaults_are_jade_gold_defaults():
     assert r["fit_beta"] is True and r["normalize"] is True
     d = headless.method_d_defaults()
     assert (d["gap_threshold"], d["distance_threshold"], d["clustering_strategy"]) == (
-        3.0, 2.0, "silhouette_refined")
+        2.0, 2.0, "silhouette_refined")  # gap_threshold 2.0 = JADE reference runs (user decision 2026-11-06)
 
 
 def test_defaults_return_fresh_objects_each_call():

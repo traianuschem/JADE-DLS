@@ -1485,7 +1485,7 @@ method_d_fit = fit_correlations_method_D(
     y_col='g(2)-1',
     n_max={d_params.get('n_max', 25)},
     n_start={d_params.get('n_start', 1)},
-    gap_threshold={d_params.get('gap_threshold', 1.5)},
+    gap_threshold={d_params.get('gap_threshold', 2.0)},
     plot=False
 )
 

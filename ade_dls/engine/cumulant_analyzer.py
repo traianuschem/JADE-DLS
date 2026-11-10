@@ -1259,7 +1259,7 @@ class CumulantAnalyzer:
             params: Dictionary with parameters:
                 - n_max: int, maximum number of modes (default 25)
                 - n_start: int, starting number of modes (default 1)
-                - gap_threshold: float, clustering gap ratio threshold (default 3.0)
+                - gap_threshold: float, clustering gap ratio threshold (default 2.0)
             q_range: Optional tuple (min_q, max_q) to restrict Diffusion Analysis
 
         Returns:
@@ -1275,7 +1275,7 @@ class CumulantAnalyzer:
 
         n_max = params.get('n_max', 25)
         n_start = params.get('n_start', 1)
-        gap_threshold = params.get('gap_threshold', 3.0)
+        gap_threshold = params.get('gap_threshold', 2.0)
 
         print("\n" + "="*60)
         print("CUMULANT METHOD D - MULTI-EXPONENTIAL DECOMPOSITION")

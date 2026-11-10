@@ -555,7 +555,7 @@ class CumulantDDialog(QDialog):
 
         self.d_gap_threshold = QDoubleSpinBox()
         self.d_gap_threshold.setRange(1.0, 10.0)
-        self.d_gap_threshold.setValue(3.0)
+        self.d_gap_threshold.setValue(2.0)
         self.d_gap_threshold.setDecimals(2)
         self.d_gap_threshold.setSingleStep(0.1)
         self.d_gap_threshold.setToolTip(

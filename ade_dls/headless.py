@@ -65,11 +65,12 @@ def regularized_defaults() -> Dict[str, Any]:
 
 
 def method_d_defaults() -> Dict[str, Any]:
-    """JADE gold Method D parameters: gap_threshold 3.0, Ward cut 2.0, silhouette_refined."""
+    """JADE gold Method D parameters: gap_threshold 2.0 (as in the JADE reference runs; set to 2.0 on
+    2026-11-06, previously 3.0), Ward cut 2.0, silhouette_refined."""
     return {
         'n_max': 25,
         'n_start': 1,
-        'gap_threshold': 3.0,
+        'gap_threshold': 2.0,
         'method': 'hierarchical',
         'n_clusters': 'auto',
         'distance_threshold': 2.0,

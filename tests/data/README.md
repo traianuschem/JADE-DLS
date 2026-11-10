@@ -15,3 +15,10 @@ Dateien:
 
 `manifest.json` enthaelt Dateiname, Groesse und sha256; geprueft von `tests/test_fixtures_manifest.py`.
 Nicht veraendern (Zeilenenden nicht konvertieren; `.gitattributes` ggf. beachten).
+
+## synthetic_golden/
+Referenzergebnisse der Synthetik-Studie (10 Proben, Replikat 0; Ground Truth, Settings, Ergebnisse der Methoden
+B, C2, C4, D, NNLS, Regularized und Tabellen je Datei). Die Referenz wurde mit den unveraenderten JADE-DLS-Modulen
+berechnet; die Eingabedaten werden von `ade_dls.benchmark` aus den Seeds neu erzeugt.
+`golden.json.sha256` sichert die Integritaet, `make_golden.py` dokumentiert die Extraktion, `NOTICE.md` die Lizenz
+(Daten: CC BY-SA 4.0; der Simulator selbst steht unter GPL wie ADE). Nicht von Hand aendern; geprueft von `tests/test_benchmark_golden.py`.

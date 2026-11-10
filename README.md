@@ -94,6 +94,7 @@ print(laplace.regularized_final_results)
 | `ade_dls.analysis`, `ade_dls.core`, `ade_dls.utils` | Numerical kernels, parsers, preprocessing | no |
 | `ade_dls.engine` | Analysis workflows shared by GUI and API | no |
 | `ade_dls.headless` | Public Python API | no |
+| `ade_dls.benchmark` | Simulator for synthetic multi-angle DLS data with known ground truth, evaluation rule, runner | no |
 | `ade_dls.gui` | PyQt5 application (presentation and orchestration) | yes |
 
 The dependency direction is kernels → engine → GUI. It is enforced by `tests/test_architecture.py`.
@@ -121,6 +122,8 @@ pip install -e .[dev]
 python -m pytest -q                 # full test suite
 python -m pytest -q -m "not slow"   # without the slow optimizer tests
 ```
+
+The synthetic benchmark (`ade_dls.benchmark`, simulator under GPL-3.0-or-later; simulated datasets and the golden reference samples in `tests/data/synthetic_golden` under CC BY-SA 4.0) checks ADE-DLS against stored JADE-DLS results and against the simulated ground truth.
 
 Contribution guidelines: [CONTRIBUTING.md](CONTRIBUTING.md).
 
