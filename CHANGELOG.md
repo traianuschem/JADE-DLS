@@ -7,7 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Adoption of the bug-fix release JADE-DLS 3.1 (AG-Plamper/JADE-DLS, tag v3.1). Items that ADE already had (µ3 of the 3rd-order block, uncentered through-origin R², clustering statistics from the final assignment, `below_min_abundance` flagging, separate uncertainty thresholds, `population_D_*` always present, single-point clustering, ddof=0, pandas ≥ 3 dtypes, `np.trapezoid` fallback) are unchanged; Method C keeps its RMSE/AIC columns (JADE 3.1 removed them).
+## [4.1.0] - 2026-11-12
+
+Minor release: new optional solvent-background subtraction for the SLS analysis (new feature, hence 4.1) together with the adoption of the bug-fix release JADE-DLS 3.1 (AG-Plamper/JADE-DLS, tag v3.1). **Numerical results change compared with 4.0.0** (population numbering reversed, kurtosis definition, weighted R², SLS area fraction, merged overlapping peaks; see **Changed** and **Fixed**). Items that ADE already had (µ3 of the 3rd-order block, uncentered through-origin R², clustering statistics from the final assignment, `below_min_abundance` flagging, separate uncertainty thresholds, `population_D_*` always present, single-point clustering, ddof=0, pandas ≥ 3 dtypes, `np.trapezoid` fallback) are unchanged; Method C keeps its RMSE/AIC columns (JADE 3.1 removed them).
 
 ### Added
 
@@ -590,6 +592,9 @@ All functionality remains the same; only import paths have changed.
 
 ---
 
+[Unreleased]: https://github.com/traianuschem/JADE-DLS/compare/v4.1.0...HEAD
+[4.1.0]: https://github.com/traianuschem/JADE-DLS/compare/v4.0.0...v4.1.0
+[4.0.0]: https://github.com/traianuschem/JADE-DLS/releases/tag/v4.0.0
 [3.3.0]: https://github.com/traianuschem/JADE-DLS/compare/v3.2.2...v3.3.0
 [3.2.2]: https://github.com/traianuschem/JADE-DLS/compare/v3.2.1...v3.2.2
 [3.2.1]: https://github.com/traianuschem/JADE-DLS/compare/v3.2.0...v3.2.1

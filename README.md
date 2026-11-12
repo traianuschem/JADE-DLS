@@ -2,7 +2,7 @@
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![Version](https://img.shields.io/badge/version-4.0.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-4.1.0-blue.svg)](CHANGELOG.md)
 
 ADE-DLS analyses Dynamic Light Scattering (DLS) data — and, optionally, Static Light Scattering (SLS) data — from multi-angle instruments. From a series of measurements at different scattering angles it determines diffusion coefficients, hydrodynamic radii and particle size distributions. It is used through a PyQt5 GUI or a Qt-free Python API; both run the same computation code.
 
