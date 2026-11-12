@@ -199,3 +199,42 @@ Express* **26**(22), 29375–29395 (2018).
 | Size distribution needed | Regularized NNLS |
 | Aggregate detection | NNLS + Cumulant D comparison |
 | Static scattering / Rg | SLS (requires Regularized NNLS) |
+
+## Known Limitations and Open Problems
+
+### Population count depends on the number of data points (Ward clustering)
+
+**Status:** open. Inherited from the original JADE-DLS (`clustering.py`); the behavior is unchanged in ADE-DLS because numerical parity with JADE is a project invariant. Whether it matters for real data has not yet been confirmed on measured samples.
+
+**Affects:** Method D, NNLS and Regularized NNLS, i.e. every analysis that groups peaks across angles with `cluster_all_gammas()` (Ward hierarchical clustering, `method='hierarchical'`, default `distance_threshold` = 2.0).
+
+**What happens.** All peaks of all files are pooled and clustered on log₁₀(D), D = Γ/q². The dendrogram is cut at a fixed height *t*. The Ward height at which two groups merge is not the distance between them in decades. For two compact groups of *m* points each whose means are δ decades apart:
+
+> h = √m · δ  (general case: h = √(2·nₐ·n_b/(nₐ+n_b)) · δ)
+
+The groups are separated only if δ > t/√m. With t = 2.0 the minimum separation shrinks as the number of points grows:
+
+| Points per group *m* | 2 | 4 | 8 | 20 | 50 | 200 |
+|---|---|---|---|---|---|---|
+| Minimum separation δ (decades) | 1.41 | 1.00 | 0.71 | 0.45 | 0.28 | 0.14 |
+| Corresponding D ratio | 26 | 10 | 5.1 | 2.8 | 1.9 | 1.4 |
+
+**Consequences.**
+
+- *Merging:* two populations with a D ratio of 6.3 (δ = 0.8) are merged into one with 4 points per group (h = 1.60 ≤ 2.0) but separated with 8 points per group (h = 2.26 > 2.0). The same physical sample can give a different number of populations when more angles, repeats or peaks per file enter the clustering.
+- *Splitting:* a single unimodal population is split if it contains enough points. In a toy model (normally distributed log₁₀D, σ = 0.15 decades) one population was found for 39 points, but for 400 points it was split into several.
+- Detection frequency of a population ("abundance") is therefore influenced by the sampling design as well as by the sample.
+
+**What is *not* the cause.** The clustering already runs in log space (verified in ADE-DLS and in the original JADE-DLS). The effect is a property of the Ward criterion (increase in the error sum of squares grows with the number of points) and appears in any space. A linear D scale would be worse, because the height would then also depend on the absolute magnitude of D.
+
+**Not affected.** The gap rule of Method D (`cluster_gammas`, `gap_threshold` = 2.0 by default on the ratio of adjacent Γ values) uses single gaps and does not depend on the number of points. The DBSCAN module (`peak_clustering.py`) has a different property: `eps` is a fraction of the data range, so a single outlier changes it.
+
+**Practical advice until resolved.**
+
+- Report the number of points that entered the clustering (files × peaks) together with the number of populations.
+- Check stability with the *Clustering Parameter Sweep Heatmap* (post-fit dialogs): a population that exists only for a narrow range of `distance_threshold` should be treated with caution.
+- Compare populations with the other methods (methods are intended to be used in combination).
+
+**Possible remedies (not implemented; each changes results relative to JADE).** Cut at a height normalized by √N; require a minimum separation of the cluster means in log₁₀D relative to the within-cluster spread; report "unimodal" if the best two-cluster solution has a silhouette score below about 0.25. Any of these would be an optional setting; the JADE-compatible default stays.
+
+**References in the repository.** Test characterization: `tests/test_clustering.py` (`test_char_C01…`, `test_char_C02…`); background and decision list: `_dev/notes/open_discussion_points.md` (D-02, local only); toy simulation: `_dev/comparison/ward_threshold_sim.py` (local only).
