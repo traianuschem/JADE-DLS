@@ -78,9 +78,12 @@ def load_intensity(analyzer, folder: Optional[str] = None) -> bool:
 
 
 def run_sls(analyzer, n_populations: int, q2_min: float = 0.0, q2_max: float = 0.0,
-            exponent: int = 6) -> pd.DataFrame:
+            exponent: int = 6, solvent_folder: Optional[str] = None) -> pd.DataFrame:
     """Population-resolved SLS analysis on the Regularized results of ``analyzer`` (needs
-    ``load_intensity`` first). Returns the summary table (also ``analyzer.sls_summary``)."""
+    ``load_intensity`` first). With ``solvent_folder`` the mean solvent intensity per angle is
+    subtracted first (``sls.subtract_solvent``). Returns the summary table (also
+    ``analyzer.sls_summary``)."""
+    kwargs = {'solvent_folder': solvent_folder} if solvent_folder else {}
     return analyzer.run_sls_analysis(n_populations=n_populations,
                                      q2_range=q2_range_from_limits(q2_min, q2_max),
-                                     exponent=exponent)
+                                     exponent=exponent, **kwargs)

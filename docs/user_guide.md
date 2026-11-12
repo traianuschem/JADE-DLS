@@ -105,7 +105,7 @@ Tikhonov-Phillips regularization applied to the NNLS problem. The regularization
 
 ### Static Light Scattering (SLS)
 
-Available after running Regularized NNLS. Decomposes the total static intensity into per-population contributions using monitor-corrected count rates. Performs Guinier analysis (I₀, Rg, qRg_max, R²) per population and for the total.
+Available after running Regularized NNLS. Decomposes the total static intensity into per-population contributions using monitor-corrected count rates. Performs Guinier analysis (I₀, Rg, qRg_max, R²) per population and for the total. Optionally, tick **Subtract solvent background** in the SLS tab and select the folder with the solvent `.ASC` files to subtract the mean solvent intensity per angle from every sample run first.
 
 ---
 

@@ -15,9 +15,10 @@ dirac_sum_g1(t, *gammas)
 dirac_sum_g2(t, beta, *gammas)
     Intensity correlation function g²(τ) = 1 + β·|g¹(τ)|² for N modes.
 
-fit_cumulant_D(x_data, y_data, n_max, beta_initial, gamma_initial, n_start)
-    Iterative fitting from n_start to n_max exponential modes; selects
-    optimal model order by AIC with convergence and residual checks.
+fit_cumulant_D(x_data, y_data, n_max, beta_initial, gamma_initial, n_start, weights=None)
+    Iterative fitting from n_start to n_max exponential modes; stops by
+    convergence checks and keeps the fit with the lowest (weighted) residual
+    sum fit_ss. weights=None reproduces the plain unweighted fit.
 
 calculate_moments_from_gammas(gammas)
     Compute mean, variance, PDI, skewness and kurtosis from a set of
@@ -37,6 +38,7 @@ from scipy.optimize import curve_fit
 import pandas as pd
 import matplotlib.pyplot as plt
 import scipy.stats as stats
+from ade_dls.analysis.weighting import fit_r_squared
 
 try:
     import statsmodels.api as sm
@@ -96,14 +98,15 @@ def fit_cumulant_D(x_data, y_data, n_max=25, beta_initial=1.0, gamma_initial=Non
     ``weights`` (JADE-DLS v3.0, Biganzoli-Ferri noise weighting), when given,
     is passed to ``curve_fit`` as ``sigma = 1/sqrt(weights/mean(weights))``
     and used -- instead of the plain (unweighted) residual sum of squares --
-    to select the best-fitting model order (number of modes). The
+    to select the best-fitting model order (number of modes); the selected
+    sum is stored as ``fit_ss`` (equal to ``residual_ss`` when unweighted). The
     convergence checks below (mode collapse / improvement thresholds) still
     use the unweighted residual sum of squares, matching JADE.
     """
-    sigma = None
-    if weights is not None:
-        w = np.asarray(weights, dtype=float)
-        sigma = 1.0 / np.sqrt(w / np.mean(w))
+    #relative weights (mean 1); ones when unweighted, so fit_ss is then the plain RSS
+    w_rel = (np.ones_like(np.asarray(y_data, dtype=float)) if weights is None
+             else np.asarray(weights, dtype=float) / np.mean(weights))
+    sigma = None if weights is None else 1.0 / np.sqrt(w_rel)
 
     #estimate initial gamma from data if not provided
     if gamma_initial is None:
@@ -193,9 +196,9 @@ def fit_cumulant_D(x_data, y_data, n_max=25, beta_initial=1.0, gamma_initial=Non
             #calculate residuals
             residuals = y_data - g2_fit
             residual_ss = np.sum(residuals**2)
-            # Weighted RSS drives best-model selection (JADE parity); the
+            # Weighted RSS (fit_ss) drives best-model selection (JADE parity); the
             # convergence checks below stay on the unweighted residual_ss.
-            selection_ss = np.sum((residuals / sigma)**2) if sigma is not None else residual_ss
+            fit_ss = np.sum(w_rel * residuals**2)
 
             #store result
             result = {
@@ -203,7 +206,7 @@ def fit_cumulant_D(x_data, y_data, n_max=25, beta_initial=1.0, gamma_initial=Non
                 'beta': beta_fit,
                 'gammas': gammas_fit,
                 'residual_ss': residual_ss,
-                'selection_ss': selection_ss,
+                'fit_ss': fit_ss,
                 'g1_fit': g1_fit,
                 'g2_fit': g2_fit,
                 'convergence': 'success'
@@ -211,8 +214,8 @@ def fit_cumulant_D(x_data, y_data, n_max=25, beta_initial=1.0, gamma_initial=Non
             all_results.append(result)
 
             #update best result if this is better
-            if selection_ss < best_residual:
-                best_residual = selection_ss
+            if fit_ss < best_residual:
+                best_residual = fit_ss
                 best_result = result
 
             # === CONVERGENCE CHECKS ===
@@ -271,15 +274,15 @@ def calculate_moments_from_gammas(gammas):
     #calculate polydispersity index (JADE parity: guard against gamma_mean == 0)
     pdi = gamma_2 / gamma_mean**2 - 1 if gamma_mean != 0 else float('nan')
 
-    #calculate skewness
+    #skewness mu3/mu2^1.5 and kurtosis mu4/mu2^2 (Gaussian = 3, as Method C; JADE-DLS 3.1);
+    #undefined (NaN) for zero width, e.g. a single mode
     numerator = gamma_3 - 3*gamma_2*gamma_mean + 2*gamma_mean**3
     denominator = (gamma_2 - gamma_mean**2)**(3/2)
-    skewness = numerator / denominator if denominator != 0 else 0
+    skewness = numerator / denominator if denominator != 0 else float('nan')
 
-    #calculate excess kurtosis
     numerator_k = gamma_4 - 4*gamma_3*gamma_mean + 6*gamma_2*gamma_mean**2 - 3*gamma_mean**4
     denominator_k = (gamma_2 - gamma_mean**2)**2
-    kurtosis = numerator_k / denominator_k - 3 if denominator_k != 0 else 0
+    kurtosis = numerator_k / denominator_k if denominator_k != 0 else float('nan')
 
     moments = {
         'gamma_mean': gamma_mean,
@@ -298,6 +301,8 @@ def cluster_gammas(gammas, gap_threshold=1.5):
     """
     Groups gammas into distinct populations by detecting large gaps.
     Each cluster represents one population in a multimodal sample.
+    Adjacent sorted decay rates whose ratio Gamma(i+1)/Gamma(i) exceeds
+    gap_threshold (linear ratio, not log10) start a new population.
 
     Examples:
     ---------
@@ -394,20 +399,21 @@ def fit_correlations_method_D(dataframes_dict, x_col='t [s]', y_col='g(2)-1',
             fit_result['moment_4'] = moments['gamma_4'] #4th moment
             fit_result['kurtosis'] = moments['kurtosis']
 
-            # Calculate R-squared
-            ss_res = result['residual_ss']
-            ss_tot = np.sum((y_data - np.mean(y_data))**2)
-            r_squared = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0
+            # R-squared (weighted when weighted) on the same relative weights as the fit
+            w_rel = weights / np.mean(weights) if is_weighted else np.ones_like(y_data, dtype=float)
+            r_squared = fit_r_squared(y_data, result['g2_fit'], w_rel)
             fit_result['R-squared'] = r_squared
 
             # Plot if requested
             if plot:
-                # Calculate residuals
-                residuals = y_data - result['g2_fit']
+                # residual panels show what the fit minimised: r*sqrt(w_rel)
+                plot_resid = (y_data - result['g2_fit']) * np.sqrt(w_rel)
+                resid_label = 'weighted residuals' if is_weighted else 'residuals'
+                w_label = ' [weighted]' if is_weighted else ''
 
                 # 3-panel layout: data+fit | residuals | Q-Q
                 fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(20, 5))
-                fig.suptitle(f'[{plot_number}]: Method D — {name}', fontsize=12)
+                fig.suptitle(f'[{plot_number}]: Method D{w_label} — {name}', fontsize=12)
 
                 # Panel 1: data + fit
                 ax1.plot(x_data, y_data, 'o', alpha=0.6, markersize=4, label='Data')
@@ -429,16 +435,18 @@ def fit_correlations_method_D(dataframes_dict, x_col='t [s]', y_col='g(2)-1',
                         bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
 
                 # Panel 2: residuals
-                ax2.plot(residuals)
+                ax2.plot(plot_resid)
                 ax2.axhline(0, color='r', linestyle='--', linewidth=1)
-                ax2.set_xlabel('Sample Index')
-                ax2.set_ylabel('Residuals')
-                ax2.set_title('Residuals')
+                ax2.set_xlabel('lag-time index')
+                ax2.set_ylabel(resid_label)
+                ax2.set_title(f'Residuals{w_label}')
                 ax2.grid(True, alpha=0.3)
 
                 # Panel 3: Q-Q
-                stats.probplot(residuals, dist="norm", plot=ax3)
-                ax3.set_title('Q-Q Plot')
+                stats.probplot(plot_resid, dist="norm", plot=ax3)
+                ax3.set_xlabel('theoretical quantiles')
+                ax3.set_ylabel('sample quantiles')
+                ax3.set_title(f'Q-Q Plot{w_label}')
                 ax3.grid(True, alpha=0.3)
 
                 plt.tight_layout()

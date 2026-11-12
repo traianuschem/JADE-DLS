@@ -130,8 +130,14 @@ def build_intensity_dataframe(file_paths):
     valid_md = df['monitordiode [cps]'].notna() & (df['monitordiode [cps]'] > 0)
     if valid_md.any():
         # monitor-diode correction: divide by monitordiode [cps] * 1e-3
-        md_khz = df['monitordiode [cps]'] * 1e-3
-        df['MeanCR_corr [kHz]'] = raw_mean / md_khz * sin_theta
+        # (same formula as preprocessing.corrected_intensity, JADE-DLS 3.1; the
+        # fillna defaults above are kept for incomplete headers)
+        from ade_dls.core.preprocessing import corrected_intensity
+        df['MeanCR_corr [kHz]'] = corrected_intensity(pd.DataFrame({
+            'meancr0 [kHz]': df['meancr0 [kHz]'].fillna(0),
+            'meancr1 [kHz]': df['meancr1 [kHz]'].fillna(0),
+            'monitordiode [cps]': df['monitordiode [cps]'],
+            'angle [°]': df['angle [°]'].fillna(90)}))
     else:
         # fallback: no monitor correction, only geometry correction
         print("build_intensity_dataframe: monitordiode data missing — "

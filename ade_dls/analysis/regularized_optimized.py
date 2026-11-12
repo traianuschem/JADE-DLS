@@ -8,6 +8,7 @@ from scipy.optimize import least_squares, minimize
 from scipy.signal import find_peaks, peak_widths
 import numpy as np
 from ade_dls.utils.compat import trapezoid
+from ade_dls.analysis.weighting import fit_r_squared
 import matplotlib.pyplot as plt
 import pandas as pd
 from scipy import sparse
@@ -135,15 +136,9 @@ def nnls_optimized(df: pd.DataFrame, name: str, nnls_params: dict,
     # Calculate RMSE
     rmse = np.sqrt(np.mean(residuals_values**2))
 
-    # Goodness of fit (JADE parity: R_squared per file, unweighted)
-    ss_res = np.sum(residuals_values**2)
-    ss_tot = np.sum((D - np.mean(D))**2)
-    r_squared = 1 - ss_res / ss_tot if ss_tot != 0 else 0.0
-
-    # Weighted goodness of fit (JADE parity, only meaningful when weighted)
-    weighted_ss_res = np.sum((sqrt_w * residuals_values)**2)
-    weighted_ss_tot = np.sum((sqrt_w * (D - np.mean(D)))**2)
-    weighted_r_squared = 1 - weighted_ss_res / weighted_ss_tot if weighted_ss_tot != 0 else 0.0
+    # Goodness of fit (JADE-DLS 3.1): R_squared is the weighted R2 when the fit is
+    # weighted (sqrt_w = 1 otherwise), via the R2 shared by all fitting methods
+    r_squared = fit_r_squared(D, optimized_values, sqrt_w**2)
 
     # Find peaks in the tau distribution
     peaks, _ = find_peaks(f_optimized, prominence=prominence, distance=distance)
@@ -169,8 +164,7 @@ def nnls_optimized(df: pd.DataFrame, name: str, nnls_params: dict,
     normalized_area_pct = [a / total_area * 100 for a in peak_areas]
 
     # Prepare results for this dataframe
-    results = {'filename': name, 'R_squared': r_squared,
-               'weighted_R_squared': weighted_r_squared, 'weighted': is_weighted}
+    results = {'filename': name, 'R_squared': r_squared, 'weighted': is_weighted}
     for i, peak_index in enumerate(peaks):
         pct_sum = normalized_amplitudes_sum[i] * 100
 
@@ -183,8 +177,9 @@ def nnls_optimized(df: pd.DataFrame, name: str, nnls_params: dict,
         wmean   = np.sum(w * peak_x)
         wvar    = np.sum(w * (peak_x - wmean)**2)
         wstd    = np.sqrt(wvar) if wvar > 0 else 0
-        skew    = np.sum(w * (peak_x - wmean)**3) / wstd**3 if wstd > 0 and len(peak_x) >= 3 else 0
-        kurt    = np.sum(w * (peak_x - wmean)**4) / wstd**4 - 3 if wstd > 0 and len(peak_x) >= 4 else 0
+        # kurtosis mu4/sigma^4 (Gaussian = 3, JADE-DLS 3.1); NaN if undefined (zero width / too few points)
+        skew    = np.sum(w * (peak_x - wmean)**3) / wstd**3 if wstd > 0 and len(peak_x) >= 3 else np.nan
+        kurt    = np.sum(w * (peak_x - wmean)**4) / wstd**4 if wstd > 0 and len(peak_x) >= 4 else np.nan
 
         # FWHM via scipy peak_widths
         widths_result = peak_widths(f_optimized, [peak_index], rel_height=0.5)
@@ -224,6 +219,7 @@ def nnls_all_optimized(dataframes_dict: Dict[str, pd.DataFrame],
     decay_times = nnls_params['decay_times']
 
     # Pre-compute T matrix once if all datasets have same time points
+    first_error = None
     # Check if all tau arrays are identical
     tau_arrays = [df['t [s]'].to_numpy() for df in dataframes_dict.values()]
     all_same_tau = all(np.array_equal(tau_arrays[0], tau) for tau in tau_arrays[1:])
@@ -251,14 +247,20 @@ def nnls_all_optimized(dataframes_dict: Dict[str, pd.DataFrame],
                     print(f"Processed {name}")
                 except Exception as e:
                     print(f"Error processing {name}: {str(e)}")
+                    first_error = first_error or (name, e)
     else:
         # Sequential processing with optional matrix reuse
         plot_number = 1
         for name, df in dataframes_dict.items():
             print(f"Processing {name}...")
-            results, f_optimized, optimized_values, residuals_values, peaks = nnls_optimized(
-                df, name, nnls_params, plot_number, T_matrix=T_matrix
-            )
+            try:
+                results, f_optimized, optimized_values, residuals_values, peaks = nnls_optimized(
+                    df, name, nnls_params, plot_number, T_matrix=T_matrix
+                )
+            except Exception as e:
+                print(f"Error processing {name}: {str(e)}")
+                first_error = first_error or (name, e)
+                continue
             all_results.append(results)
 
             if show_plots:
@@ -266,6 +268,11 @@ def nnls_all_optimized(dataframes_dict: Dict[str, pd.DataFrame],
                                   residuals_values, peaks, nnls_params, plot_number)
 
             plot_number += 1
+
+    # JADE-DLS 3.1: if the fit fails for every dataset, raise instead of returning an empty table
+    if not all_results and first_error:
+        raise RuntimeError(f"NNLS fit failed for all {len(dataframes_dict)} datasets; "
+                           f"first error ({first_error[0]}): {first_error[1]}")
 
     nnls_df = pd.DataFrame(all_results)
     return nnls_df
@@ -331,6 +338,54 @@ def _plot_nnls_results(name: str, df: pd.DataFrame, decay_times: np.ndarray,
 
 
 # ===== CALCULATION HELPERS =====
+def _peak_base_indices(i, peak_idx, peak_properties, f_optimized):
+    """Left/right base index of peak ``i``: from its half-max width points extended
+    down to 1 % of the peak height (fallback: local minima on both sides)."""
+    try:
+        left_idx = int(peak_properties['left_ips'][i])
+        right_idx = int(peak_properties['right_ips'][i])
+        threshold = 0.01 * f_optimized[peak_idx]
+
+        left_base_idx = left_idx
+        while left_base_idx > 0 and f_optimized[left_base_idx] > threshold:
+            left_base_idx -= 1
+
+        right_base_idx = right_idx
+        while right_base_idx < len(f_optimized) - 1 and f_optimized[right_base_idx] > threshold:
+            right_base_idx += 1
+
+        left_base_idx = max(0, left_base_idx)
+        right_base_idx = min(len(f_optimized) - 1, right_base_idx)
+    except (IndexError, KeyError):
+        #fallback: walk down to the local minima on both sides of the peak
+        left_base_idx = max(0, peak_idx - 1)
+        while left_base_idx > 0 and f_optimized[left_base_idx] > f_optimized[left_base_idx - 1]:
+            left_base_idx -= 1
+        right_base_idx = min(len(f_optimized) - 1, peak_idx + 1)
+        while right_base_idx < len(f_optimized) - 1 and f_optimized[right_base_idx] > f_optimized[right_base_idx + 1]:
+            right_base_idx += 1
+    return left_base_idx, right_base_idx
+
+
+def _merge_overlapping_peaks(peaks, peak_properties, f_optimized):
+    """Positions (into ``peaks``) of the peaks to keep after merging overlapping ones (JADE-DLS 3.1).
+
+    Neighbouring maxima whose base segments each contain the other maximum are not
+    separated (the valley never drops below the base threshold): they count as one
+    peak, the highest is kept, so the shared area is counted once.
+    """
+    bases = [_peak_base_indices(i, p, peak_properties, f_optimized) for i, p in enumerate(peaks)]
+    groups = []
+    for i in range(len(peaks)):
+        j = groups[-1][-1] if groups else None
+        if (j is not None and bases[j][0] <= peaks[i] <= bases[j][1]
+                and bases[i][0] <= peaks[j] <= bases[i][1]):
+            groups[-1].append(i)
+        else:
+            groups.append([i])
+    return np.array([max(g, key=lambda i: f_optimized[peaks[i]]) for g in groups], dtype=int)
+
+
 def _compute_peak_statistics(peaks, peak_properties, f_optimized, decay_times):
     """Per-peak shape statistics in log-τ space (matches JADE regularized.py).
 
@@ -346,29 +401,7 @@ def _compute_peak_statistics(peaks, peak_properties, f_optimized, decay_times):
 
     for i, peak_idx in enumerate(peaks):
         #locate the peak base — start from the half-max width points, extend to 1% of peak height
-        try:
-            left_idx = int(peak_properties['left_ips'][i])
-            right_idx = int(peak_properties['right_ips'][i])
-            threshold = 0.01 * f_optimized[peak_idx]
-
-            left_base_idx = left_idx
-            while left_base_idx > 0 and f_optimized[left_base_idx] > threshold:
-                left_base_idx -= 1
-
-            right_base_idx = right_idx
-            while right_base_idx < len(f_optimized) - 1 and f_optimized[right_base_idx] > threshold:
-                right_base_idx += 1
-
-            left_base_idx = max(0, left_base_idx)
-            right_base_idx = min(len(f_optimized) - 1, right_base_idx)
-        except (IndexError, KeyError):
-            #fallback: walk down to the local minima on both sides of the peak
-            left_base_idx = max(0, peak_idx - 1)
-            while left_base_idx > 0 and f_optimized[left_base_idx] > f_optimized[left_base_idx - 1]:
-                left_base_idx -= 1
-            right_base_idx = min(len(f_optimized) - 1, peak_idx + 1)
-            while right_base_idx < len(f_optimized) - 1 and f_optimized[right_base_idx] > f_optimized[right_base_idx + 1]:
-                right_base_idx += 1
+        left_base_idx, right_base_idx = _peak_base_indices(i, peak_idx, peak_properties, f_optimized)
 
         peak_segment = f_optimized[left_base_idx:right_base_idx + 1]
         peak_x = decay_times[left_base_idx:right_base_idx + 1]
@@ -397,14 +430,15 @@ def _compute_peak_statistics(peaks, peak_properties, f_optimized, decay_times):
         weighted_mean = np.exp(ln_mean)                          # geometric mean in τ-space
         variance = np.sum(w * (ln_x - ln_mean)**2)               # variance in log-τ space
         std_dev = np.sqrt(variance) if variance > 0 else 0
+        # kurtosis mu4/sigma^4 (Gaussian = 3, as Method C; JADE-DLS 3.1); NaN if undefined
         if std_dev > 0 and len(peak_segment) >= 3:
             peak_skewness = np.sum(w * (ln_x - ln_mean)**3) / std_dev**3
         else:
-            peak_skewness = 0
+            peak_skewness = np.nan
         if std_dev > 0 and len(peak_segment) >= 4:
-            peak_kurtosis = np.sum(w * (ln_x - ln_mean)**4) / std_dev**4 - 3
+            peak_kurtosis = np.sum(w * (ln_x - ln_mean)**4) / std_dev**4
         else:
-            peak_kurtosis = 0
+            peak_kurtosis = np.nan
 
         peak_stats[f'peak_{i+1}'] = {
             'position' : decay_times[peak_idx],
@@ -414,7 +448,7 @@ def _compute_peak_statistics(peaks, peak_properties, f_optimized, decay_times):
             'centroid' : weighted_mean,
             'std_dev'  : std_dev,
             'skewness' : peak_skewness,   # τ-space: positive = tail toward larger particles
-            'kurtosis' : peak_kurtosis,   # excess kurtosis: >0 = sharp, <0 = broad
+            'kurtosis' : peak_kurtosis,   # mu4/sigma^4: >3 = sharp with heavy tails, <3 = broad
         }
 
     #area-based normalization over detected peaks only (used for SLS intensity weighting)
@@ -585,18 +619,19 @@ def regularized_nnls_optimized(df: pd.DataFrame, name: str, params: dict,
     # Calculate RMSE
     rmse = np.sqrt(np.mean(residuals_values**2))
 
-    # Goodness of fit (JADE parity: R_squared per file, unweighted)
-    ss_res = np.sum(residuals_values**2)
-    ss_tot = np.sum((D - np.mean(D))**2)
-    r_squared = 1 - ss_res / ss_tot if ss_tot != 0 else 0.0
-
-    # Weighted goodness of fit (JADE parity, only meaningful when weighted)
-    weighted_ss_res = np.sum((sqrt_w * residuals_values)**2)
-    weighted_ss_tot = np.sum((sqrt_w * (D - np.mean(D)))**2)
-    weighted_r_squared = 1 - weighted_ss_res / weighted_ss_tot if weighted_ss_tot != 0 else 0.0
+    # Goodness of fit (JADE-DLS 3.1): R_squared is the weighted R2 when the fit is
+    # weighted (sqrt_w = 1 otherwise), via the R2 shared by all fitting methods
+    r_squared = fit_r_squared(D, optimized_values, sqrt_w**2)
 
     # Find peaks (width=0 so we get left_ips/right_ips for the peak-statistics base)
     peaks, peak_properties = find_peaks(f_optimized, prominence=prominence, distance=distance, width=0)
+
+    # Overlapping maxima (valley never below the base threshold) count as one peak (JADE-DLS 3.1)
+    if len(peaks) > 1:
+        keep = _merge_overlapping_peaks(peaks, peak_properties, f_optimized)
+        if len(keep) < len(peaks):
+            peaks = peaks[keep]
+            peak_properties = {k: v[keep] for k, v in peak_properties.items()}
 
     # Log convergence details
     beta_str = f", β={beta_fitted:.3f}" if fit_beta else ""
@@ -610,7 +645,7 @@ def regularized_nnls_optimized(df: pd.DataFrame, name: str, params: dict,
 
     # Prepare results for this dataframe
     results = {'filename': name, 'beta': beta_fitted, 'R_squared': r_squared,
-               'weighted_R_squared': weighted_r_squared, 'weighted': is_weighted}
+               'weighted': is_weighted}
     for i in range(len(peaks)):
         st = peak_stats[f'peak_{i+1}']
         results[f'tau_{i+1}']                     = st['centroid'] if peak_method == 'centroid' else st['position']

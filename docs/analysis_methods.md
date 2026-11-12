@@ -142,7 +142,9 @@ Both are accessible in the **alpha analysis dialog** (post-fit refinement).
 
 Available as a post-processing step after Regularized NNLS.
 
-**Intensity decomposition:** The total scattered intensity at each angle is apportioned to populations identified by the Regularized NNLS run, weighted by their amplitude fractions. Monitor-diode correction is applied to normalize for laser power drift.
+**Intensity decomposition:** The total scattered intensity at each angle is apportioned to the populations of the Regularized NNLS clustering, weighted by the area fraction of the clustered population in each file (`normalized_area_percent_popN`; population N, not the N-th peak of the file). Populations are numbered by ascending hydrodynamic radius (pop1 = smallest particles). Monitor-diode correction is applied to normalize for laser power drift: the corrected intensity is the mean count rate of both detectors, divided by the monitor-diode reading and multiplied by sin θ.
+
+**Solvent background (optional):** If a folder with solvent measurements (ALV `.ASC`, same angles; `*averaged*` files are ignored) is given, the mean corrected solvent intensity per angle is subtracted from every sample run before the decomposition. Sample and solvent intensities are kept in `MeanCR_corr_sample [kHz]` and `MeanCR_solvent [kHz]`; angles without a solvent measurement are not corrected (warning), and runs with a net intensity ≤ 0 are reported. Off by default.
 
 **Guinier analysis** per population and for total intensity:
 

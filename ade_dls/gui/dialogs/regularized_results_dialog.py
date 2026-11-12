@@ -7,7 +7,8 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox,
                              QLabel, QPushButton, QTableWidget, QTableWidgetItem,
                              QTabWidget, QWidget, QHeaderView, QMessageBox,
                              QFileDialog, QTextEdit, QSpinBox, QDoubleSpinBox,
-                             QFormLayout, QCheckBox, QSizePolicy, QScrollArea)
+                             QFormLayout, QCheckBox, QSizePolicy, QScrollArea,
+                             QLineEdit)
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont, QColor
 import pandas as pd
@@ -472,6 +473,26 @@ class RegularizedResultsDialog(QDialog):
         )
         form.addRow("Rh exponent:", self.sls_exponent_spin)
 
+        # Optional solvent background subtraction (JADE-DLS 3.1)
+        self.sls_solvent_check = QCheckBox("Subtract solvent background")
+        self.sls_solvent_check.setToolTip(
+            "Subtract the mean solvent intensity per angle (corrected like the sample runs) from every\n"
+            "sample run before the population decomposition. Select a folder with the solvent\n"
+            "ALV .ASC files (same angles); *averaged* files are ignored."
+        )
+        solvent_layout = QHBoxLayout()
+        self.sls_solvent_edit = QLineEdit()
+        self.sls_solvent_edit.setPlaceholderText("Folder with solvent .ASC files")
+        self.sls_solvent_edit.setEnabled(False)
+        self.sls_solvent_btn = QPushButton("Browse…")
+        self.sls_solvent_btn.setEnabled(False)
+        self.sls_solvent_btn.clicked.connect(self._sls_browse_solvent)
+        self.sls_solvent_check.toggled.connect(self.sls_solvent_edit.setEnabled)
+        self.sls_solvent_check.toggled.connect(self.sls_solvent_btn.setEnabled)
+        solvent_layout.addWidget(self.sls_solvent_edit)
+        solvent_layout.addWidget(self.sls_solvent_btn)
+        form.addRow(self.sls_solvent_check, solvent_layout)
+
         config_group.setLayout(form)
         outer.addWidget(config_group)
 
@@ -584,6 +605,23 @@ class RegularizedResultsDialog(QDialog):
         except Exception as e:
             QMessageBox.critical(self, "Load Error", str(e))
 
+    def _sls_browse_solvent(self):
+        """Slot: choose the folder with the solvent measurements."""
+        folder = QFileDialog.getExistingDirectory(
+            self, "Select folder with solvent .ASC files", "", QFileDialog.ShowDirsOnly)
+        if folder:
+            self.sls_solvent_edit.setText(folder)
+
+    def _sls_solvent_folder(self):
+        """Solvent folder if subtraction is requested, else None; raises ValueError for a bad folder."""
+        import os
+        if not self.sls_solvent_check.isChecked():
+            return None
+        folder = self.sls_solvent_edit.text().strip()
+        if not folder or not os.path.isdir(folder):
+            raise ValueError("Solvent subtraction is enabled, but no valid solvent folder is selected.")
+        return folder
+
     def _sls_run_analysis(self):
         """Slot: run SLS analysis and update plot + table."""
         n_pop = self.sls_npop_spin.value()
@@ -592,7 +630,14 @@ class RegularizedResultsDialog(QDialog):
         exponent = self.sls_exponent_spin.value()
 
         try:
-            summary_df = run_sls(self.laplace_analyzer, n_pop, q2_min, q2_max, exponent)
+            solvent_folder = self._sls_solvent_folder()
+        except ValueError as e:
+            QMessageBox.warning(self, "Solvent Subtraction", str(e))
+            return
+
+        try:
+            summary_df = run_sls(self.laplace_analyzer, n_pop, q2_min, q2_max, exponent,
+                                 solvent_folder=solvent_folder)
             self._sls_update_plot()
             self._sls_populate_table(summary_df)
             self.sls_status_label.setText("✅ SLS analysis complete.")

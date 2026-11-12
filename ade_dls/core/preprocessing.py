@@ -6,6 +6,7 @@ Created on Thu Mar 13 09:24:53 2025
 
 preprocessing
 """
+import numpy as np
 import pandas as pd
 import os
 from io import StringIO
@@ -525,3 +526,10 @@ def process_correlation_data(input_dict, columns_to_remove = None):
             continue
 
     return output_dict
+
+#scattered intensity per file (JADE-DLS 3.1): mean of both detector count rates, normalised to
+#the monitor diode (laser power) and multiplied by sin(theta) (scattering volume) [kHz].
+#NaN in any input propagates (no fallback).
+def corrected_intensity(df):
+    return ((df['meancr0 [kHz]'] + df['meancr1 [kHz]']) / 2
+            / (df['monitordiode [cps]'] * 1e-3) * np.sin(np.radians(df['angle [°]'])))

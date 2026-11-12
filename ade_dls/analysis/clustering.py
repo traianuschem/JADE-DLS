@@ -179,8 +179,11 @@ def cluster_all_gammas(data_df, gamma_cols, q_squared_col=None,
     else:
         raise ValueError(f"Unknown method: {method}. Use 'hierarchical' or 'simple'")
 
-    # Number populations by ascending mean log value (pop1 = smallest D)
-    cluster_labels = _relabel_by_value(cluster_labels, gammas_df['log_clustering_val'].values)
+    # Number populations by ascending hydrodynamic radius, i.e. descending mean log value
+    # (log10 D, or log10 Gamma without q^2 normalisation): pop1 = fastest population =
+    # smallest particles (JADE-DLS 3.1; Ward labels themselves carry no order)
+    cluster_labels = _relabel_by_value(cluster_labels, gammas_df['log_clustering_val'].values,
+                                       descending=True)
     gammas_df['cluster'] = cluster_labels
     n_populations = len(np.unique(cluster_labels))
 
@@ -377,7 +380,8 @@ def cluster_all_gammas(data_df, gamma_cols, q_squared_col=None,
                             gammas_df_clean, distance_threshold=distance_threshold
                         )
                     new_labels = _relabel_by_value(
-                        new_labels, gammas_df_clean['log_clustering_val'].values)
+                        new_labels, gammas_df_clean['log_clustering_val'].values,
+                        descending=True)
                     gammas_df_clean['cluster'] = new_labels
 
                     # Recalculate stats
@@ -584,12 +588,14 @@ def cluster_all_gammas(data_df, gamma_cols, q_squared_col=None,
 
     return clustered_df, cluster_info
 
-#renumber cluster labels 0..k-1 by ascending mean of values (deterministic, pop1 = smallest)
-def _relabel_by_value(labels, values):
+#renumber cluster labels 0..k-1 by the mean of values (deterministic): ascending by default,
+#descending=True gives label 0 = largest mean (cluster_all_gammas: pop1 = smallest particles)
+def _relabel_by_value(labels, values, descending=False):
     labels = np.asarray(labels)
     values = np.asarray(values, dtype=float)
     ids = np.unique(labels)
-    order = np.argsort([values[labels == cid].mean() for cid in ids], kind='stable')
+    means = np.array([values[labels == cid].mean() for cid in ids])
+    order = np.argsort(-means if descending else means, kind='stable')
     mapping = {ids[i]: new for new, i in enumerate(order)}
     return np.array([mapping[label] for label in labels], dtype=int)
 

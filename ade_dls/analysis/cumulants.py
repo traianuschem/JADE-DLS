@@ -13,6 +13,7 @@ from scipy.stats import linregress
 import matplotlib.pyplot as plt
 import scipy.stats as stats
 import statsmodels.api as sm
+from ade_dls.analysis.weighting import fit_r_squared
 
 
 #takes cumulant data from ALV-datafile and ensures robust encoding handling
@@ -453,10 +454,9 @@ def plot_processed_correlations(dataframes_dict, fit_x_limits, xlim=None, ylim=N
                 denom = Sw * Swxx - Swx ** 2
                 slope = (Sw * Swxy - Swx * Swy) / denom
                 intercept = (Swxx * Swy - Swx * Swxy) / denom
-                se = np.nan  # weighted slope std-error not derived (JADE parity)
-
-                y_wmean = np.average(y_fit, weights=w_fit)
-                weighted_ss_tot = np.sum(w_fit * (y_fit - y_wmean) ** 2)
+                # std error of the weighted slope (relative weights; equals linregress for w = 1), JADE-DLS 3.1
+                s2 = np.sum(w_fit * (y_fit - slope * x_fit - intercept) ** 2) / (len(x_fit) - 2)
+                se = float(np.sqrt(s2 * Sw / denom))
             else:
                 slope, intercept, r, p, se = linregress(x_fit, y_fit)
 
@@ -475,18 +475,13 @@ def plot_processed_correlations(dataframes_dict, fit_x_limits, xlim=None, ylim=N
 
             # Residuals (in fit window)
             residuals = y_fit - (slope * x_fit + intercept)
-            if is_weighted:
-                weighted_ss_res = np.sum(w_fit * residuals ** 2)
-                r_squared = 1 - weighted_ss_res / weighted_ss_tot if weighted_ss_tot != 0 else np.nan
-            else:
-                ss_res = np.sum(residuals**2)
-                ss_tot = np.sum((y_fit - np.mean(y_fit))**2)
-                r_squared = 1 - (ss_res / ss_tot)
+            r_squared = fit_r_squared(y_fit, slope * x_fit + intercept, w_fit if is_weighted else None)
             fit_result['R_squared'] = r_squared
 
             #3-panel layout: data+fit | residuals | Q-Q
             fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(20, 5))
-            fig.suptitle(f'[{plot_number}]: Method B — {name}', fontsize=12)
+            w_label = ' [weighted]' if is_weighted else ''
+            fig.suptitle(f'[{plot_number}]: Method B{w_label} — {name}', fontsize=12)
 
             ax1.plot(x_data, y_data, 'o', alpha=0.6, markersize=4, label='Data')
             ax1.plot(x_data, y_fit_values, 'r-', linewidth=2, label='Fit')
@@ -504,15 +499,22 @@ def plot_processed_correlations(dataframes_dict, fit_x_limits, xlim=None, ylim=N
                      transform=ax1.transAxes, va='top', ha='right',
                      bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
 
-            ax2.plot(residuals.values if hasattr(residuals, 'values') else residuals)
+            # panels 2 and 3 show what the fit minimised: r*sqrt(w) when weighted
+            plot_resid = (np.asarray(residuals) * np.sqrt(w_fit) if is_weighted
+                          else np.asarray(residuals))
+            resid_label = 'weighted residuals' if is_weighted else 'residuals'
+            ax2.plot(plot_resid)
             ax2.axhline(0, color='r', linestyle='--', linewidth=1)
-            ax2.set_xlabel('Sample Index')
-            ax2.set_ylabel('Residuals')
-            ax2.set_title('Residuals')
+            ax2.set_xlabel('lag-time index')
+            ax2.set_ylabel(resid_label)
+            ax2.set_title(f'Residuals{w_label}')
             ax2.grid(True, alpha=0.3)
 
-            stats.probplot(residuals, dist="norm", plot=ax3)
-            ax3.set_title('Q-Q Plot')
+
+            stats.probplot(plot_resid, dist="norm", plot=ax3)
+            ax3.set_xlabel('theoretical quantiles')
+            ax3.set_ylabel('sample quantiles')
+            ax3.set_title(f'Q-Q Plot{w_label}')
             ax3.grid(True, alpha=0.3)
 
             plt.tight_layout()

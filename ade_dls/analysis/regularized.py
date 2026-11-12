@@ -405,14 +405,15 @@ def nnls_reg(df, name, nnls_reg_params, plot_number):
             weighted_mean = np.exp(ln_mean)                           # geometric mean in τ-space
             variance      = np.sum(w * (ln_x - ln_mean)**2)           # variance in log-τ space
             std_dev       = np.sqrt(variance) if variance > 0 else 0  # std dev in log-τ space
+            #kurtosis mu4/sigma^4 (Gaussian = 3, as Method C; JADE-DLS 3.1); NaN if undefined
             if std_dev > 0 and len(peak_segment) >= 3:
                 peak_skewness = np.sum(w * (ln_x - ln_mean)**3) / std_dev**3
             else:
-                peak_skewness = 0
+                peak_skewness = np.nan
             if std_dev > 0 and len(peak_segment) >= 4:
-                peak_kurtosis = np.sum(w * (ln_x - ln_mean)**4) / std_dev**4 - 3
+                peak_kurtosis = np.sum(w * (ln_x - ln_mean)**4) / std_dev**4
             else:
-                peak_kurtosis = 0
+                peak_kurtosis = np.nan
 
             #statistics for this peak
             peak_stats[f'peak_{i+1}'] = {
@@ -427,6 +428,23 @@ def nnls_reg(df, name, nnls_reg_params, plot_number):
                 'left_idx': left_base_idx,
                 'right_idx': right_base_idx
             }
+
+    #neighbouring maxima whose segments each contain the other maximum are not separated
+    #(the valley never drops below the base threshold): keep the highest one, so the
+    #shared area is counted once (JADE-DLS 3.1)
+    st = lambda i: peak_stats[f'peak_{i+1}']
+    groups = []
+    for i in range(len(peaks)):
+        j = groups[-1][-1] if groups else None
+        if (j is not None and st(j)['left_idx'] <= peaks[i] <= st(j)['right_idx']
+                and st(i)['left_idx'] <= peaks[j] <= st(i)['right_idx']):
+            groups[-1].append(i)
+        else:
+            groups.append([i])
+    keep = [max(g, key=lambda i: st(i)['amplitude']) for g in groups]
+    if len(keep) < len(peaks):
+        peaks, peak_amplitudes = peaks[keep], peak_amplitudes[keep]
+        peak_stats = {f'peak_{k+1}': peak_stats[f'peak_{i+1}'] for k, i in enumerate(keep)}
 
     #area-based normalization over detected peaks only (JADE 2.0 methodology)
     if len(peaks) > 0 and peak_stats:
@@ -552,6 +570,7 @@ def nnls_reg_all(dataframes_dict, nnls_reg_params):
     all_results = []
     plot_number = 1
     full_results = {}
+    first_error = None
     
     for name, df in dataframes_dict.items():
         print(f"Processing {name}...")
@@ -573,6 +592,11 @@ def nnls_reg_all(dataframes_dict, nnls_reg_params):
             print(f"Error processing {name}: {str(e)}")
             import traceback
             traceback.print_exc()
+            first_error = first_error or (name, e)
+
+    if not all_results and first_error:
+        raise RuntimeError(f"Regularized fit failed for all {len(dataframes_dict)} datasets; "
+                           f"first error ({first_error[0]}): {first_error[1]}")
     
     #summary DataFrame
     nnls_reg_df = pd.DataFrame(all_results) if all_results else pd.DataFrame()

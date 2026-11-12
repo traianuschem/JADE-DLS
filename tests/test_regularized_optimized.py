@@ -139,8 +139,9 @@ def peak_keys(res, base):
     return list(res)[:len(base)]
 
 
-NN_BASE = ["filename", "R_squared", "weighted_R_squared", "weighted"]
-RG_BASE = ["filename", "beta", "R_squared", "weighted_R_squared", "weighted"]
+# JADE 3.1: weighted_R_squared removed; R_squared is the weighted R^2 for weighted fits
+NN_BASE = ["filename", "R_squared", "weighted"]
+RG_BASE = ["filename", "beta", "R_squared", "weighted"]
 NN_PEAK = ["tau", "intensity", "normalized_sum_percent", "normalized_area_percent",
            "area", "fwhm", "skewness", "kurtosis", "std_dev"]
 RG_PEAK = NN_PEAK + ["centroid"]
@@ -303,7 +304,7 @@ def test_oracle_PS_O1_symmetric_triangle():
     assert p["centroid"] == pytest.approx(DT[10], **DET)
     assert p["std_dev"] == pytest.approx(DLN / np.sqrt(2), **DET)
     assert p["skewness"] == pytest.approx(0.0, abs=1e-9)
-    assert p["kurtosis"] == pytest.approx(-1.0, **DET)
+    assert p["kurtosis"] == pytest.approx(2.0, **DET)  # JADE 3.1: mu4/sigma^4, no -3
     assert p["position"] == DT[10] and p["amplitude"] == 1.0
     assert pa == [100.0] and psum == [100.0]
 
@@ -316,14 +317,16 @@ def test_oracle_PS_O2_asymmetric():
     assert p["std_dev"] == pytest.approx(np.sqrt(68 / 81) * DLN, **DET)
     assert p["skewness"] == pytest.approx(232 / 68 ** 1.5, **DET)
     assert p["skewness"] == pytest.approx(0.4137372, rel=1e-6)
-    assert p["kurtosis"] == pytest.approx(11076 / 4624 - 3, **DET)
+    assert p["kurtosis"] == pytest.approx(11076 / 4624, **DET)  # JADE 3.1: no -3
 
 
 def test_oracle_PS_O3_isolated_delta():
     p = ps(FD)[0]["peak_1"]
     assert p["area"] == pytest.approx(0.9 * DLN, **DET)
     assert p["fwhm"] == 0
-    assert p["std_dev"] == 0 and p["skewness"] == 0 and p["kurtosis"] == 0
+    # JADE 3.1: zero width -> NaN (formerly 0)
+    assert p["std_dev"] == 0
+    assert np.isnan(p["skewness"]) and np.isnan(p["kurtosis"])
     assert p["centroid"] == pytest.approx(DT[10], **DET)
 
 
@@ -336,7 +339,7 @@ def test_oracle_PS_O4_two_peaks():
     np.testing.assert_allclose(psum, [200 / 3, 100 / 3], rtol=1e-6)
     for k in st:
         assert st[k]["std_dev"] == pytest.approx(DLN / np.sqrt(2), **DET)
-        assert st[k]["kurtosis"] == pytest.approx(-1.0, **DET)
+        assert st[k]["kurtosis"] == pytest.approx(2.0, **DET)  # JADE 3.1
 
 
 def test_oracle_PS_O5_no_peaks():
@@ -435,10 +438,11 @@ def test_oracle_NN_O1_mock_isolated_delta(monkeypatch):
     assert res["normalized_area_percent_1"] == pytest.approx(100, **DET)
     assert res["fwhm_1"] == pytest.approx((DT[-1] - DT[0]) / 26, **DET)
     assert res["fwhm_1"] == pytest.approx(0.0038461153846, rel=1e-6)
-    for k in ("std_dev_1", "skewness_1", "kurtosis_1"):
-        assert res[k] == 0
+    assert res["std_dev_1"] == 0
+    # JADE 3.1: zero width -> NaN skewness/kurtosis (formerly 0)
+    assert np.isnan(res["skewness_1"]) and np.isnan(res["kurtosis_1"])
     assert res["R_squared"] == pytest.approx(1.0, **DET)
-    assert res["weighted_R_squared"] == pytest.approx(1.0, **DET)
+    assert "weighted_R_squared" not in res
     assert res["weighted"] is False
     np.testing.assert_allclose(ov, df["g(2)-1"].to_numpy(), **DETA)
     np.testing.assert_allclose(rv, 0, atol=1e-12)
@@ -460,7 +464,7 @@ def test_oracle_NN_O2_mock_two_peaks_window_overlap(monkeypatch):
     assert res["std_dev_1"] == pytest.approx(np.sqrt(76 / 9) * DLN, **DET)
     assert res["std_dev_1"] == pytest.approx(1.338231, rel=1e-6)
     assert res["skewness_1"] == pytest.approx((164 / 3) / (76 / 9) ** 1.5, **DET)
-    assert res["kurtosis_1"] == pytest.approx(37188 / 5776 - 3, **DET)
+    assert res["kurtosis_1"] == pytest.approx(37188 / 5776, **DET)  # JADE 3.1: no -3
     assert res["std_dev_2"] == pytest.approx(np.sqrt(22.76) * DLN, **DET)
 
 
@@ -469,8 +473,10 @@ def test_oracle_NN_O3_mock_no_peaks_r2(monkeypatch):
     df = make_df([0.0, 1.0, 2.0], [1.0, 2.0, 3.0])
     res = nn(df, weights=np.array([1.0, 1.0, 4.0]))[0]
     assert list(res) == NN_BASE
-    assert res["R_squared"] == pytest.approx(-6.0, **DET)
-    assert res["weighted_R_squared"] == pytest.approx(-7.2, **DET)
+    # JADE 3.1: weighted R^2, w=[1,1,4], y=[1,2,3], y_fit=0:
+    # ybar_w=2.5, ss_res=1+4+36=41, ss_tot=2.25+0.25+1=3.5 -> 1-41/3.5
+    assert res["R_squared"] == pytest.approx(1 - 41 / 3.5, **DET)
+    assert "weighted_R_squared" not in res
     assert res["weighted"] is True
 
 
@@ -478,7 +484,7 @@ def test_oracle_NN_O4_mock_constant_data_r2_zero(monkeypatch):
     mock_ls(monkeypatch, np.zeros(26))
     df = make_df([0.0, 1.0, 2.0], [0.25] * 3)
     res = nn(df, weights=np.array([1.0, 1.0, 4.0]))[0]
-    assert res["R_squared"] == 0.0 and res["weighted_R_squared"] == 0.0
+    assert res["R_squared"] == 0.0
 
 
 def test_oracle_NN_O5_real_mono_recovery():
@@ -550,9 +556,10 @@ def test_meta_NN_M5_unit_weights_bit_equal():
     a = nn(M10)[0]
     b = nn(make_df(LAG, mono(10), np.ones(71)))[0]
     assert b["weighted"] is True and a["weighted"] is False
-    assert b["weighted_R_squared"] == b["R_squared"]
+    assert "weighted_R_squared" not in b
+    assert b["R_squared"] == pytest.approx(a["R_squared"], rel=1e-9, abs=1e-12)
     for k in a:
-        if k not in ("weighted", "weighted_R_squared"):
+        if k not in ("weighted", "R_squared"):
             assert a[k] == b[k]
 
 
@@ -714,7 +721,7 @@ def test_char_NN_C7_stdout_documents_current_behavior(capsys):
 def test_oracle_RG_O1_mock_asymmetric_peak(monkeypatch):
     mock_min(monkeypatch, np.r_[0.8, FA])
     res, f, ov, rv, peaks = rg(data_reg(FA, 0.8))
-    assert list(res)[:5] == RG_BASE
+    assert list(res)[:len(RG_BASE)] == RG_BASE
     np.testing.assert_allclose(f, FA / 2.25, rtol=1e-12)
     assert f.sum() == pytest.approx(1.0, rel=1e-12)
     assert res["beta"] == 0.8 and type(res["beta"]) is float
@@ -724,7 +731,7 @@ def test_oracle_RG_O1_mock_asymmetric_peak(monkeypatch):
     assert res["area_1"] == pytest.approx(DLN, **DET)
     assert res["fwhm_1"] == pytest.approx(2 * DLN, **DET)
     assert res["skewness_1"] == pytest.approx(0.4137372, rel=1e-6)
-    assert res["kurtosis_1"] == pytest.approx(-0.6046713, rel=1e-6)
+    assert res["kurtosis_1"] == pytest.approx(2.3953287, rel=1e-6)  # JADE 3.1: no -3
     assert res["std_dev_1"] == pytest.approx(np.sqrt(68 / 81) * DLN, **DET)
     assert res["centroid_1"] == pytest.approx(DT[10] * np.exp(2 * DLN / 9), **DET)
     assert res["tau_1"] == DT[10]
@@ -875,9 +882,10 @@ def test_meta_RG_M4_precomputed_matrix_and_repeat_bit_equal():
 def test_meta_RG_M5_weights():
     a = rg(M10)[0]
     b = rg(make_df(LAG, mono(10), np.ones(71)))[0]
-    assert b["weighted"] is True and b["weighted_R_squared"] == b["R_squared"]
+    assert b["weighted"] is True and "weighted_R_squared" not in b
+    assert b["R_squared"] == pytest.approx(a["R_squared"], rel=1e-9, abs=1e-12)
     for k in a:
-        if k not in ("weighted", "weighted_R_squared"):
+        if k not in ("weighted", "R_squared"):
             assert a[k] == b[k]
     w = np.linspace(1, 3, 71)
     c = rg(make_df(LAG, mono(10), w))[0]
@@ -948,7 +956,7 @@ def test_edge_RG_E5_small_grids():
 def test_edge_RG_E6_module_defaults_trf_path():
     res = rg(M10, p={"decay_times": DT})[0]
     assert res["beta"] == 1.0
-    assert list(res)[:5] == RG_BASE
+    assert list(res)[:len(RG_BASE)] == RG_BASE
 
 
 def test_edge_RG_E7_mock_plateau_and_border(monkeypatch):
@@ -987,13 +995,16 @@ def test_char_RG_C2_grid_dependent_peak_count_documents_current_behavior(monkeyp
 
 
 def test_char_RG_C3_valley_centroids_documents_current_behavior(monkeypatch):
-    """documents current behavior, not desired behavior (F-05)."""
+    """documents current behavior (F-05, JADE 3.1 merge): two peaks (nodes 8, 12) whose
+    valley (0.05) stays above 1 % of the peak height are merged into one; the first of the
+    equal-height peaks (node 8) is kept, area 100 %, centroid in the valley (DT[10])."""
     mock_min(monkeypatch, np.r_[1.0, FV])
-    r = rg(M10)[0]
-    assert r["centroid_1"] == pytest.approx(DT[10], **DET)
-    assert r["centroid_2"] == pytest.approx(DT[10], **DET)
-    r = rg(M10, p={**REG_P, "peak_method": "centroid"})[0]
-    assert r["tau_1"] == r["tau_2"]
+    res, f, ov, rv, peaks = rg(M10)
+    assert list(peaks) == [8]
+    assert "centroid_2" not in res and "tau_2" not in res
+    assert res["centroid_1"] == pytest.approx(DT[10], **DET)
+    assert res["tau_1"] == pytest.approx(DT[8], **DET)
+    assert res["normalized_area_percent_1"] == pytest.approx(100.0, **DET)
 
 
 def test_char_RG_C4_trf_beta_hits_bound_documents_current_behavior():
@@ -1056,8 +1067,7 @@ def run_all(d, **kw):
 
 def test_oracle_NA_O1_rows_equal_single_results(capsys):
     out = run_all({"A": M10, "B": B517})
-    assert list(out.columns)[:5] == ["filename", "R_squared", "weighted_R_squared",
-                                     "weighted", "tau_1"]
+    assert list(out.columns)[:len(NN_BASE) + 1] == NN_BASE + ["tau_1"]
     for i, (n_, df) in enumerate({"A": M10, "B": B517}.items()):
         exp = pd.DataFrame([nn(df, name=n_)[0]])
         got = out.iloc[[i]][exp.columns].reset_index(drop=True)
@@ -1101,11 +1111,12 @@ def test_edge_NA_E1_empty_dict_raises_indexerror():
         run_all({})
 
 
-def test_edge_NA_E2_nan_file_aborts_whole_run():
+def test_edge_NA_E2_nan_file_collected_good_kept():
+    """JADE 3.1: per-dataset errors are collected, successes stay in the table."""
     bad = M10.copy()
     bad.loc[5, "g(2)-1"] = np.nan
-    with pytest.raises(ValueError):
-        run_all({"good": M10, "bad": bad})
+    out = run_all({"good": M10, "bad": bad})
+    assert list(out.filename) == ["good"]
 
 
 class _SyncExecutor:
@@ -1374,8 +1385,7 @@ def test_finding_X05_empty_dict_returns_empty_frame():
     assert len(out) == 0
 
 
-@pytest.mark.xfail(strict=True, raises=ValueError, reason=FIND.format("F-14 (X-06)")
-                   + ": one NaN file aborts whole NNLS batch")
+# JADE 3.1: F-14 fixed by the new error collection (xfail marker removed)
 def test_finding_X06_nan_file_isolated():
     bad = M10.copy()
     bad.loc[5, "g(2)-1"] = np.nan
@@ -1471,3 +1481,172 @@ def test_oracle_G_02_gold_regularized_mono_peak():
     print("G-02 peaks", list(peaks), "beta", res["beta"])
     assert int(peaks[0]) in (110, 111)
     assert res["beta"] == pytest.approx(0.8, **OPTW)
+
+
+# =====================================================================
+# JADE 3.1 additions (test-first, written red before the implementation)
+# =====================================================================
+# --- 1. kurtosis = mu4/sigma^4 (Gaussian = 3), NaN for degenerate peaks -----
+def test_oracle_JADE31_kurtosis_binomial_weights_no_minus_3():
+    """Weights 1,4,6,4,1 (/16) on consecutive log-nodes: var=1 node^2, mu4=40/16 -> 2.5."""
+    f = vec({8: 1, 9: 4, 10: 6, 11: 4, 12: 1})
+    p = ps(f)[0]["peak_1"]
+    assert p["std_dev"] == pytest.approx(DLN, **DET)
+    assert p["skewness"] == pytest.approx(0.0, abs=1e-9)
+    assert p["kurtosis"] == pytest.approx(2.5, **DET)
+
+
+def test_oracle_JADE31_kurtosis_gaussian_like_close_to_3():
+    """Segment is truncated at 1 % of peak height (+-3.03 sigma), so the discrete kurtosis
+    is ~2.9455, not 3.0; oracle computed by hand for the truncated discrete distribution."""
+    x = np.arange(26.0)
+    f = np.exp(-0.5 * ((x - 12.5) / 2.0) ** 2)
+    f[f < 1e-12] = 0.0
+    p = ps(f)[0]["peak_1"]
+    above = np.arange(26)[f > 0.01 * f.max()]
+    seg = np.arange(above[0] - 1, above[-1] + 2)   # walk stops at first node <= 1 %
+    w = f[seg] / f[seg].sum()
+    lx = np.log(DT[seg])
+    m = (w * lx).sum()
+    v = (w * (lx - m) ** 2).sum()
+    k = (w * (lx - m) ** 4).sum() / v ** 2
+    assert k == pytest.approx(2.9455, abs=1e-3)
+    assert p["kurtosis"] == pytest.approx(k, rel=1e-3)
+    assert p["kurtosis"] == pytest.approx(3.0, abs=0.1)
+
+
+def test_edge_JADE31_kurtosis_nan_with_three_segment_points():
+    """Segment of 3 points: skewness defined, kurtosis (needs >= 4 points) NaN."""
+    f = vec({0: 0.5, 1: 1.0})
+    peaks, props = find_peaks(f, prominence=0.005, distance=1, width=0)
+    assert list(peaks) == [1]
+    p = ro._compute_peak_statistics(peaks, props, f, DT)[0]["peak_1"]
+    assert np.isfinite(p["skewness"])
+    assert np.isnan(p["kurtosis"])
+
+
+# --- 2. peak merge ---------------------------------------------------------
+def _fp(f):
+    peaks, props = find_peaks(f, prominence=0.005, distance=1, width=0)
+    return peaks, props
+
+
+F_OV_RIGHT = vec({7: .45, 8: .9, 9: .45, 10: .05, 11: .5, 12: 1.0, 13: .5})
+F_OV_LEFT = vec({7: .5, 8: 1.0, 9: .5, 10: .05, 11: .45, 12: .9, 13: .45})
+
+
+@pytest.mark.parametrize("f,expected", [(F_OV_RIGHT, [1]), (F_OV_LEFT, [0])])
+def test_oracle_JADE31_merge_two_overlapping_keeps_highest(f, expected):
+    peaks, props = _fp(f)
+    assert list(peaks) == [8, 12]
+    keep = ro._merge_overlapping_peaks(peaks, props, f)
+    assert list(keep) == expected
+
+
+def test_oracle_JADE31_merge_separated_peaks_both_kept():
+    peaks, props = _fp(FB)
+    keep = ro._merge_overlapping_peaks(peaks, props, FB)
+    assert list(keep) == [0, 1]
+
+
+def test_oracle_JADE31_merge_three_peaks_middle_right_overlap():
+    f = vec({3: .5, 4: 1, 5: .5, 13: .5, 14: 1.0, 15: .5, 16: .05, 17: .45, 18: .9, 19: .45})
+    peaks, props = _fp(f)
+    assert list(peaks) == [4, 14, 18]
+    keep = ro._merge_overlapping_peaks(peaks, props, f)
+    assert list(keep) == [0, 1]
+
+
+def test_oracle_JADE31_merge_integration_regularized_counts_peak_once(monkeypatch):
+    """Mocked optimizer returns two overlapping humps: one peak, area counted once."""
+    mock_min(monkeypatch, np.r_[0.8, F_OV_RIGHT])
+    res = rg(data_reg(F_OV_RIGHT, 0.8))[0]
+    assert "tau_1" in res and "tau_2" not in res
+    assert res["tau_1"] == DT[12]
+    assert res["normalized_area_percent_1"] == pytest.approx(100.0, **DET)
+    assert res["normalized_sum_percent_1"] == pytest.approx(100.0, **DET)
+    assert res["area_1"] == pytest.approx(DLN, **DET)
+
+
+def test_oracle_JADE31_merge_integration_real_fit_consistency():
+    """Real small-grid fit: #peaks == #tau columns, area percents sum to 100."""
+    res = rg(make_df(LAG, bi(5, 17, 0.6, 0.3)))[0]
+    taus = [k for k in res if k.startswith("tau_")]
+    assert len(taus) >= 1
+    s = sum(res[f"normalized_area_percent_{i + 1}"] for i in range(len(taus)))
+    assert s == pytest.approx(100.0, rel=1e-6)
+
+
+# --- 3. weighted R^2 -------------------------------------------------------
+T3 = np.array([0.0, DT[10], 2 * DT[10]])
+Y3 = np.array([0.7, 0.1, 0.05])
+W3 = np.array([1.0, 2.0, 3.0])
+
+
+def _r2_hand(y, yfit, w):
+    ybar = np.sum(w * y) / np.sum(w)
+    return 1 - np.sum(w * (y - yfit) ** 2) / np.sum(w * (y - ybar) ** 2)
+
+
+def test_oracle_JADE31_r2_nnls_weighted(monkeypatch):
+    mock_ls(monkeypatch, FD)
+    yfit = (0.9 * np.exp(-np.array([0.0, 1.0, 2.0]))) ** 2
+    for scale in (1.0, 7.3):  # weight scale invariance
+        res = nn(make_df(T3, Y3), weights=W3 * scale)[0]
+        assert res["R_squared"] == pytest.approx(_r2_hand(Y3, yfit, W3), **DET)
+        assert res["weighted"] is True and "weighted_R_squared" not in res
+    un = nn(make_df(T3, Y3))[0]
+    assert un["R_squared"] == pytest.approx(
+        1 - np.sum((Y3 - yfit) ** 2) / np.sum((Y3 - Y3.mean()) ** 2), **DET)
+    assert un["weighted"] is False and "weighted_R_squared" not in un
+
+
+def test_oracle_JADE31_r2_regularized_weighted_uses_beta_model(monkeypatch):
+    mock_min(monkeypatch, np.r_[0.8, FD])
+    yfit = 0.8 * np.exp(-np.array([0.0, 1.0, 2.0])) ** 2
+    res = rg(make_df(T3, Y3), weights=W3)[0]
+    assert res["R_squared"] == pytest.approx(_r2_hand(Y3, yfit, W3), **DET)
+    assert res["weighted"] is True and "weighted_R_squared" not in res
+    un = rg(make_df(T3, Y3))[0]
+    assert un["R_squared"] == pytest.approx(_r2_hand(Y3, yfit, np.ones(3)), **DET)
+    assert "weighted_R_squared" not in un
+
+
+# --- 4. error handling in nnls_all_optimized -------------------------------
+def _fake_nn(fail):
+    def f(df, name, params, *a, **k):
+        if name in fail:
+            raise ValueError(f"boom-{name}")
+        res = {"filename": name, "R_squared": 1.0, "weighted": False, "tau_1": 1.0}
+        return res, None, None, None, np.array([])
+    return f
+
+
+def _quiet_all(d, **kw):
+    return ro.nnls_all_optimized(d, NNLS_P, show_plots=False, **kw)
+
+
+def test_oracle_JADE31_all_sequential_collects_errors_keeps_successes(monkeypatch):
+    monkeypatch.setattr(ro, "nnls_optimized", _fake_nn({"B"}))
+    out = _quiet_all({"A": M10, "B": M10, "C": M10})
+    assert list(out.filename) == ["A", "C"]
+
+
+def test_oracle_JADE31_all_sequential_all_fail_raises_runtimeerror(monkeypatch):
+    monkeypatch.setattr(ro, "nnls_optimized", _fake_nn({"A", "B"}))
+    with pytest.raises(RuntimeError) as ei:
+        _quiet_all({"A": M10, "B": M10})
+    assert "A" in str(ei.value) and "boom-A" in str(ei.value)
+
+
+def test_oracle_JADE31_all_multiprocessing_path_collects_and_raises(monkeypatch):
+    monkeypatch.setattr(ro, "ProcessPoolExecutor", _SyncExecutor)
+    monkeypatch.setattr(ro, "as_completed", lambda futs: list(futs))
+    d = {n: M10 for n in "ABCD"}
+    monkeypatch.setattr(ro, "nnls_optimized", _fake_nn({"C"}))
+    out = _quiet_all(d, use_multiprocessing=True)
+    assert sorted(out.filename) == ["A", "B", "D"]
+    monkeypatch.setattr(ro, "nnls_optimized", _fake_nn(set("ABCD")))
+    with pytest.raises(RuntimeError) as ei:
+        _quiet_all(d, use_multiprocessing=True)
+    assert "A" in str(ei.value) and "boom-A" in str(ei.value)

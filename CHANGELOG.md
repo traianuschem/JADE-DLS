@@ -7,12 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Adoption of the bug-fix release JADE-DLS 3.1 (AG-Plamper/JADE-DLS, tag v3.1). Items that ADE already had (µ3 of the 3rd-order block, uncentered through-origin R², clustering statistics from the final assignment, `below_min_abundance` flagging, separate uncertainty thresholds, `population_D_*` always present, single-point clustering, ddof=0, pandas ≥ 3 dtypes, `np.trapezoid` fallback) are unchanged; Method C keeps its RMSE/AIC columns (JADE 3.1 removed them).
+
+### Added
+
+- **Optional solvent subtraction for the SLS analysis** (`ade_dls.analysis.sls.subtract_solvent`, `solvent_folder` of `LaplaceAnalyzer.run_sls_analysis`, `sls_run.run_sls`, `headless.run_sls`; checkbox + folder field in both SLS tabs): the mean corrected intensity of the solvent runs per angle is subtracted from every sample run before the population decomposition (`*averaged*` files ignored; sample and solvent intensity are kept in `MeanCR_corr_sample [kHz]` / `MeanCR_solvent [kHz]`). Off by default.
+- `ade_dls.core.preprocessing.corrected_intensity()` (monitor-diode- and sin θ-corrected mean count rate), now the single implementation behind `build_intensity_dataframe`; `ade_dls.analysis.weighting.fit_r_squared()` (R² shared by all fitting methods, weighted when weights are given).
+
 ### Changed
+
+- **Population numbering follows ascending hydrodynamic radius** (pop1 = fastest population / smallest particles = largest mean log₁₀ D), as in JADE 3.1. This reverses the numbering introduced in 4.0.0; population labels, tables and the SLS population assignment of 4.0.0 results are mirrored.
+- **Kurtosis is now μ₄/σ⁴ (Gaussian = 3) instead of the excess kurtosis** for the per-peak statistics of NNLS/Regularized and for Method D; skewness and kurtosis are NaN (previously 0) for zero-width peaks, too few points or a single Method D mode.
+- **R² of weighted fits is the weighted R²** (`weighting.fit_r_squared`: 1 − Σw·r² / Σw·(y − ȳ_w)²) in NNLS, Regularized, Methods B, C and D; the field `weighted_R_squared` of NNLS/Regularized is removed. Unweighted fits are unchanged.
+- Method B with weights: `Gamma_error` / `Gamma_relative_error` are now the standard error of the weighted slope (previously NaN). Method D stores the weighted residual sum used for the mode selection as `fit_ss`.
+- Residual and Q-Q panels of weighted fits show the weighted residuals; axis labels "lag-time index", "weighted residuals"/"residuals", "theoretical quantiles", "sample quantiles".
 
 - **Reference datasets (`Test+ReferenceData/`) replaced by the datasets of the paper**, all under CC BY-SA 4.0 (see `Test+ReferenceData/LICENSE`): `ALV_gold-nanoparticle-reference-data.zip` (ALV raw data of Au1–Au3 and the four mixtures), `LSInstruments_gold-nanoparticle-reference-data.zip` (LS Spectrometer data incl. CORENN results, F. Trummer) and the SAXS data (`SAXSdata/`). The old example archives `example_files_monomodal.zip` and `example_files_bimodal.zip` (empty) were removed; the test fixture `tests/data/alv_mono/` is unchanged.
 
 ### Fixed
 
+- **SLS used the wrong area fraction:** `compute_sls_data` took `normalized_area_percent_<peak number>` (the peak number within each file) instead of the area fraction of the clustered population `normalized_area_percent_pop<N>`; the per-peak column is now only the fallback for pass-through mode. Guinier results change whenever the peak order of a file differs from the population number.
+- **Regularized: overlapping peaks were counted twice.** Neighbouring maxima whose base segments each contain the other maximum are merged (the highest is kept, the shared area is counted once), as in JADE 3.1. The legacy module `analysis/regularized.py` (still used by the generated reproduction scripts) received the same merge, the μ₄/σ⁴ kurtosis with NaN edge cases and the `RuntimeError` of `nnls_reg_all`.
+- `nnls_all_optimized` collects per-dataset errors in the sequential path too and raises a `RuntimeError` with the first error if the fit fails for every dataset (previously an empty table or the raw exception).
+- Method D docstrings: the gap threshold is a linear ratio Γ(i+1)/Γ(i); the number of modes is not selected by AIC.
 - **LS Instruments parser: measurement duration and mean count rates were discarded.** `LSInstrumentsParser.extract_basedata` set `duration [s]`, `meancr0 [kHz]` and `meancr1 [kHz]` to NaN although `Summary.csv` provides them (`Duration [s]`, `Average count rate A/B [kHz]`). As a consequence the noise weighting was reported as unavailable for all LS Instruments data. The values are now read from `Summary.csv` (NaN only if a column is missing); `monitordiode [cps]` stays NaN (not provided by the instrument). Regression tests in `tests/test_parser_contract.py`.
 
 ## [4.0.0] - 2026-11-05

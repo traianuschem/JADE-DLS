@@ -1370,7 +1370,7 @@ class LaplaceAnalyzer:
         return True
 
     def run_sls_analysis(self, n_populations: int, q2_range=None,
-                         exponent: int = 6) -> 'pd.DataFrame':
+                         exponent: int = 6, solvent_folder=None) -> 'pd.DataFrame':
         """
         Run population-resolved SLS analysis on the regularized NNLS results.
 
@@ -1390,6 +1390,11 @@ class LaplaceAnalyzer:
             extrapolated I0 values (JADE-DLS v2.3.0; see
             ade_dls.analysis.sls.compute_number_weighted_I0).
             6 = Rayleigh (compact spheres), 5 = Daoud-Cotton (star polymers).
+        solvent_folder : str, optional
+            Folder with solvent measurements (ALV ``.ASC``, same angles). If given, the
+            mean solvent intensity per angle is subtracted from every sample run before
+            the population decomposition (JADE-DLS 3.1, ``sls.subtract_solvent``);
+            ``self.df_intensity`` itself stays unchanged.
 
         Returns
         -------
@@ -1401,6 +1406,7 @@ class LaplaceAnalyzer:
         (JADE-DLS v2.3.0 dropped the toggle for the same reason).
         """
         from ade_dls.analysis.sls import (
+            subtract_solvent,
             compute_sls_data,
             compute_guinier_total,
             compute_guinier_extrapolation,
@@ -1431,7 +1437,9 @@ class LaplaceAnalyzer:
                     break
                 rh_values[i] = float(row['Rh [nm]'])
 
-        sls = compute_sls_data(self.regularized_data, self.df_intensity, n_populations)
+        df_int = (subtract_solvent(self.df_intensity, solvent_folder)
+                  if solvent_folder else self.df_intensity)
+        sls = compute_sls_data(self.regularized_data, df_int, n_populations)
         self.sls_data = sls
         self.guinier_total = compute_guinier_total(sls, q2_range)
         self.guinier_results = compute_guinier_extrapolation(sls, n_populations,

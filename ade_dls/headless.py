@@ -231,11 +231,14 @@ def run_regularized(data, params: Optional[Dict[str, Any]] = None, use_multiproc
 
 
 def run_sls(analyzer, n_populations: int = 1, q2_range=None, exponent: int = 6,
-            folder: Optional[str] = None):
+            folder: Optional[str] = None, solvent_folder: Optional[str] = None):
     """Population-resolved SLS analysis (Guinier extrapolation) on the Regularized results of
     ``analyzer`` from ``run_regularized``. Intensity data are read from the files named in the
-    analyzer's basedata (or from the ``.asc`` files in ``folder``). Returns the summary DataFrame."""
+    analyzer's basedata (or from the ``.asc`` files in ``folder``). With ``solvent_folder`` the mean
+    solvent intensity per angle is subtracted from every sample run first. Returns the summary DataFrame."""
     if not sls_run.load_intensity(analyzer, folder):
         raise ValueError("No intensity data available: basedata names no readable files and "
                          "no valid folder with .asc files was given")
-    return analyzer.run_sls_analysis(n_populations=n_populations, q2_range=q2_range, exponent=exponent)
+    kwargs = {'solvent_folder': solvent_folder} if solvent_folder else {}
+    return analyzer.run_sls_analysis(n_populations=n_populations, q2_range=q2_range,
+                                     exponent=exponent, **kwargs)

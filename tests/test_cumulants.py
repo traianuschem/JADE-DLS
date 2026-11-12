@@ -640,7 +640,15 @@ def test_plot_processed_correlations_BO05_hand_weighted():
     assert r["a"] == pytest.approx(math.exp(4 / 11), **TOL)
     assert r["R_squared"] == pytest.approx(289 / 297, **TOL)
     assert r["weighted"] == True  # noqa: E712
-    assert pd.isna(r["Gamma_error"]) and pd.isna(r["Gamma_relative_error"])
+    # JADE 3.1: weighted Gamma_error = sqrt(s2*Sw/denom), finite
+    w = np.array([1.0, 1.0, 2.0]); w = w / w.mean()
+    x = np.array([0.0, 1.0, 2.0]); y = np.array([0.0, -1.0, -3.0])
+    X = np.column_stack([x, np.ones(3)]); A = X.T @ (w[:, None] * X)
+    b = np.linalg.solve(A, X.T @ (w * y))
+    s2 = np.sum(w * (y - X @ b) ** 2) / 1
+    se = math.sqrt(s2 * np.linalg.inv(A)[0, 0])
+    assert r["Gamma_error"] == pytest.approx(se, **TOL)
+    assert r["Gamma_relative_error"] == pytest.approx(se / (17 / 11) * 100, **TOL)
 
 
 def test_plot_processed_correlations_BO06_columns_and_order():
@@ -729,7 +737,8 @@ def test_plot_processed_correlations_BM08_constant_effective_weights_equal_ols()
     b = pc(g2b(dw), (0, 1.0)).iloc[0]
     for c in ("Gamma", "a", "R_squared"):
         assert b[c] == pytest.approx(a[c], rel=1e-6)
-    assert pd.isna(b["Gamma_error"]) and np.isfinite(a["Gamma_error"])
+    # JADE 3.1: constant effective weights -> weighted stderr equals linregress stderr
+    assert b["Gamma_error"] == pytest.approx(a["Gamma_error"], rel=1e-6)
 
 
 def test_plot_processed_correlations_BM09_weights_outside_window_irrelevant():
@@ -785,14 +794,14 @@ def _const_y():
 
 
 def test_plot_processed_correlations_BE05_constant_y_documents_current_behavior():
-    """documents current behavior: Gamma -0.0, rel. error inf, a=exp(-1), R2 NaN.
+    """documents current behavior: Gamma -0.0, rel. error inf, a=exp(-1), R2 0.0 (JADE 3.1: fit_r_squared gives 0 for ss_tot == 0).
     Gamma_error is 0 (older scipy, spec) or NaN (scipy 1.17.1, observed): version dependent."""
     r = _const_y()
     assert r["Gamma"] == 0
     assert r["Gamma_error"] == 0 or np.isnan(r["Gamma_error"])
     assert r["Gamma_relative_error"] == np.inf
     assert r["a"] == pytest.approx(math.exp(-1), **TOL)
-    assert pd.isna(r["R_squared"])
+    assert r["R_squared"] == 0.0  # JADE 3.1 (was NaN)
 
 
 def test_plot_processed_correlations_BE06_nan_in_window():
@@ -851,10 +860,14 @@ def test_plot_processed_correlations_BC05_identical_t_raises_documents_current_b
 
 
 def test_plot_processed_correlations_BC06_weighted_empty_window_documents_current_behavior():
-    """documents current behavior (F-10): observed exception type recorded below."""
+    """documents current behavior (F-10, JADE 3.1): no ZeroDivisionError any more; either an
+    exception or a NaN row (observed: NaN row, fit_r_squared returns NaN for empty y)."""
     d = d_w()
-    with pytest.raises(ZeroDivisionError):
-        pc({"x": d}, (10, 20))
+    try:
+        r = pc({"x": d}, (10, 20))
+    except Exception:
+        return  # branch A: exception
+    assert pd.isna(r.iloc[0]["Gamma"])  # branch B: NaN row
 
 
 def test_plot_processed_correlations_BC07_single_point_documents_current_behavior():

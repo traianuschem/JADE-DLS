@@ -41,6 +41,7 @@ import inspect
 import pandas as pd
 import matplotlib.pyplot as plt
 import scipy.stats as stats
+from ade_dls.analysis.weighting import fit_r_squared
 
 #physical parameter bounds used when method='trf' or 'dogbox'
 #c = μ₂ (2nd cumulant / variance) is non-negative;
@@ -217,15 +218,8 @@ def plot_processed_correlations_iterative(dataframes_dict, fit_function2, fit_x_
             def _metrics(popt):
                 yc     = fit_function2(x_fit, *popt)
                 res    = y_fit - yc
-                if is_weighted:
-                    w_arr  = sigma_fit ** -2
-                    ss_res = np.sum(w_arr * res**2)
-                    y_wmean = np.average(y_fit, weights=w_arr)
-                    ss_tot = np.sum(w_arr * (y_fit - y_wmean)**2)
-                else:
-                    ss_res = np.sum(res**2)
-                    ss_tot = np.sum((y_fit - np.mean(y_fit))**2)
-                r2     = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0
+                # R2 shared by all methods (JADE-DLS 3.1): weighted when weighted
+                r2     = fit_r_squared(y_fit, yc, sigma_fit ** -2 if is_weighted else None)
                 n      = len(y_fit)
                 k      = len(popt) + 1
                 # RMSE/AIC stay unweighted (JADE parity) -- always from the
@@ -396,7 +390,8 @@ def plot_processed_correlations_iterative(dataframes_dict, fit_function2, fit_x_
                 mode_str = (f'adaptive ({len(all_r_squared)} attempts)'
                             if _is_adaptive else f'expert (iter {best_idx+1})')
                 fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(20, 5))
-                fig.suptitle(f'[{plot_number}]: Method C ({fit_function2.__name__}) — {name}', fontsize=12)
+                w_label = ' [weighted]' if is_weighted else ''
+                fig.suptitle(f'[{plot_number}]: Method C{w_label} ({fit_function2.__name__}) — {name}', fontsize=12)
 
                 ax1.plot(x_data, y_data, 'o', alpha=0.6, markersize=4, label='Data')
                 for i, (popt_i, y_i) in enumerate(all_y_fits):
@@ -417,15 +412,22 @@ def plot_processed_correlations_iterative(dataframes_dict, fit_function2, fit_x_
                          transform=ax1.transAxes, va='top', ha='right',
                          bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
 
-                ax2.plot(best_residuals)
+                #panels 2 and 3 show what the fit minimised: r/sigma = r*sqrt(w) when weighted
+                plot_resid = (np.asarray(best_residuals) / sigma_fit if is_weighted
+                              else np.asarray(best_residuals))
+                resid_label = 'weighted residuals' if is_weighted else 'residuals'
+
+                ax2.plot(plot_resid)
                 ax2.axhline(0, color='r', linestyle='--', linewidth=1)
-                ax2.set_xlabel('Sample Index')
-                ax2.set_ylabel('Residuals')
-                ax2.set_title('Residuals')
+                ax2.set_xlabel('lag-time index')
+                ax2.set_ylabel(resid_label)
+                ax2.set_title(f'Residuals{w_label}')
                 ax2.grid(True, alpha=0.3)
 
-                stats.probplot(best_residuals, dist="norm", plot=ax3)
-                ax3.set_title('Q-Q Plot')
+                stats.probplot(plot_resid, dist="norm", plot=ax3)
+                ax3.set_xlabel('theoretical quantiles')
+                ax3.set_ylabel('sample quantiles')
+                ax3.set_title(f'Q-Q Plot{w_label}')
                 ax3.grid(True, alpha=0.3)
 
                 plt.tight_layout()

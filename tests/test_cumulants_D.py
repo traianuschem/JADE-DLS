@@ -96,6 +96,7 @@ def res(gammas, beta=1.0, rss=0.01, n_modes=None, sel=None):
     g = np.sort(np.asarray(gammas, float))
     return {"n_modes": len(g) if n_modes is None else n_modes, "beta": beta, "gammas": g,
             "residual_ss": rss, "selection_ss": rss if sel is None else sel,
+            "fit_ss": rss if sel is None else sel,
             "g1_fit": np.ones(4), "g2_fit": np.ones(4) * beta, "convergence": "success"}
 
 
@@ -272,13 +273,14 @@ def test_oracle_fit_cumulant_D_call_protocol_and_result(monkeypatch):
     assert c["maxfev"] == 5000
     assert c["sigma"] is None
     assert c["absolute_sigma"] is False
-    assert set(r) == {"n_modes", "beta", "gammas", "residual_ss", "selection_ss",
-                      "g1_fit", "g2_fit", "convergence"}
+    # JADE 3.1: new key fit_ss = sum(w_rel*residuals**2) (== residual_ss when unweighted)
+    assert {"n_modes", "beta", "gammas", "residual_ss", "fit_ss",
+            "g1_fit", "g2_fit", "convergence"} <= set(r)
     assert r["n_modes"] == 1
     assert r["beta"] == pytest.approx(0.9, **DET)
     assert r["gammas"] == pytest.approx([123.0], **DET)
     assert r["residual_ss"] == pytest.approx(4 * 0.81, **DET)
-    assert r["selection_ss"] == r["residual_ss"]
+    assert r["fit_ss"] == pytest.approx(r["residual_ss"], **DET)
     assert np.array_equal(r["g1_fit"], np.ones(4))
     assert r["g2_fit"] == pytest.approx(0.9 * np.ones(4), **DET)
     assert r["convergence"] == "success"
@@ -406,7 +408,7 @@ def test_oracle_fit_cumulant_D_weighted_selection(monkeypatch):
     assert r["n_modes"] == 1
     assert r["beta"] == pytest.approx(0.6, **DET)
     assert r["residual_ss"] == pytest.approx(1.24, **DET)
-    assert r["selection_ss"] == pytest.approx(6.88 / 7, **DET)
+    assert r["fit_ss"] == pytest.approx(6.88 / 7, **DET)  # JADE 3.1: fit_ss = sum(w_rel*res^2)
 
 
 def test_oracle_fit_cumulant_D_unweighted_selection_same_script(monkeypatch):
@@ -416,7 +418,7 @@ def test_oracle_fit_cumulant_D_unweighted_selection_same_script(monkeypatch):
     assert r["n_modes"] == 2
     assert r["beta"] == pytest.approx(0.4, **DET)
     assert r["residual_ss"] == pytest.approx(0.84, **DET)
-    assert r["selection_ss"] == r["residual_ss"]
+    assert r["fit_ss"] == pytest.approx(r["residual_ss"], **DET)
 
 
 def test_oracle_fit_cumulant_D_failure_at_n1_then_cold_start(monkeypatch):
@@ -557,7 +559,7 @@ def test_meta_fit_cumulant_D_unit_weights_equal_unweighted():
     """FM-05 [REAL]"""
     a = cd.fit_cumulant_D(XR, R2)
     b = cd.fit_cumulant_D(XR, R2, weights=np.full(80, 2.0))
-    assert b["selection_ss"] == pytest.approx(b["residual_ss"], **DET)
+    assert b["fit_ss"] == pytest.approx(b["residual_ss"], **DET)
     assert b["gammas"] == pytest.approx(a["gammas"], **DET)
     assert b["n_modes"] == a["n_modes"]
 
@@ -569,7 +571,7 @@ def test_meta_fit_cumulant_D_weight_scale_invariance():
     b = cd.fit_cumulant_D(XR, R2N, n_start=2, n_max=2, weights=3 * w)
     assert b["gammas"] == pytest.approx(a["gammas"], **OPT)
     assert b["beta"] == pytest.approx(a["beta"], **OPT)
-    assert b["selection_ss"] == pytest.approx(a["selection_ss"], **OPT)
+    assert b["fit_ss"] == pytest.approx(a["fit_ss"], **OPT)
 
 
 def test_meta_fit_cumulant_D_noise_free_weights_irrelevant():
@@ -585,11 +587,11 @@ def test_meta_fit_cumulant_D_larger_n_max_not_worse(monkeypatch):
     scripted(monkeypatch, SC_SF05)
     k = cd.fit_cumulant_D(X0, Y0, n_max=2)
     K = cd.fit_cumulant_D(X0, Y0, n_max=3)
-    assert K["selection_ss"] <= k["selection_ss"]
+    assert K["fit_ss"] <= k["fit_ss"]
     monkeypatch.undo()
     k = cd.fit_cumulant_D(XR, R2, n_max=2)
     K = cd.fit_cumulant_D(XR, R2, n_max=25)
-    assert K["selection_ss"] <= k["selection_ss"] + 1e-15
+    assert K["fit_ss"] <= k["fit_ss"] + 1e-15
 
 
 @IGNORE_RT
@@ -827,7 +829,7 @@ def test_oracle_moments_two_point():
     assert m["gamma_4"] == pytest.approx(41, **DET)
     assert m["pdi"] == pytest.approx(0.25, **DET)
     assert m["skewness"] == pytest.approx(0, abs=1e-12)
-    assert m["kurtosis"] == pytest.approx(-2, **DET)
+    assert m["kurtosis"] == pytest.approx(1.0, **DET)  # JADE 3.1: mu4/mu2^2, Gaussian = 3
 
 
 def test_oracle_moments_asymmetric_three_point():
@@ -836,7 +838,7 @@ def test_oracle_moments_asymmetric_three_point():
     assert (m["gamma_mean"], m["gamma_2"], m["gamma_3"], m["gamma_4"]) == pytest.approx((2, 6, 22, 86), **DET)
     assert m["pdi"] == pytest.approx(0.5, **DET)
     assert m["skewness"] == pytest.approx(1 / np.sqrt(2), **DET)
-    assert m["kurtosis"] == pytest.approx(-1.5, **DET)
+    assert m["kurtosis"] == pytest.approx(1.5, **DET)  # JADE 3.1
 
 
 def test_oracle_moments_single_mode_guard():
@@ -845,8 +847,8 @@ def test_oracle_moments_single_mode_guard():
     assert (m["gamma_mean"], m["gamma_2"], m["gamma_3"], m["gamma_4"]) == pytest.approx(
         (1000, 1e6, 1e9, 1e12), **DET)
     assert m["pdi"] == 0.0
-    assert m["skewness"] == 0
-    assert m["kurtosis"] == 0
+    assert np.isnan(m["skewness"])  # JADE 3.1: NaN when variance is 0
+    assert np.isnan(m["kurtosis"])
 
 
 @pytest.mark.parametrize("k", [1, 2, 3, 4])
@@ -858,7 +860,7 @@ def test_oracle_moments_two_point_family(k):
     mu = (1 - p) * a + p * b
     assert m["gamma_mean"] == pytest.approx(mu, **DET)
     assert m["skewness"] == pytest.approx((1 - 2 * p) / np.sqrt(p * (1 - p)), **DET)
-    assert m["kurtosis"] == pytest.approx((1 - 6 * p * (1 - p)) / (p * (1 - p)), **DET)
+    assert m["kurtosis"] == pytest.approx((1 - 3 * p * (1 - p)) / (p * (1 - p)), **DET)  # JADE 3.1: non-excess
     assert m["pdi"] == pytest.approx(p * (1 - p) * (b - a) ** 2 / mu ** 2, **DET)
 
 
@@ -872,7 +874,7 @@ def test_oracle_moments_three_point_central_formula():
     assert m["pdi"] == pytest.approx(3066300 / 1464100 - 1, **DET)
     assert m["pdi"] == pytest.approx(1.094324, rel=1e-6)
     assert m["skewness"] == pytest.approx(np.mean((g - mu) ** 3) / np.var(g) ** 1.5, **DET)
-    assert m["kurtosis"] == pytest.approx(np.mean((g - mu) ** 4) / np.var(g) ** 2 - 3, **DET)
+    assert m["kurtosis"] == pytest.approx(np.mean((g - mu) ** 4) / np.var(g) ** 2, **DET)  # JADE 3.1: non-excess
 
 
 G_MM = np.array([1.0, 2.0, 5.0, 11.0])
@@ -938,15 +940,15 @@ def test_edge_moments_zero_mean_pdi_is_nan():
     m = mom([-1.0, 1.0])
     assert np.isnan(m["pdi"])
     assert m["skewness"] == pytest.approx(0.0, abs=1e-12)
-    assert m["kurtosis"] == pytest.approx(-2.0, **DET)
+    assert m["kurtosis"] == pytest.approx(1.0, **DET)  # JADE 3.1
 
 
 def test_edge_moments_all_zero():
     """ME-02"""
     m = mom([0.0, 0.0])
     assert np.isnan(m["pdi"])
-    assert m["skewness"] == 0
-    assert m["kurtosis"] == 0
+    assert np.isnan(m["skewness"])  # JADE 3.1
+    assert np.isnan(m["kurtosis"])
 
 
 @IGNORE_RT
@@ -961,8 +963,8 @@ def test_char_moments_identical_modes_guard_documents_current_behavior():
     """ME-04: documents current behavior, not desired behavior."""
     m = mom([5.0, 5.0, 5.0])
     assert m["pdi"] == 0.0
-    assert m["skewness"] == 0
-    assert m["kurtosis"] == 0
+    assert np.isnan(m["skewness"])  # JADE 3.1
+    assert np.isnan(m["kurtosis"])
 
 
 def test_char_moments_list_input_raises_documents_current_behavior():
@@ -975,9 +977,8 @@ def test_char_moments_cancellation_documents_current_behavior():
     """ME-06: documents current behavior (F-09): raw-moment cancellation ruins kurtosis."""
     m = mom([1000.0, 1000.0 * (1 + 1e-9)])
     # observed (2026-11-03): Var computes to exactly 0 -> guard returns int 0 (true: -2)
-    assert m["skewness"] == 0
-    assert m["kurtosis"] == 0
-    assert abs(m["kurtosis"] + 2) > 0.1
+    assert np.isnan(m["skewness"])  # JADE 3.1: NaN instead of 0
+    assert np.isnan(m["kurtosis"])
 
 
 def test_edge_moments_negative_gammas_not_validated():
@@ -1173,18 +1174,20 @@ def test_oracle_fit_correlations_D_rows_and_columns(monkeypatch):
     assert a["moment_4"] == pytest.approx(np.mean(g ** 4), **DET)
     assert a["pdi"] == pytest.approx(3066300 / 1464100 - 1, **DET)
     assert a["skewness"] == pytest.approx(np.mean((g - mu) ** 3) / np.var(g) ** 1.5, **DET)
-    assert a["kurtosis"] == pytest.approx(np.mean((g - mu) ** 4) / np.var(g) ** 2 - 3, **DET)
-    assert a["R-squared"] == pytest.approx(1 - 0.01 / 0.6875, **DET)
-    assert a["R-squared"] == pytest.approx(0.985455, rel=1e-5)
+    assert a["kurtosis"] == pytest.approx(np.mean((g - mu) ** 4) / np.var(g) ** 2, **DET)  # JADE 3.1
+    # JADE 3.1: R2 = fit_r_squared(y, g2_fit, w_rel) from g2_fit (mock: 0.9 everywhere), ordinary R2
+    y = np.array(Y_A)
+    assert a["R-squared"] == pytest.approx(1 - np.sum((y - 0.9) ** 2) / np.sum((y - y.mean()) ** 2), **DET)
     assert bool(a["weighted"]) is False
     b = out.set_index("filename").loc["b"]
     assert b["n_populations"] == 1
     assert b["gamma_1"] == pytest.approx(500.0, **DET)
     assert np.isnan(b["gamma_2"])
     assert b["pdi"] == 0.0
-    assert b["skewness"] == 0
-    assert b["kurtosis"] == 0
-    assert b["R-squared"] == pytest.approx(0.98, **DET)
+    assert np.isnan(b["skewness"])  # JADE 3.1
+    assert np.isnan(b["kurtosis"])
+    y = np.array(Y_B)
+    assert b["R-squared"] == pytest.approx(1 - np.sum((y - 1.0) ** 2) / np.sum((y - y.mean()) ** 2), **DET)
 
 
 def test_oracle_fit_correlations_D_forwards_arguments_and_weights(monkeypatch):
@@ -1248,12 +1251,37 @@ def test_meta_fit_correlations_D_duplicate_file(monkeypatch):
     pd.testing.assert_series_equal(out.loc["a"], out.loc["a2"], check_names=False)
 
 
+def test_oracle_fit_correlations_D_weighted_r_squared_uses_relative_weights(monkeypatch):
+    """JADE 3.1 [MOCK]: R-squared = fit_r_squared(y, g2_fit, w/mean(w)); scale-invariant in w."""
+    y = np.array(Y_B)
+    w = np.array([4.0, 1.0, 1.0, 2.0])
+    wr = w / w.mean()
+    ym = np.average(y, weights=wr)
+    expected = 1 - np.sum(wr * (y - 1.0) ** 2) / np.sum(wr * (y - ym) ** 2)
+    for scale in (1.0, 5.0):
+        faked(monkeypatch, [res([500.0], 1.0, 0.009)])
+        d = pd.DataFrame({"t [s]": T4, "g(2)-1": y, "weight": scale * w})
+        out = run_D({"b": d})
+        assert out.iloc[0]["R-squared"] == pytest.approx(expected, **DET)
+
+
+def test_oracle_fit_cumulant_D_weighted_fit_ss_real_relative_weights():
+    """JADE 3.1 [REAL]: fit_ss = sum(w_rel*residuals**2), residual_ss stays unweighted."""
+    w = np.linspace(0.5, 2.0, 80)
+    r = cd.fit_cumulant_D(XR, R2N, n_start=2, n_max=2, weights=w)
+    resid = R2N - r["g2_fit"]
+    assert r["fit_ss"] == pytest.approx(np.sum(w / w.mean() * resid ** 2), rel=1e-6)
+    assert r["residual_ss"] == pytest.approx(np.sum(resid ** 2), rel=1e-6)
+
+
 def test_meta_fit_correlations_D_r_squared_scale_invariant(monkeypatch):
     """FCM-03 [MOCK]"""
     c = 0.8
     faked(monkeypatch, [res([100.0], rss=0.01)])
     a = run_D({"a": df_ab()["a"]}).iloc[0]["R-squared"]
-    faked(monkeypatch, [res([100.0], rss=0.01 * c ** 2)])
+    r_c = res([100.0], rss=0.01 * c ** 2)
+    r_c["g2_fit"] = c * r_c["g2_fit"]  # JADE 3.1: R2 is computed from g2_fit
+    faked(monkeypatch, [r_c])
     d = pd.DataFrame({"t [s]": T4, "g(2)-1": c * np.array(Y_A)})
     b = run_D({"a": d}).iloc[0]["R-squared"]
     assert b == pytest.approx(a, **DET)
@@ -1377,10 +1405,11 @@ def test_oracle_fit_to_cluster_all_gammas_two_populations(monkeypatch):
     clustered, info = _cluster(data, cols)
     assert len(info["population_D_means"]) == 2
     assert sorted(info["population_D_means"]) == pytest.approx([10.0, 1000.0], **DET)
-    assert info["population_D_means"] == pytest.approx([10.0, 1000.0], **DET)
+    # JADE 3.1: populations numbered DESCENDING by mean log10 D (pop1 = fastest = smallest particle)
+    assert info["population_D_means"] == pytest.approx([1000.0, 10.0], **DET)
     assert list(info["population_abundances"]) == pytest.approx([1.0, 1.0], **DET)
-    assert clustered["gamma_pop1"].to_numpy(float) == pytest.approx(data["gamma_1"].to_numpy(float), **DET)
-    assert clustered["gamma_pop2"].to_numpy(float) == pytest.approx(data["gamma_2"].to_numpy(float), **DET)
+    assert clustered["gamma_pop1"].to_numpy(float) == pytest.approx(data["gamma_2"].to_numpy(float), **DET)
+    assert clustered["gamma_pop2"].to_numpy(float) == pytest.approx(data["gamma_1"].to_numpy(float), **DET)
 
 
 def test_char_fit_to_cluster_all_gammas_gamma_mean_column_raises_documents_current_behavior(monkeypatch):

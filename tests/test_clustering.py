@@ -314,13 +314,14 @@ def test_oracle_D05_silhouette_threshold_own_parameter_overrides_legacy():
               uncertainty_flags=True)
     c_a, _ = run(d_ref(), ["gamma_1"], uncertainty_threshold=0.5,
                  uncertainty_threshold_silhouette=0.25, uncertainty_threshold_zscore=9.0, **kw)
-    assert c_a["uncertain_pop1"].dropna().tolist() == [0.0, 0.0, 1.0]
-    assert c_a["uncertain_pop2"].dropna().tolist() == [0.0, 0.0, 0.0]
+    # JADE 3.1: pop1 = fastest (high D) population = rows 3-5, pop2 = rows 0-2
+    assert c_a["uncertain_pop2"].dropna().tolist() == [0.0, 0.0, 1.0]
+    assert c_a["uncertain_pop1"].dropna().tolist() == [0.0, 0.0, 0.0]
     c_b, _ = run(d_ref(), ["gamma_1"], uncertainty_threshold=0.25, **kw)
-    assert c_b["uncertain_pop1"].dropna().tolist() == [0.0, 0.0, 1.0]
+    assert c_b["uncertain_pop2"].dropna().tolist() == [0.0, 0.0, 1.0]
     c_c, _ = run(d_ref(), ["gamma_1"], uncertainty_threshold=0.5, **kw)
-    assert c_c["uncertain_pop1"].dropna().tolist() == [0.0, 0.0, 1.0]
-    assert c_c["uncertain_pop2"].dropna().tolist() == [1.0, 0.0, 0.0]   # silhouette 0.3 < 0.5
+    assert c_c["uncertain_pop2"].dropna().tolist() == [0.0, 0.0, 1.0]
+    assert c_c["uncertain_pop1"].dropna().tolist() == [1.0, 0.0, 0.0]   # silhouette 0.3 < 0.5
 
 
 def test_oracle_D06_population_below_min_abundance_after_refinement_kept_and_flagged(monkeypatch):
@@ -329,8 +330,9 @@ def test_oracle_D06_population_below_min_abundance_after_refinement_kept_and_fla
     df = make_df([1.0] * 6, {"gamma_1": [0.0, 0.05, 0.1, 0.15, 1.0, 1.05]})
 
     def fake_refine(gdf, threshold, normalize_by_q2):
-        idx = gdf.index[gdf["cluster"] == 1][0]
-        gdf.loc[idx, "cluster"] = 0
+        # JADE 3.1: cluster 0 = fastest (high D, 2 points); move one of them to cluster 1
+        idx = gdf.index[gdf["cluster"] == 0][0]
+        gdf.loc[idx, "cluster"] = 1
         return 1
 
     monkeypatch.setattr(cl, "_refine_clusters_with_silhouette", fake_refine)
@@ -338,11 +340,11 @@ def test_oracle_D06_population_below_min_abundance_after_refinement_kept_and_fla
                           min_abundance=0.3, clustering_strategy="silhouette_refined")
     assert info["n_reassigned"] == 1
     assert info["population_stats_pre_refinement"]["abundance"].tolist() == pytest.approx(
-        [4 / 6, 2 / 6], **TOL)
+        [2 / 6, 4 / 6], **TOL)
     assert info["n_populations"] == 2                     # kept, not dropped
-    assert info["population_abundances"] == pytest.approx([5 / 6, 1 / 6], **TOL)
-    assert info["populations_below_min_abundance"] == [2]
-    assert clustered["gamma_pop2"].notna().sum() == 1
+    assert info["population_abundances"] == pytest.approx([1 / 6, 5 / 6], **TOL)
+    assert info["populations_below_min_abundance"] == [1]
+    assert clustered["gamma_pop1"].notna().sum() == 1
 
 
 def test_oracle_D06_no_flag_when_all_populations_stay_above_min_abundance():
@@ -414,12 +416,13 @@ def test_oracle_O10_n_clusters_random():
 
 
 def test_oracle_O11_simple_method_sorted_numbering():
+    """JADE 3.1: descending mean D, pop1 = fastest."""
     clustered, info = run(d_ord(), COLS2, method="simple", distance_threshold=0.3, min_abundance=0.3)
     assert info["n_populations"] == 2
-    assert info["population_D_means"] == pytest.approx([10 ** 0.015, 10 ** 0.8], **TOL)
+    assert info["population_D_means"] == pytest.approx([10 ** 0.8, 10 ** 0.015], **TOL)
     df = d_ord()
-    np.testing.assert_array_equal(clustered["gamma_pop1"].to_numpy(float), df["gamma_1"].to_numpy())
-    np.testing.assert_array_equal(clustered["gamma_pop2"].to_numpy(float), df["gamma_2"].to_numpy())
+    np.testing.assert_array_equal(clustered["gamma_pop1"].to_numpy(float), df["gamma_2"].to_numpy())
+    np.testing.assert_array_equal(clustered["gamma_pop2"].to_numpy(float), df["gamma_1"].to_numpy())
 
 
 def test_oracle_O12_peak_prefix_columns():
@@ -821,13 +824,13 @@ def test_char_C02_size_dependence_quantile_sample_documents_current_behavior():
 
 
 def test_oracle_C03_numbering_sorted_by_D():
-    """F-02 fixed: populations are numbered by ascending mean log10 D (pop1 = smallest D)."""
+    """JADE 3.1: populations are numbered by descending mean log10 D (pop1 = fastest = smallest particles)."""
     df = d_ord()
     for method, t in (("hierarchical", 1.0), ("simple", 0.3)):
         clustered, info = run(df, COLS2, method=method, distance_threshold=t, min_abundance=0.3)
-        assert info["population_D_means"] == pytest.approx([10 ** 0.015, 10 ** 0.8], **TOL)
-        np.testing.assert_array_equal(clustered["gamma_pop1"].to_numpy(float), df["gamma_1"].to_numpy())
-        np.testing.assert_array_equal(clustered["gamma_pop2"].to_numpy(float), df["gamma_2"].to_numpy())
+        assert info["population_D_means"] == pytest.approx([10 ** 0.8, 10 ** 0.015], **TOL)
+        np.testing.assert_array_equal(clustered["gamma_pop1"].to_numpy(float), df["gamma_2"].to_numpy())
+        np.testing.assert_array_equal(clustered["gamma_pop2"].to_numpy(float), df["gamma_1"].to_numpy())
         assert info["cluster_id_to_pop"] == {0: 1, 1: 2}
 
 
@@ -851,11 +854,11 @@ def _ascending_cases():
 
 @pytest.mark.parametrize("name, call, key", _ascending_cases(), ids=[c[0] for c in _ascending_cases()])
 def test_oracle_numbering_ascending_in_D(name, call, key):
-    """F-02 fixed: hierarchical numbering is ascending in mean D (Gamma if not normalized)."""
+    """JADE 3.1: numbering is DESCENDING in mean D (Gamma if not normalized): pop1 = fastest."""
     _, info = call()
     vals = info[key]
     assert len(vals) >= 2
-    assert all(a < b for a, b in zip(vals, vals[1:]))
+    assert all(a > b for a, b in zip(vals, vals[1:]))
 
 
 def test_char_C04_first_come_documents_current_behavior():
@@ -879,19 +882,20 @@ def _ref_call():
 def test_oracle_C05_refinement_updates_statistics():
     """F-03 fixed: statistics are recomputed from the final assignment after refinement."""
     clustered, info = _ref_call()
-    assert info["gammas_df"]["cluster"].tolist() == [0, 0, 0, 1, 1, 1]
+    assert info["gammas_df"]["cluster"].tolist() == [1, 1, 1, 0, 0, 0]   # JADE 3.1: cluster 0 = fastest
     nan = np.nan
-    np.testing.assert_allclose(clustered["gamma_pop1"].to_numpy(float),
-                               [1.0, 10 ** 0.25, 10 ** 0.5, nan, nan, nan], rtol=1e-6)
+    # JADE 3.1: pop1 = fastest (B), pop2 = slowest (A)
     np.testing.assert_allclose(clustered["gamma_pop2"].to_numpy(float),
+                               [1.0, 10 ** 0.25, 10 ** 0.5, nan, nan, nan], rtol=1e-6)
+    np.testing.assert_allclose(clustered["gamma_pop1"].to_numpy(float),
                                [nan, nan, nan, 10 ** 0.75, 10 ** 1.1, 10 ** 1.1], rtol=1e-6)
     A = np.array([1.0, 10 ** 0.25, 10 ** 0.5])
     B = np.array([10 ** 0.75, 10 ** 1.1, 10 ** 1.1])
     assert info["population_abundances"] == pytest.approx([3 / 6, 3 / 6], **TOL)
-    assert info["population_D_means"] == pytest.approx([10 ** 0.25, 10 ** ((0.75 + 2.2) / 3)], **TOL)
-    assert info["population_means"] == pytest.approx([gm(A), gm(B)], **TOL)
-    assert info["population_D_stds"] == pytest.approx([np.std(A), np.std(B)], **TOL)
-    assert info["population_stds"] == pytest.approx([np.std(A), np.std(B)], **TOL)
+    assert info["population_D_means"] == pytest.approx([10 ** ((0.75 + 2.2) / 3), 10 ** 0.25], **TOL)
+    assert info["population_means"] == pytest.approx([gm(B), gm(A)], **TOL)
+    assert info["population_D_stds"] == pytest.approx([np.std(B), np.std(A)], **TOL)
+    assert info["population_stds"] == pytest.approx([np.std(B), np.std(A)], **TOL)
     st = info["population_stats"]
     assert st["n_gammas"].tolist() == [3, 3]
     assert st["n_files"].tolist() == [3, 3]
@@ -906,9 +910,9 @@ def test_oracle_C05_refinement_updates_statistics():
     assert info["silhouette_before_refinement"] == pytest.approx(before, **TOL)
     assert info["n_reassigned"] == 1
     pre = info["population_stats_pre_refinement"]
-    assert pre["abundance"].tolist() == pytest.approx([4 / 6, 2 / 6], **TOL)
-    assert pre["mean_D"].tolist() == pytest.approx([10 ** 0.375, 10 ** 1.1], **TOL)
-    assert pre["n_gammas"].tolist() == [4, 2]
+    assert pre["abundance"].tolist() == pytest.approx([2 / 6, 4 / 6], **TOL)
+    assert pre["mean_D"].tolist() == pytest.approx([10 ** 1.1, 10 ** 0.375], **TOL)
+    assert pre["n_gammas"].tolist() == [2, 4]
 
 
 def test_char_C06_silhouette_only_when_needed_documents_current_behavior():
@@ -1470,8 +1474,9 @@ def test_char_S08_sweep_without_normalization_documents_current_behavior():
 # ----------------------------------------------------------------------------
 def test_oracle_X01_stats_consistent_after_refinement():
     clustered, info = _ref_call()
-    assert info["population_abundances"][1] == pytest.approx(3 / 6, **TOL)
-    assert info["population_D_means"][1] == pytest.approx(10 ** ((0.75 + 2.2) / 3), **TOL)
+    # JADE 3.1: pop1 (index 0) = fastest = cluster B
+    assert info["population_abundances"][0] == pytest.approx(3 / 6, **TOL)
+    assert info["population_D_means"][0] == pytest.approx(10 ** ((0.75 + 2.2) / 3), **TOL)
 
 
 @pytest.mark.xfail(raises=AssertionError, strict=True, reason="F-05: Auswahl-Regel offen, siehe _dev/notes/open_discussion_points.md")
@@ -1544,3 +1549,35 @@ def test_meta_compute_population_stats_columns_match_cluster_info(normalize):
     g = info["gammas_df"]
     out = cl._compute_population_stats(g, sorted(g["cluster"].unique()), 4, normalize)
     assert list(out.columns) == list(info["population_stats"].columns)
+
+
+# ----------------------------------------------------------------------------
+# JADE 3.1: descending numbering (pop1 = fastest = smallest particles)
+# ----------------------------------------------------------------------------
+@pytest.mark.parametrize("method, t", [("hierarchical", 1.0), ("simple", 0.3)])
+@pytest.mark.parametrize("normalize", [True, False])
+def test_oracle_jade31_numbering_descending_both_methods(method, t, normalize):
+    """JADE 3.1: pop1 = highest mean log10 D (log10 Gamma if not normalized); lists follow pop order."""
+    df = make_df([1.0] * 4, {"gamma_1": VL, "gamma_2": [0.8] * 4})  # q^2 = 1: separable with and without q^2
+    kw = dict(method=method, distance_threshold=t, min_abundance=0.3)
+    if not normalize:
+        kw.update(normalize_by_q2=False, q_squared_col=None)
+    clustered, info = run(df, COLS2, **kw)
+    np.testing.assert_array_equal(clustered["gamma_pop1"].to_numpy(float), df["gamma_2"].to_numpy())
+    np.testing.assert_array_equal(clustered["gamma_pop2"].to_numpy(float), df["gamma_1"].to_numpy())
+    key = "population_D_means" if normalize else "population_means"
+    assert info[key][0] > info[key][1]
+    st = info["population_stats"]
+    assert st["mean_gamma"].tolist() == pytest.approx(info["population_means"], **TOL)         if "mean_gamma" in st.columns else True
+    assert info["population_abundances"] == pytest.approx([1.0, 1.0], **TOL)
+    assert info["reliable_populations"] == [1, 2]
+
+
+def test_oracle_jade31_numbering_descending_recluster_path():
+    """JADE 3.1: the uncertainty/silhouette re-cluster path also numbers fastest first."""
+    clustered, info = run(d_ord(), COLS2, method="hierarchical", distance_threshold=1.0,
+                          min_abundance=0.3, uncertainty_flags=True,
+                          clustering_strategy="silhouette_refined")
+    D = info["population_D_means"]
+    assert D[0] > D[1]
+    assert np.nanmean(clustered["gamma_pop1"] / clustered["q^2"]) >         np.nanmean(clustered["gamma_pop2"] / clustered["q^2"])

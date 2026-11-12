@@ -354,6 +354,18 @@ def apply_weights_to_correlations(processed_correlations, weights_dict):
     return out
 
 
+def fit_r_squared(y, y_fit, w=None):
+    """R² of a fit, shared by all fitting methods (JADE-DLS 3.1): weighted
+    1 - Σw·r² / Σw·(y - ȳ_w)² when weights w are given (the quantity a weighted
+    fit minimises), the ordinary R² when w is None. Returns 0 if y is constant."""
+    y = np.asarray(y, dtype=float)
+    if y.size == 0:     # ADE: empty input -> 0.0 (like constant y) instead of np.average's ZeroDivisionError
+        return 0.0
+    w = np.ones_like(y) if w is None else np.asarray(w, dtype=float)
+    ss_tot = np.sum(w * (y - np.average(y, weights=w))**2)
+    return float(1 - np.sum(w * (y - np.asarray(y_fit, dtype=float))**2) / ss_tot) if ss_tot != 0 else 0.0
+
+
 # ============================================================================
 # 3. Self-test / sanity check — run this file directly
 # ============================================================================
